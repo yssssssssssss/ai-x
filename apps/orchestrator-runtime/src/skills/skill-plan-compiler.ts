@@ -191,19 +191,29 @@ function stageStep(
   };
 }
 
+interface CompileSkillStepsOptions {
+  canReuseStage?: (input: {
+    stage: SkillExecutionStage;
+    existingStep: CurrentPlanStep;
+    skillStep: CurrentPlanStep;
+  }) => boolean;
+}
+
 function matchingReusableStages(
   steps: readonly CurrentPlanStep[],
   skillStep: CurrentPlanStep,
   contract: SkillExecutionContract,
+  options: CompileSkillStepsOptions,
 ): Map<string, number> {
   const result = new Map<string, number>();
   const reusableReviewerStageId = [...contract.stages].reverse().find(({ actor_type }) => actor_type === 'reviewer')?.stage_id;
   for (const stage of contract.stages) {
-    if (stage.stage_id === contract.output_stage_id || stage.actor_type === 'knowledge') continue;
-    const match = stage.actor_type === 'tool'
+    if (stage.stage_id === contract.output_stage_id) continue;
+    if (stage.actor_type === 'knowledge' && !options.canReuseStage) continue;
+    const match = stage.actor_type === 'tool' || stage.actor_type === 'knowledge'
       ? [...steps].reverse().find((step) => (
           step.step_no < skillStep.step_no
-          && step.actor_type === 'tool'
+          && step.actor_type === stage.actor_type
           && step.actor_id === stage.actor_id
         ))
       : stage.actor_type === 'reviewer' && stage.stage_id === reusableReviewerStageId
@@ -214,7 +224,9 @@ function matchingReusableStages(
             && step.depends_on.includes(skillStep.step_no)
           ))
         : undefined;
-    if (match) result.set(stage.stage_id, match.step_no);
+    if (match && (!options.canReuseStage || options.canReuseStage({ stage, existingStep: match, skillStep }))) {
+      result.set(stage.stage_id, match.step_no);
+    }
   }
   return result;
 }
@@ -428,6 +440,7 @@ export function compileSkillSteps(
   steps: readonly CurrentPlanStep[],
   task: ResearchTaskV2,
   skillLoader = new SkillLoader(),
+  options: CompileSkillStepsOptions = {},
 ): CompiledSkillSteps {
   const expansions = new Map<number, Expansion>();
   for (const step of steps) {
@@ -444,7 +457,7 @@ export function compileSkillSteps(
       throw new Error(`Skill ${step.actor_id} requires a finalized Requirement without clarification questions`);
     }
     const invocationId = `${step.actor_id}:${step.step_no}`;
-    const reusedOldStepByStage = matchingReusableStages(steps, step, loaded.contract);
+    const reusedOldStepByStage = matchingReusableStages(steps, step, loaded.contract, options);
     const stageKey = new Map<string, string>();
     for (const stage of loaded.contract.stages) {
       const reused = reusedOldStepByStage.get(stage.stage_id);

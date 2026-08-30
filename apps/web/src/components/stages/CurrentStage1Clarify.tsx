@@ -3,6 +3,28 @@ import type { ClarificationRequiredResponse, ClarifyControlTaskRequest } from '.
 import { buildClarificationSubmission, missingBlockingAnswers } from '../../current-flow-state.ts';
 import { Header } from './Stage1Understand.tsx';
 
+interface ClarificationChoice {
+  value: string;
+  label: string;
+  description: string;
+}
+
+function clarificationChoices(key: string): ClarificationChoice[] | null {
+  if (key === 'outcome_mode') {
+    return [
+      { value: 'plan', label: '研究方案', description: '告诉我后续如何开展研究' },
+      { value: 'answer', label: '直接策略答案', description: '基于当前资料给出结论、策略与行动' },
+    ];
+  }
+  if (key === 'deliverable_intent') {
+    return [
+      { value: 'competitive_analysis_report', label: '竞品分析报告', description: '聚焦品牌或产品对比、差异和机会点' },
+      { value: 'research_strategy_report', label: '综合策略报告', description: '综合多类研究证据形成策略与行动建议' },
+    ];
+  }
+  return null;
+}
+
 export function CurrentStage1Clarify({
   response,
   onSubmit,
@@ -61,37 +83,37 @@ export function CurrentStage1Clarify({
         </div>
       )}
 
-      {response.structuredTask.clarification_questions.map((question) => question.key === 'outcome_mode' ? (
-        <fieldset key={question.key} disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
-          <legend style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 13 }}>{question.question}</legend>
-          <span style={{ display: 'block', marginBottom: 8, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
-          <div style={{ display: 'grid', gap: 8 }}>
-            {[
-              { value: 'plan', label: '研究方案', description: '告诉我后续如何开展研究' },
-              { value: 'answer', label: '直接策略答案', description: '基于当前资料给出结论、策略与行动' },
-            ].map((option) => (
-              <label key={option.value} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px', border: `1px solid ${answers[question.key] === option.value ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 8 }}>
-                <input type="radio" name={`outcome-${response.task.id}`} value={option.value} checked={answers[question.key] === option.value} onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))} />
-                <span><b>{option.label}</b><span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>{option.description}</span></span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      ) : (
-        <label key={question.key} style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-          <span style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>{question.question}</span>
-          <span style={{ display: 'block', marginBottom: 5, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
-          <input
-            className="clarification-field"
-            value={answers[question.key] ?? ''}
-            onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
-            disabled={disabled}
-            placeholder="请明确回答，系统建议不会自动代替你的回答"
-            aria-label={question.question}
-            style={{ width: '100%', boxSizing: 'border-box' }}
-          />
-        </label>
-      ))}
+      {response.structuredTask.clarification_questions.map((question) => {
+        const choices = clarificationChoices(question.key);
+        return choices ? (
+          <fieldset key={question.key} disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
+            <legend style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 13 }}>{question.question}</legend>
+            <span style={{ display: 'block', marginBottom: 8, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {choices.map((option) => (
+                <label key={option.value} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px', border: `1px solid ${answers[question.key] === option.value ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 8 }}>
+                  <input type="radio" name={`${question.key}-${response.task.id}`} value={option.value} checked={answers[question.key] === option.value} onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))} />
+                  <span><b>{option.label}</b><span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>{option.description}</span></span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ) : (
+          <label key={question.key} style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+            <span style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>{question.question}</span>
+            <span style={{ display: 'block', marginBottom: 5, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
+            <input
+              className="clarification-field"
+              value={answers[question.key] ?? ''}
+              onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
+              disabled={disabled}
+              placeholder="请明确回答，系统建议不会自动代替你的回答"
+              aria-label={question.question}
+              style={{ width: '100%', boxSizing: 'border-box' }}
+            />
+          </label>
+        );
+      })}
 
       {response.planningGuidance && (
         <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>

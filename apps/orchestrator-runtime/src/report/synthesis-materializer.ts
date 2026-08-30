@@ -118,7 +118,7 @@ function roleFor(
 
 function redactMaterialValue(value: unknown, key = ''): unknown {
   if (/^(?:prompt|fullPrompt|systemPrompt)$/iu.test(key)) return '[REDACTED_PROMPT]';
-  if (Array.isArray(value)) return value.map((item) => redactMaterialValue(item));
+  if (Array.isArray(value)) return value.map((item) => redactMaterialValue(item, key));
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [

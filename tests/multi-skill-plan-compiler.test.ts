@@ -330,6 +330,42 @@ test('portfolio compiler preserves Contributor parallelism and makes Synthesizer
   ]);
 });
 
+test('portfolio compiler records Synthesizer-owned Demands as direct answers, not Contributions', () => {
+  const directPortfolio = structuredClone(portfolio);
+  directPortfolio.invocations = [{
+    ...structuredClone(portfolio.invocations[2]!),
+    demandIds: ['demand-market'],
+    contributionTypes: ['competitive_analysis'],
+    questionIds: ['question-market'],
+  }];
+  directPortfolio.demandCoverage = [{
+    ...structuredClone(portfolio.demandCoverage[0]!),
+    ownerSkillId: 'research-strategy-synthesis',
+  }];
+  directPortfolio.sharedPrerequisites = [];
+  directPortfolio.estimatedBudget = {
+    ...directPortfolio.estimatedBudget,
+    estimatedSteps: 2,
+    selectedContributorCount: 0,
+    selectedSkillCount: 1,
+  };
+  const sourceSteps = [highLevelSteps()[0]!, highLevelSteps()[3]!].map((step, index) => ({
+    ...step,
+    step_no: index + 1,
+    depends_on: [],
+  }));
+
+  const compiled = compilePortfolioSkillSteps({
+    steps: sourceSteps,
+    task,
+    portfolio: directPortfolio,
+    skillLoader: legacySkillLoader,
+  });
+
+  assert.deepEqual(compiled.invocations[0]?.demand_ids, ['demand-market']);
+  assert.deepEqual(compiled.contributionRequirements, []);
+});
+
 test('portfolio compiler marks one shared Tool stage with a stable fingerprint and every consumer invocation', () => {
   const first = compilePortfolioSkillSteps({
     steps: highLevelSteps(),
@@ -405,6 +441,19 @@ test('portfolio compiler deduplicates exact declared shared Tool steps and rejec
   );
 });
 
+test('declared shared prerequisites are wired into every consumer root even when the model omits dependencies', () => {
+  const source = highLevelSteps();
+  source[1]!.depends_on = [];
+  source[2]!.depends_on = [];
+  const compiled = compilePortfolioSkillSteps({ steps: source, task, portfolio, skillLoader: legacySkillLoader });
+  const shared = compiled.steps.find(({ shared_stage_key }) => Boolean(shared_stage_key));
+  const market = compiled.steps.find(({ skill_invocation_id }) => skill_invocation_id === 'invocation:market');
+  const persona = compiled.steps.find(({ skill_invocation_id }) => skill_invocation_id === 'invocation:persona');
+  assert.ok(shared && market && persona);
+  assert.ok(market.depends_on.includes(shared.step_no));
+  assert.ok(persona.depends_on.includes(shared.step_no));
+});
+
 test('portfolio compiler emits Contribution Requirements with one owner and at most one Corroborator', () => {
   const compiled = compilePortfolioSkillSteps({
     steps: highLevelSteps(),
@@ -435,6 +484,161 @@ test('portfolio compiler emits Contribution Requirements with one owner and at m
   assert.deepEqual(compiled.steps.map(({ step_no }) => step_no), [1, 2, 3, 4]);
 });
 
+test('portfolio compiler removes model-invented cross-Contributor wiring before applying frozen dependencies', () => {
+  const source = highLevelSteps();
+  source[0]!.depends_on = [3];
+  source[2]!.depends_on = [1, 2];
+  source[2]!.input_bindings = [{
+    target_pointer: '/prior_contribution', source_step_no: 2, source_pointer: '/payload',
+  }];
+  source[2]!.input.prior_contribution = null;
+  const compiled = compilePortfolioSkillSteps({ steps: source, task, portfolio, skillLoader: legacySkillLoader });
+  const persona = compiled.steps.find(({ skill_invocation_id }) => skill_invocation_id === 'invocation:persona');
+  const market = compiled.steps.find(({ skill_invocation_id }) => skill_invocation_id === 'invocation:market');
+  assert.ok(persona && market);
+  assert.deepEqual(compiled.steps[0]!.depends_on, []);
+  assert.equal(persona.depends_on.includes(market.step_no), false);
+  assert.equal(persona.input_bindings.some(({ source_step_no }) => source_step_no === market.step_no), false);
+});
+
+test('portfolio compiler removes model-invented Skill wiring from Tool and Knowledge targets', () => {
+  const cases: Array<{
+    capabilityType: 'tool' | 'knowledge';
+    capabilityId: string;
+  }> = [
+    { capabilityType: 'tool', capabilityId: 'tavily-web-search' },
+    { capabilityType: 'knowledge', capabilityId: 'knowledge.index' },
+  ];
+
+  for (const { capabilityType, capabilityId } of cases) {
+    const compilerOwnedWiringLoader = {
+      getSkill(id: string) {
+        const consumesSharedTool = capabilityType === 'tool'
+          && id !== 'research-strategy-synthesis';
+        return {
+          id,
+          required_tools: consumesSharedTool ? [capabilityId] : [],
+          composition: {
+            modes: id === 'research-strategy-synthesis' ? ['synthesizer'] : ['contributor'],
+            supported_outcomes: ['answer'],
+            compatible_deliverables: ['research_strategy_report'],
+            contribution_types: ['qualitative_insight'],
+            contribution_schema: 'schemas/research-contribution-v1.schema.json',
+            contribution_adapter: 'skill-envelope-provisional-v1',
+            required_input_roles: [],
+            optional_input_roles: [],
+            shareable_prerequisites: consumesSharedTool ? [capabilityId] : [],
+          },
+        };
+      },
+      loadSkillExecution() { return null; },
+    } as unknown as SkillLoader;
+    const original = highLevelSteps();
+    const source: CurrentPlanStep[] = [
+      { ...structuredClone(original[1]!), step_no: 1, depends_on: [], input_bindings: [] },
+      {
+        ...structuredClone(original[0]!),
+        step_no: 2,
+        actor_type: capabilityType,
+        actor_id: capabilityId,
+        depends_on: [1],
+        input_bindings: [{
+          target_pointer: '/query',
+          source_step_no: 1,
+          source_pointer: '/payload',
+        }],
+      },
+      { ...structuredClone(original[2]!), step_no: 3, depends_on: [], input_bindings: [] },
+      { ...structuredClone(original[3]!), step_no: 4, depends_on: [], input_bindings: [] },
+    ];
+    const candidatePortfolio = {
+      ...structuredClone(portfolio),
+      sharedPrerequisites: [{
+        capabilityType,
+        capabilityId,
+        consumerSkillIds: ['competitive-analysis', 'generate-persona'],
+      }],
+    };
+
+    const compiled = compilePortfolioSkillSteps({
+      steps: source,
+      task,
+      portfolio: candidatePortfolio,
+      skillLoader: compilerOwnedWiringLoader,
+    });
+    const target = compiled.steps.find((step) => (
+      step.actor_type === capabilityType && step.actor_id === capabilityId
+    ));
+    const skillStepNos = new Set(compiled.steps
+      .filter(({ actor_type }) => actor_type === 'skill')
+      .map(({ step_no }) => step_no));
+
+    assert.ok(target);
+    assert.equal(target.depends_on.some((stepNo) => skillStepNos.has(stepNo)), false);
+    assert.equal(
+      target.input_bindings.some(({ source_step_no }) => skillStepNos.has(source_step_no)),
+      false,
+    );
+  }
+});
+
+test('portfolio compiler replaces model-invented Skill compilation metadata', () => {
+  const source = highLevelSteps();
+  const metricsLikeLegacyStep = source[2]!;
+  metricsLikeLegacyStep.skill_invocation_id = 'model-invented:build-experience-metrics';
+  metricsLikeLegacyStep.skill_stage_id = 'model-invented-output';
+  Object.assign(metricsLikeLegacyStep, {
+    shared_stage_key: 'shared:tool:model-invented',
+    shared_by_invocation_ids: ['model-owner-a', 'model-owner-b'],
+    share_fingerprint: `sha256:${'f'.repeat(64)}`,
+  });
+
+  const compiled = compilePortfolioSkillSteps({
+    steps: source,
+    task,
+    portfolio,
+    skillLoader: legacySkillLoader,
+  });
+  const persona = compiled.steps.find(({ actor_id }) => actor_id === 'generate-persona');
+
+  assert.ok(persona);
+  assert.equal(persona.skill_invocation_id, 'invocation:persona');
+  assert.equal(persona.skill_stage_id, 'legacy-call');
+  assert.equal(persona.shared_stage_key, undefined);
+  assert.equal(persona.shared_by_invocation_ids, undefined);
+  assert.equal(persona.share_fingerprint, undefined);
+  assert.equal(
+    compiled.invocations.find(({ skill_id }) => skill_id === 'generate-persona')?.execution_mode,
+    'legacy_single_call',
+  );
+});
+
+test('portfolio compiler rejects a declared shared prerequisite with no source step', () => {
+  const source = highLevelSteps().filter(({ actor_id }) => actor_id !== 'tavily-web-search');
+  assert.throws(
+    () => compilePortfolioSkillSteps({ steps: source, task, portfolio, skillLoader: legacySkillLoader }),
+    /Shared prerequisite tool:tavily-web-search has no source step/u,
+  );
+});
+
+test('portfolio compiler rejects model-invented actors instead of silently dropping them', () => {
+  const source = highLevelSteps();
+  source.splice(1, 0, {
+    ...structuredClone(source[0]!),
+    step_no: 2,
+    actor_type: 'llm',
+    actor_id: 'llm.model-invented',
+  });
+  for (let index = 2; index < source.length; index += 1) {
+    source[index]!.step_no = index + 1;
+  }
+
+  assert.throws(
+    () => compilePortfolioSkillSteps({ steps: source, task, portfolio, skillLoader: legacySkillLoader }),
+    /Portfolio candidate contains unauthorized actor llm:llm\.model-invented/u,
+  );
+});
+
 test('compiled portfolio schedules independent Contributors in one parallel wave', async () => {
   const compiled = compilePortfolioSkillSteps({
     steps: highLevelSteps(),
@@ -452,6 +656,181 @@ test('compiled portfolio schedules independent Contributors in one parallel wave
     })),
   }, {});
   assert.deepEqual(result.waves, [['1'], ['2', '3'], ['4']]);
+});
+
+test('portfolio compiler wires an unshared required Tool into its legacy Contributor', () => {
+  const virtualPortfolio: SkillPortfolioDecision = {
+    ...structuredClone(portfolio),
+    invocations: [
+      {
+        ...structuredClone(portfolio.invocations[0]!),
+        invocationId: 'invocation:virtual-user',
+        skillId: 'virtual-user-research',
+        contributionTypes: ['virtual_user_hypothesis'],
+      },
+      structuredClone(portfolio.invocations[2]!),
+    ],
+    demandCoverage: [{
+      ...structuredClone(portfolio.demandCoverage[0]!),
+      ownerSkillId: 'virtual-user-research',
+      demandType: 'virtual_user_hypothesis',
+    }],
+    sharedPrerequisites: [],
+  };
+  const virtualSkillLoader = {
+    getSkill(id: string) {
+      return {
+        id,
+        required_tools: id === 'virtual-user-research' ? ['virtual-user-lab'] : [],
+        composition: {
+          modes: id === 'research-strategy-synthesis' ? ['synthesizer'] : ['contributor'],
+          supported_outcomes: ['answer'],
+          compatible_deliverables: ['research_strategy_report'],
+          contribution_types: id === 'virtual-user-research'
+            ? ['virtual_user_hypothesis']
+            : ['strategy'],
+          contribution_schema: 'schemas/research-contribution-v1.schema.json',
+          contribution_adapter: id === 'virtual-user-research'
+            ? 'virtual-user-tool-v1'
+            : 'skill-envelope-provisional-v1',
+          required_input_roles: [],
+          optional_input_roles: [],
+        },
+      };
+    },
+    loadSkillExecution() { return null; },
+  } as unknown as SkillLoader;
+  const steps = highLevelSteps().slice(0, 3);
+  steps[0]!.actor_id = 'virtual-user-lab';
+  steps[0]!.input = { scenario: 'crowdfunding trust' };
+  steps[1]!.actor_id = 'virtual-user-research';
+  steps[1]!.depends_on = [];
+  steps[2]!.actor_id = 'research-strategy-synthesis';
+  steps[2]!.depends_on = [2];
+
+  const compiled = compilePortfolioSkillSteps({
+    steps,
+    task,
+    portfolio: virtualPortfolio,
+    skillLoader: virtualSkillLoader,
+  });
+  const tool = compiled.steps.find(({ actor_id }) => actor_id === 'virtual-user-lab');
+  const contributor = compiled.steps.find(({ actor_id }) => actor_id === 'virtual-user-research');
+  assert.ok(tool && contributor);
+  assert.ok(contributor.depends_on.includes(tool.step_no));
+});
+
+test('portfolio compiler allocates unshared required Tool instances exclusively to legacy invocations', () => {
+  const contributorIds = ['virtual-user-market', 'virtual-user-persona'] as const;
+  const exclusivePortfolio: SkillPortfolioDecision = {
+    ...structuredClone(portfolio),
+    invocations: [
+      {
+        ...structuredClone(portfolio.invocations[0]!),
+        invocationId: 'invocation:virtual-market',
+        skillId: contributorIds[0],
+      },
+      {
+        ...structuredClone(portfolio.invocations[1]!),
+        invocationId: 'invocation:virtual-persona',
+        skillId: contributorIds[1],
+      },
+      structuredClone(portfolio.invocations[2]!),
+    ],
+    demandCoverage: [
+      {
+        ...structuredClone(portfolio.demandCoverage[0]!),
+        ownerSkillId: contributorIds[0],
+      },
+      {
+        ...structuredClone(portfolio.demandCoverage[1]!),
+        ownerSkillId: contributorIds[1],
+      },
+    ],
+    sharedPrerequisites: [],
+  };
+  const exclusiveToolLoader = {
+    getSkill(id: string) {
+      return {
+        id,
+        required_tools: contributorIds.includes(id as typeof contributorIds[number])
+          ? ['virtual-user-lab']
+          : [],
+        composition: {
+          modes: id === 'research-strategy-synthesis' ? ['synthesizer'] : ['contributor'],
+          supported_outcomes: ['answer'],
+          compatible_deliverables: ['research_strategy_report'],
+          contribution_types: ['virtual_user_hypothesis'],
+          contribution_schema: 'schemas/research-contribution-v1.schema.json',
+          contribution_adapter: 'skill-envelope-provisional-v1',
+          required_input_roles: [],
+          optional_input_roles: [],
+          shareable_prerequisites: [],
+        },
+      };
+    },
+    loadSkillExecution() { return null; },
+  } as unknown as SkillLoader;
+  const original = highLevelSteps();
+  const source: CurrentPlanStep[] = [
+    {
+      ...structuredClone(original[0]!),
+      step_no: 1,
+      actor_id: 'virtual-user-lab',
+      input: { scenario: 'market' },
+    },
+    {
+      ...structuredClone(original[0]!),
+      step_no: 2,
+      actor_id: 'virtual-user-lab',
+      input: { scenario: 'persona' },
+    },
+    {
+      ...structuredClone(original[1]!),
+      step_no: 3,
+      actor_id: contributorIds[0],
+      depends_on: [],
+    },
+    {
+      ...structuredClone(original[2]!),
+      step_no: 4,
+      actor_id: contributorIds[1],
+      depends_on: [],
+    },
+    { ...structuredClone(original[3]!), step_no: 5, depends_on: [] },
+  ];
+
+  const compiled = compilePortfolioSkillSteps({
+    steps: source,
+    task,
+    portfolio: exclusivePortfolio,
+    skillLoader: exclusiveToolLoader,
+  });
+  const toolStepNos = new Set(compiled.steps
+    .filter(({ actor_type, actor_id }) => actor_type === 'tool' && actor_id === 'virtual-user-lab')
+    .map(({ step_no }) => step_no));
+  const assignedToolStepNos = contributorIds.map((skillId) => {
+    const contributor = compiled.steps.find(({ actor_id }) => actor_id === skillId);
+    assert.ok(contributor);
+    const dependencies = contributor.depends_on.filter((stepNo) => toolStepNos.has(stepNo));
+    assert.equal(dependencies.length, 1);
+    return dependencies[0]!;
+  });
+  assert.equal(new Set(assignedToolStepNos).size, contributorIds.length);
+
+  const oneToolOnly = source.slice(1).map((step, index) => ({
+    ...structuredClone(step),
+    step_no: index + 1,
+  }));
+  assert.throws(
+    () => compilePortfolioSkillSteps({
+      steps: oneToolOnly,
+      task,
+      portfolio: exclusivePortfolio,
+      skillLoader: exclusiveToolLoader,
+    }),
+    /has no unclaimed compiled source step/u,
+  );
 });
 
 test('production portfolio compilation reuses only a contract-authorized shared Tool stage', () => {
@@ -529,6 +908,7 @@ test('production portfolio compilation reuses only a contract-authorized shared 
     optional_tool_decisions: [],
   }));
   const realResolution: CapabilityResolution = { eligible, rejected: [] };
+  const sharedInput = { query: 'crowdfunding trust evidence' };
   const candidateSteps: CurrentPlanStep[] = [
     {
       step_no: 1,
@@ -537,7 +917,7 @@ test('production portfolio compilation reuses only a contract-authorized shared 
       actor_id: sharedStage.actor_id,
       question_ids: ['question-market'],
       depends_on: [],
-      input: structuredClone(sharedStage.input),
+      input: sharedInput,
       input_bindings: [],
       expected_outputs: structuredClone(sharedStage.expected_outputs),
       acceptance_criteria: [...sharedStage.acceptance_criteria],
@@ -615,6 +995,10 @@ test('production portfolio compilation reuses only a contract-authorized shared 
 
   const shared = result.plan.steps.find(({ shared_stage_key }) => Boolean(shared_stage_key));
   assert.ok(shared);
+  assert.deepEqual(shared.input, {
+    ...sharedStage.input,
+    query: 'crowdfunding trust evidence',
+  });
   assert.deepEqual(shared.shared_by_invocation_ids, ['invocation:web', 'invocation:synthesis']);
   assert.equal(
     result.plan.steps.filter(({ actor_id }) => actor_id === 'tavily-web-search').length,
@@ -624,6 +1008,122 @@ test('production portfolio compilation reuses only a contract-authorized shared 
     result.plan.portfolio_summary.estimated_budget.expanded_step_count,
     result.plan.steps.length,
   );
+});
+
+test('production portfolio reuses a sole-consumer plan Tool for the synthesizer contract', () => {
+  const skillLoader = new SkillLoader();
+  const journey = skillLoader.listCapabilitySkills().find(({ id }) => id === 'journey-map');
+  const synthesis = skillLoader.listCapabilitySkills().find(({ id }) => id === 'research-strategy-synthesis');
+  const synthesisContract = skillLoader.loadSkillExecution('research-strategy-synthesis');
+  assert.ok(journey && journey.status === 'active');
+  assert.ok(synthesis && synthesis.status === 'active');
+  assert.ok(synthesisContract);
+
+  const domainQuery = [
+    '宠物主粮 用户心智 认知 种草 搜索 购买 2025 2026',
+    '猫粮 狗粮 每公斤 价格 京东 淘宝 抖音 2025 2026',
+  ];
+  const sourceSteps: CurrentPlanStep[] = [{
+    step_no: 1,
+    step_name: '检索宠物主粮公开证据',
+    actor_type: 'tool',
+    actor_id: 'tavily-web-search',
+    question_ids: ['question-market'],
+    depends_on: [],
+    input: { query: domainQuery, topic: 'general', max_results: 12, search_depth: 'basic' },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/results', description: '宠物主粮公开证据' }],
+    acceptance_criteria: ['返回可追溯宠物主粮来源'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  }, {
+    step_no: 2,
+    step_name: '用户旅程贡献',
+    actor_type: 'skill',
+    actor_id: journey.id,
+    question_ids: ['question-market'],
+    depends_on: [],
+    input: { research_goal: task.research_goal },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/payload', description: '旅程贡献' }],
+    acceptance_criteria: ['形成旅程贡献'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  }, {
+    step_no: 3,
+    step_name: '策略综合',
+    actor_type: 'skill',
+    actor_id: synthesis.id,
+    question_ids: ['question-market'],
+    depends_on: [2],
+    input: { research_goal: task.research_goal },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/payload', description: '综合草稿' }],
+    acceptance_criteria: ['覆盖必答问题'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  }];
+  const singleConsumerPortfolio: SkillPortfolioDecision = {
+    invocations: [{
+      invocationId: 'invocation:journey',
+      skillId: journey.id,
+      role: 'contributor',
+      demandIds: ['demand-journey'],
+      contributionTypes: ['journey'],
+      questionIds: ['question-market'],
+      requestedArtifactTypes: ['strategy_map'],
+      required: true,
+      failurePolicy: 'block',
+      estimatedSteps: 1,
+      reasonCodes: ['required_demand_coverage'],
+    }, {
+      invocationId: 'invocation:synthesis',
+      skillId: synthesis.id,
+      role: 'synthesizer',
+      demandIds: [],
+      contributionTypes: ['strategy'],
+      questionIds: ['question-market'],
+      requestedArtifactTypes: ['strategy_map'],
+      required: true,
+      failurePolicy: 'block',
+      estimatedSteps: synthesisContract.contract.stages.length,
+      reasonCodes: ['deliverable_synthesizer'],
+    }],
+    demandCoverage: [{
+      demandId: 'demand-journey',
+      demandType: 'journey',
+      ownerSkillId: journey.id,
+      corroboratorSkillIds: [],
+      questionIds: ['question-market'],
+      requestedArtifactTypes: ['strategy_map'],
+      required: true,
+    }],
+    rejected: [],
+    sharedPrerequisites: [],
+    estimatedBudget: {
+      profileId: 'depth',
+      maxSteps: 16,
+      selectedSkillCount: 2,
+      selectedContributorCount: 1,
+      estimatedSteps: synthesisContract.contract.stages.length + 2,
+      requiredDemandCount: 1,
+      optionalDemandCount: 0,
+    },
+  };
+
+  const compiled = compilePortfolioSkillSteps({
+    steps: sourceSteps,
+    task,
+    portfolio: singleConsumerPortfolio,
+    skillLoader,
+  });
+  const evidenceSteps = compiled.steps.filter(({ actor_id }) => actor_id === 'tavily-web-search');
+  assert.equal(evidenceSteps.length, 1);
+  assert.deepEqual(evidenceSteps[0]?.input.query, domainQuery);
+  const synthesisInvocation = compiled.invocations.find(({ invocation_id }) => (
+    invocation_id === 'invocation:synthesis'
+  ));
+  assert.ok(synthesisInvocation?.step_nos.includes(evidenceSteps[0]!.step_no));
 });
 
 test('PlanCompiler rejects a Portfolio whose expanded DAG exceeds the frozen Profile budget', () => {

@@ -101,6 +101,8 @@ export interface CurrentSkillInvocationV3Base {
   invocation_id: string;
   skill_id: string;
   role: 'contributor' | 'synthesizer';
+  /** Frozen Demand ownership. Optional only when reading early Plan v3 records. */
+  demand_ids?: string[];
   contribution_types: ContributionType[];
   question_ids: string[];
   requested_artifact_types: RequestedArtifact[];
@@ -425,7 +427,10 @@ export const CROSS_SKILL_REVIEW_ISSUE_TYPES = [
   'unsupported_claim',
   'duplicate',
   'method_mismatch',
+  'provisional_promoted',
+  'scope_mismatch',
   'synthetic_overclaim',
+  'unauthorized_source_rewrite',
   'missing_artifact',
   'priority_without_basis',
 ] as const;

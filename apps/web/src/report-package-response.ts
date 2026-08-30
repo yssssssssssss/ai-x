@@ -1,10 +1,20 @@
 import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
+import { parseReportPackageV3 } from '../../../packages/api-contract/report-package.ts';
+import {
+  isReportDocumentV4,
+  type ReportDocumentV3,
+  type ReportDocumentV4,
+} from '../../../packages/api-contract/report-document.ts';
 import type {
   ContributionLedgerV1,
   ContributionSummaryV1,
   CrossSkillReviewV1,
   VisualAssetManifest,
 } from '../../../packages/api-contract/research-deliverable.ts';
+import {
+  assertReportDocumentV3Integrity,
+  assertReportDocumentV4Integrity,
+} from '../../../packages/report-rendering/report-document-visitor.ts';
 
 export type ControlDeliverableResponse = CurrentReportPackageResponse<unknown>;
 
@@ -272,17 +282,34 @@ export function assertVisualAssetManifest(
 }
 
 function assertNoMultimodalFields(value: Record<string, unknown>, mode: string): void {
-  for (const key of ['reportDocument', 'visualAssetManifests', 'visualAssetManifest']) {
+  for (const key of [
+    'reportDocument',
+    'visualAssetManifests',
+    'visualAssetManifest',
+    'reportPackage',
+    'editorialShowcase',
+  ]) {
     if (hasOwn(value, key)) throw new Error(`${mode} report package must not contain multimodal ${key}`);
   }
 }
 
 function reportVisualReferences(document: Record<string, unknown>): Map<string, string> {
   if (
-    (document.version !== 'report-document-v1' && document.version !== 'report-document-v2')
+    (
+      document.version !== 'report-document-v1'
+      && document.version !== 'report-document-v2'
+      && document.version !== 'report-document-v3'
+      && document.version !== 'report-document-v4'
+    )
     || !Array.isArray(document.sections)
   ) {
     throw new Error('multimodal report document is invalid');
+  }
+  if (document.version === 'report-document-v3') {
+    assertReportDocumentV3Integrity(document as unknown as ReportDocumentV3);
+  }
+  if (isReportDocumentV4(document as { version?: string })) {
+    assertReportDocumentV4Integrity(document as unknown as ReportDocumentV4);
   }
   const references = new Map<string, string>();
   const append = (candidate: unknown): void => {
@@ -327,6 +354,9 @@ function assertExactVisualManifests(
   const seen = new Set<string>();
   for (const candidate of value.visualAssetManifests) {
     assertVisualAssetManifest(candidate, binding);
+    if (candidate.exportPolicy === 'block') {
+      throw new Error(`visual Asset ${candidate.assetId} is blocked by its export policy`);
+    }
     if (!references.has(candidate.assetId) || seen.has(candidate.assetId)) {
       throw new Error('multimodal visual Asset Manifest set does not match ReportDocument references');
     }
@@ -385,7 +415,26 @@ export function parseControlDeliverableResponse(value: unknown): ControlDelivera
   if (!isRecord(value.reportDocument)) {
     throw new Error('multimodal report package requires a ReportDocument');
   }
+  if (!isSha256(value.reportDocumentContentSha256)) {
+    throw new Error('multimodal report package requires a valid ReportDocument content hash');
+  }
   const references = reportVisualReferences(value.reportDocument);
   assertExactVisualManifests(value, references, packageBinding(value));
+  if (value.editorialShowcase !== undefined) {
+    const showcase = parseReportPackageV3(value.editorialShowcase);
+    const binding = packageBinding(value);
+    if (
+      showcase.taskId !== binding.taskId
+      || showcase.planVersionId !== binding.planVersionId
+      || showcase.attemptId !== binding.attemptId
+      || (
+        isRecord(value.reportPackage)
+        && typeof value.reportPackage.reportPublicationId === 'string'
+        && showcase.reportPublicationId !== value.reportPackage.reportPublicationId
+      )
+    ) {
+      throw new Error('Editorial Showcase package binding is invalid');
+    }
+  }
   return value as unknown as ControlDeliverableResponse;
 }

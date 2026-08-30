@@ -24,6 +24,7 @@ configureFsSafeNative({ mode: 'require' });
 
 const MAX_BINARY_BYTE_SIZE = 10 * 1024 * 1024;
 const MAX_BINARY_PIXEL_COUNT = 20_000_000;
+const HTML_TEXT_MEDIA_TYPE = 'text/html; charset=utf-8';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export class ArtifactIntegrityError extends Error {
@@ -40,6 +41,13 @@ export class BinaryArtifactValidationError extends Error {
   constructor(reason: string) {
     super(`binary artifact is invalid or unsupported: ${reason}`);
     this.name = 'BinaryArtifactValidationError';
+  }
+}
+
+export class TextArtifactValidationError extends Error {
+  constructor(reason: string) {
+    super(`text artifact is invalid or unsupported: ${reason}`);
+    this.name = 'TextArtifactValidationError';
   }
 }
 
@@ -65,6 +73,12 @@ export interface BinaryArtifactWriteInput extends ArtifactWriteBase {
   trustedMediaType?: 'image/svg+xml';
 }
 
+export interface TextArtifactWriteInput extends ArtifactWriteBase {
+  content: string;
+  mediaType: 'text/html; charset=utf-8';
+  maxByteSize: number;
+}
+
 export type TrustedBinaryContentType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml';
 
 export interface TrustedBinaryMetadata {
@@ -72,6 +86,16 @@ export interface TrustedBinaryMetadata {
   byteSize: number;
   width: number;
   height: number;
+}
+
+interface ArtifactMediaAttributes {
+  mediaType: string;
+  metadata?: Record<string, unknown>;
+}
+
+function decodeRoundTripUtf8(bytes: Buffer): string | null {
+  const content = bytes.toString('utf8');
+  return Buffer.from(content, 'utf8').equals(bytes) ? content : null;
 }
 
 async function readHandleExact(handle: FileHandle, byteSize: number): Promise<{ bytes: Buffer; contentSha256: string }> {
@@ -505,7 +529,7 @@ export class ControlArtifactStore {
   private async writeBytes(
     input: ArtifactWriteBase,
     bytes: Buffer,
-    metadata?: TrustedBinaryMetadata,
+    media?: ArtifactMediaAttributes,
   ): Promise<ControlArtifact> {
     const directory = this.directoryFor(input);
     const storageUri = this.resolveArtifactPath(directory, input.relativePath);
@@ -529,8 +553,11 @@ export class ControlArtifactStore {
         sensitivity: input.sensitivity ?? 'internal',
         redactionPolicyVersion: input.redactionPolicyVersion ?? 'v1',
         ...(input.activeLease ? { activeLease: input.activeLease } : {}),
-        ...(metadata
-          ? { mediaType: metadata.contentType, metadata: { width: metadata.width, height: metadata.height } }
+        ...(media
+          ? {
+              mediaType: media.mediaType,
+              ...(media.metadata ? { metadata: media.metadata } : {}),
+            }
           : {}),
       });
       const owners = await this.options.registry.listArtifactsByStorageUri(storageUri);
@@ -671,7 +698,37 @@ export class ControlArtifactStore {
       throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
     }
     const bytes = Buffer.from(input.bytes);
-    return this.writeBytes(input, bytes, await inspectBinary(bytes, input.trustedMediaType));
+    const metadata = await inspectBinary(bytes, input.trustedMediaType);
+    return this.writeBytes(input, bytes, {
+      mediaType: metadata.contentType,
+      metadata: { width: metadata.width, height: metadata.height },
+    });
+  }
+
+  async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
+    if (input.mediaType !== HTML_TEXT_MEDIA_TYPE) {
+      throw new TextArtifactValidationError(`media type must be ${HTML_TEXT_MEDIA_TYPE}`);
+    }
+    if (!Number.isSafeInteger(input.maxByteSize) || input.maxByteSize <= 0) {
+      throw new TextArtifactValidationError('maxByteSize must be a positive safe integer');
+    }
+    if (typeof input.content !== 'string') {
+      throw new TextArtifactValidationError('content must be a string');
+    }
+    if (input.content.includes('\0')) {
+      throw new TextArtifactValidationError('NUL characters are not allowed');
+    }
+    const bytes = Buffer.from(input.content, 'utf8');
+    if (decodeRoundTripUtf8(bytes) !== input.content) {
+      throw new TextArtifactValidationError('content does not round-trip as UTF-8');
+    }
+    if (bytes.byteLength > input.maxByteSize) {
+      throw new TextArtifactValidationError(`byte size exceeds maxByteSize ${input.maxByteSize}`);
+    }
+    if (bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
+      throw new TextArtifactValidationError('byte size exceeds 10 MiB');
+    }
+    return this.writeBytes(input, bytes, { mediaType: input.mediaType });
   }
 
   async reconcileStaging(): Promise<void> {
@@ -726,6 +783,21 @@ export class ControlArtifactStore {
   async readVerifiedBoundJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
     return { artifact, value: JSON.parse(bytes.toString('utf8')) as T };
+  }
+
+  async readVerifiedBoundText(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
+    if (artifact.mediaType !== HTML_TEXT_MEDIA_TYPE) {
+      throw new ArtifactIntegrityError(artifactId, `media type must be ${HTML_TEXT_MEDIA_TYPE}`);
+    }
+    if (bytes.includes(0)) {
+      throw new ArtifactIntegrityError(artifactId, 'contains a NUL byte');
+    }
+    const content = decodeRoundTripUtf8(bytes);
+    if (content === null) {
+      throw new ArtifactIntegrityError(artifactId, 'does not contain round-trip UTF-8');
+    }
+    return { artifact, content };
   }
 
   async readVerifiedBinary(artifactId: string): Promise<{

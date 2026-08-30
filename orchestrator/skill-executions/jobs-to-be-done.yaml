@@ -1,0 +1,81 @@
+version: skill-execution-contract-v1
+skill_id: jobs-to-be-done
+required_requirement_fields: [/research_goal]
+resources:
+  - resource_id: model_jtbd
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Apply the canonical Jobs To Be Done model and boundaries.
+    failure_policy: block
+  - resource_id: model_user_needs
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Separate stated requests, task context, and underlying motivation.
+    failure_policy: block
+  - resource_id: model_user_insight
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Translate observed requests and pain points into evidence-bound deeper needs.
+    failure_policy: block
+skill_references:
+  - references/jtbd-skeleton.md
+stages:
+  - stage_id: load-jtbd-methods
+    title: 加载 JTBD 方法
+    actor_type: knowledge
+    actor_id: knowledge.index
+    depends_on: []
+    input: {}
+    input_bindings: []
+    expected_outputs:
+      - pointer: /resources
+        description: Frozen verified JTBD knowledge resources.
+    acceptance_criteria:
+      - Every required resource matches its frozen identity and hash.
+    failure_policy: block
+  - stage_id: collect-public-evidence
+    title: 检索直接回答所需公开证据
+    actor_type: tool
+    actor_id: tavily-web-search
+    share_scope: plan
+    share_input_fields: [query, topic, max_results, search_depth, include_answer]
+    depends_on: []
+    input:
+      query: research goal direct answers official evidence
+      topic: general
+      max_results: 12
+      search_depth: advanced
+      include_answer: advanced
+    frozen_input_fields: [query, topic, max_results, search_depth, include_answer]
+    input_bindings: []
+    expected_outputs:
+      - pointer: /results
+        description: Traceable public evidence for required questions.
+    acceptance_criteria:
+      - Results include traceable URLs relevant to required questions.
+    failure_policy: block
+  - stage_id: compose-jtbd-contribution
+    title: 形成 JTBD 研究贡献
+    actor_type: skill
+    actor_id: jobs-to-be-done
+    depends_on: [load-jtbd-methods, collect-public-evidence]
+    input:
+      instruction: Produce one evidence-bound Jobs To Be Done Research Contribution. Separate observed evidence from inferred Jobs, label unsupported Jobs as hypotheses, and disclose missing primary user evidence.
+      knowledge: null
+      public_evidence: null
+    input_bindings:
+      - target_pointer: /knowledge
+        source_stage_id: load-jtbd-methods
+        source_pointer: /resources
+      - target_pointer: /public_evidence
+        source_stage_id: collect-public-evidence
+        source_pointer: /results
+    expected_outputs:
+      - pointer: /payload
+        description: jobs-to-be-done payload
+    acceptance_criteria:
+      - Job units distinguish evidence-backed observations from provisional hypotheses and disclose evidence gaps.
+    failure_policy: block
+output_stage_id: compose-jtbd-contribution
+output_pointer: /payload
+degraded_policy: gap

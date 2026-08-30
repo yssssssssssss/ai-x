@@ -80,6 +80,7 @@ interface ControlRuntimeOverrides {
   skillLoader: SkillLoader;
   artifacts: ControlArtifactStore;
   expectedActualModel?: string;
+  multiSkillPortfolioMode?: 'inactive' | 'active';
 }
 
 interface ControlRuntimeHarness {
@@ -1821,7 +1822,7 @@ test('production API persists Scenario selection guidance and resumes planning a
   const runtime = buildControlRuntime({
     repository,
     conversations: conversationAdapter(),
-    tools: new ToolRouter(),
+    tools: new ToolRouter().register(new OfflineRealTavilyAdapter()),
     llm: new PlanningModelFixtureLLM(
       expectedModel,
       expectedModel,
@@ -1831,6 +1832,7 @@ test('production API persists Scenario selection guidance and resumes planning a
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
   const app = await listenLocalApp(
@@ -1838,7 +1840,7 @@ test('production API persists Scenario selection guidance and resumes planning a
   );
   const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const authorization = { authorization: `Bearer ${token}` };
-  const originalInput = '创建一个调研任务，核心解决“宠物心智的设计表达策略全景，包含：全链路业务品牌心智、品类特色心智、场域心智策略”';
+  const originalInput = '梳理宠物心智的设计表达策略全景';
   const expectedGuidance = {
     reasonCode: 'scenario_selection_required' as const,
     options: [
@@ -1964,6 +1966,7 @@ test('production Current planning rejects model drift before candidate persisten
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
   const app = await listenLocalApp(
@@ -2038,6 +2041,7 @@ test('production Current planning persists candidates only when every receipt ma
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   // Delayed import preserves the test-controlled DB/JWT environment used by this integration file.
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');

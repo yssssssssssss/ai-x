@@ -636,6 +636,27 @@ export function canonicalizeExpectedDeliverables(requirement: ResearchTaskV2): R
   };
 }
 
+/**
+ * Model output is an untrusted draft. Once its task type has been reconciled
+ * with the user's request, the Registry is the sole authority for the
+ * persisted deliverable ID. Strict compatibility checks remain in
+ * canonicalizeExpectedDeliverables()/resolveDeliverable() for stored and
+ * execution-time contracts.
+ */
+export function canonicalizeGeneratedExpectedDeliverables(requirement: ResearchTaskV2): ResearchTaskV2 {
+  const selected = resolveTaskMapping(validatedEntries(), requirement.task_type);
+  if (!Array.isArray(requirement.expected_deliverables) || requirement.expected_deliverables.length === 0) {
+    throw new Error(`deliverable ${selected.id} is incompatible with empty expectedDeliverables`);
+  }
+  if (requirement.expected_deliverables.some((label) => typeof label !== 'string' || !label.trim())) {
+    throw new Error(`deliverable ${selected.id} is incompatible with expectedDeliverables`);
+  }
+  return {
+    ...requirement,
+    expected_deliverables: [selected.id],
+  };
+}
+
 function resolveActiveDeliverableId(
   entries: readonly DeliverableRegistryEntry[],
   deliverableId: string,

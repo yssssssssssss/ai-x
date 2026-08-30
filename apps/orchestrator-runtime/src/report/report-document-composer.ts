@@ -408,7 +408,7 @@ function chartManifestSpecHash(asset: VerifiedVisualAsset): string {
   return derivation.specHash;
 }
 
-function assertCompositionInput(input: ComposeReportDocumentInput): {
+export function assertReportCompositionInput(input: ComposeReportDocumentInput): {
   binding: ArtifactBinding;
   contract: DeliverableContractResources;
 } {
@@ -1555,7 +1555,7 @@ export function assertValidReportDocument(
 }
 
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
-  const { contract } = assertCompositionInput(input);
+  const { contract } = assertReportCompositionInput(input);
   if (input.deliverable.value.deliverableType === 'research_strategy_report') {
     const payload = input.deliverable.value.payload;
     const readablePayload = selectReadablePayloadSchema(contract, payload);

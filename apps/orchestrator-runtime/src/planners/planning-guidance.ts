@@ -901,10 +901,11 @@ export async function resolvePlanningGuidance(
     };
   }
 
-  if (
-    request.task.blocking_issues.length > 0
-    || request.task.ambiguities.some(({ blocking }) => blocking)
-  ) {
+  // Blocking issues are preserved on the frozen requirement and enforced by
+  // TaskWorkflow as approval gates after a plan is selected. Treating them as
+  // direction ambiguity here prevents a plan (and therefore its approval
+  // requirements) from ever being created.
+  if (request.task.ambiguities.some(({ blocking }) => blocking)) {
     const signals = recognizeSignals(request);
     return unresolvedResult({
       reason: 'task_blocking_ambiguity',

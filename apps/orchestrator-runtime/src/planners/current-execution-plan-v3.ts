@@ -12,8 +12,12 @@ export type CurrentExecutionPlanV3ValidationKind =
   | 'synthesizer_count'
   | 'duplicate_contribution_requirement'
   | 'unknown_demand_requirement'
+  | 'unknown_invocation_demand'
   | 'required_demand_without_owner'
+  | 'incomplete_demand_ownership'
+  | 'multiple_demand_owners'
   | 'unknown_owner_invocation'
+  | 'contribution_owner_not_contributor'
   | 'unknown_corroborator_invocation'
   | 'demand_coverage_mismatch'
   | 'owner_scope_mismatch'
@@ -71,7 +75,34 @@ function invocationCoversRequirement(
     && requirement.question_ids.every((questionId) => invocation.question_ids.includes(questionId))
     && requirement.requested_artifact_types.every((artifact) => (
       invocation.requested_artifact_types.includes(artifact)
+  ));
+}
+
+function invocationCoversDemand(
+  invocation: CurrentSkillInvocationV3,
+  demand: CurrentExecutionPlanV3['capability_demand_graph']['demands'][number],
+): boolean {
+  return invocation.contribution_types.includes(demand.type)
+    && demand.questionIds.every((questionId) => invocation.question_ids.includes(questionId))
+    && demand.requestedArtifactTypes.every((artifact) => (
+      invocation.requested_artifact_types.includes(artifact)
     ));
+}
+
+function hasDependencyPath(
+  targetStepNo: number,
+  sourceStepNo: number,
+  allowedStepNos: ReadonlySet<number>,
+  stepsByNo: ReadonlyMap<number, CurrentExecutionPlanV3['steps'][number]>,
+): boolean {
+  const visited = new Set<number>();
+  const visit = (stepNo: number): boolean => {
+    if (stepNo === sourceStepNo) return true;
+    if (visited.has(stepNo) || !allowedStepNos.has(stepNo)) return false;
+    visited.add(stepNo);
+    return stepsByNo.get(stepNo)?.depends_on.some((dependency) => visit(dependency)) === true;
+  };
+  return visit(targetStepNo);
 }
 
 /**
@@ -155,6 +186,48 @@ export function validateCurrentExecutionPlanV3(
   }
 
   const stepByNo = new Map(plan.steps.map((step) => [step.step_no, step]));
+  const sharedSummaryKeys = new Set<string>();
+  for (const prerequisite of plan.portfolio_summary.shared_prerequisites) {
+    const sharedStageKey = `shared:${prerequisite.capability_type}:${prerequisite.capability_id}`;
+    const matchingStages = plan.steps.filter((step) => step.shared_stage_key === sharedStageKey);
+    if (
+      sharedSummaryKeys.has(sharedStageKey)
+      || matchingStages.length !== 1
+      || matchingStages[0]!.actor_type !== prerequisite.capability_type
+      || matchingStages[0]!.actor_id !== prerequisite.capability_id
+    ) {
+      planError('invalid_shared_stage', [sharedStageKey]);
+    }
+    const expectedConsumerInvocationIds = prerequisite.consumer_skill_ids.map((skillId) => {
+      const matchingInvocations = plan.skill_invocations.filter((invocation) => (
+        invocation.skill_id === skillId
+      ));
+      if (matchingInvocations.length !== 1) {
+        planError('invalid_shared_stage', [sharedStageKey, skillId]);
+      }
+      return matchingInvocations[0]!.invocation_id;
+    });
+    if (!sameMembers(
+      matchingStages[0]!.shared_by_invocation_ids ?? [],
+      expectedConsumerInvocationIds,
+    )) {
+      planError('invalid_shared_stage', [
+        sharedStageKey,
+        ...expectedConsumerInvocationIds,
+        ...(matchingStages[0]!.shared_by_invocation_ids ?? []),
+      ]);
+    }
+    sharedSummaryKeys.add(sharedStageKey);
+  }
+  const unlistedSharedStage = plan.steps.find((step) => (
+    step.shared_stage_key && !sharedSummaryKeys.has(step.shared_stage_key)
+  ));
+  if (unlistedSharedStage?.shared_stage_key) {
+    planError('invalid_shared_stage', [
+      unlistedSharedStage.shared_stage_key,
+      String(unlistedSharedStage.step_no),
+    ]);
+  }
   for (const [index, step] of plan.steps.entries()) {
     if (step.step_no !== index + 1 || step.depends_on.some((dependency) => dependency >= step.step_no)) {
       planError('invalid_step_topology', [String(step.step_no)]);
@@ -172,8 +245,30 @@ export function validateCurrentExecutionPlanV3(
         planError('invalid_shared_stage', [step.shared_stage_key, String(step.step_no)]);
       }
       for (const invocationId of consumers) {
-        if (!invocationsById.get(invocationId)!.step_nos.includes(step.step_no)) {
+        const invocation = invocationsById.get(invocationId)!;
+        if (!invocation.step_nos.includes(step.step_no)) {
           planError('invalid_shared_stage', [step.shared_stage_key, invocationId]);
+        }
+        const outputSteps = invocation.step_nos
+          .map((stepNo) => stepByNo.get(stepNo))
+          .filter((consumerStep): consumerStep is CurrentExecutionPlanV3['steps'][number] => (
+            consumerStep?.skill_invocation_id === invocationId
+            && consumerStep.actor_type === 'skill'
+            && consumerStep.actor_id === invocation.skill_id
+          ));
+        if (outputSteps.length !== 1) {
+          planError('invalid_shared_stage', [step.shared_stage_key, invocationId]);
+        }
+        const outputStep = outputSteps[0]!;
+        if (invocation.execution_mode === 'legacy_single_call') {
+          if (!outputStep.depends_on.includes(step.step_no)) {
+            planError('invalid_shared_stage', [step.shared_stage_key, invocationId]);
+          }
+        } else {
+          const invocationStepNos = new Set(invocation.step_nos);
+          if (!hasDependencyPath(outputStep.step_no, step.step_no, invocationStepNos, stepByNo)) {
+            planError('invalid_shared_stage', [step.shared_stage_key, invocationId]);
+          }
         }
       }
     }
@@ -184,14 +279,16 @@ export function validateCurrentExecutionPlanV3(
       const source = stepByNo.get(binding.source_step_no);
       if (!source) planError('invalid_binding_dependency', [String(binding.source_step_no)]);
       const targetInvocationId = step.skill_invocation_id;
-      const sourceInvocationIds = source.shared_by_invocation_ids
-        ?? (source.skill_invocation_id ? [source.skill_invocation_id] : []);
       if (targetInvocationId) {
         const target = invocationsById.get(targetInvocationId)!;
-        const unauthorized = sourceInvocationIds.find((sourceInvocationId) => (
-          sourceInvocationId !== targetInvocationId
-          && !target.depends_on_invocation_ids.includes(sourceInvocationId)
-        ));
+        const sharedConsumers = source.shared_by_invocation_ids;
+        const unauthorized = sharedConsumers
+          ? (sharedConsumers.includes(targetInvocationId) ? undefined : sharedConsumers[0])
+          : source.skill_invocation_id
+            && source.skill_invocation_id !== targetInvocationId
+            && !target.depends_on_invocation_ids.includes(source.skill_invocation_id)
+            ? source.skill_invocation_id
+            : undefined;
         if (unauthorized) {
           planError('unauthorized_cross_invocation_binding', [
             targetInvocationId,
@@ -222,6 +319,38 @@ export function validateCurrentExecutionPlanV3(
   }
 
   const demandsById = new Map(plan.capability_demand_graph.demands.map((demand) => [demand.id, demand]));
+  const hasFrozenDemandOwnership = plan.skill_invocations.some(({ demand_ids }) => (
+    demand_ids !== undefined
+  ));
+  if (
+    hasFrozenDemandOwnership
+    && plan.skill_invocations.some(({ demand_ids }) => demand_ids === undefined)
+  ) {
+    planError('incomplete_demand_ownership', plan.skill_invocations
+      .filter(({ demand_ids }) => demand_ids === undefined)
+      .map(({ invocation_id }) => invocation_id));
+  }
+  const ownerByDemand = new Map<string, CurrentSkillInvocationV3>();
+  if (hasFrozenDemandOwnership) {
+    for (const invocation of plan.skill_invocations) {
+      for (const demandId of invocation.demand_ids ?? []) {
+        const demand = demandsById.get(demandId);
+        if (!demand) planError('unknown_invocation_demand', [invocation.invocation_id, demandId]);
+        const existing = ownerByDemand.get(demandId);
+        if (existing && existing.invocation_id !== invocation.invocation_id) {
+          planError('multiple_demand_owners', [
+            demandId,
+            existing.invocation_id,
+            invocation.invocation_id,
+          ]);
+        }
+        if (!invocationCoversDemand(invocation, demand)) {
+          planError('owner_scope_mismatch', [demandId, invocation.invocation_id]);
+        }
+        ownerByDemand.set(demandId, invocation);
+      }
+    }
+  }
   const requirementsByDemand = new Map<string, PlanContributionRequirement>();
   for (const requirement of plan.contribution_requirements) {
     if (requirementsByDemand.has(requirement.id)) {
@@ -232,19 +361,17 @@ export function validateCurrentExecutionPlanV3(
     if (!requirementMatchesDemand(requirement, demand)) {
       planError('demand_coverage_mismatch', [requirement.id]);
     }
+    if (!invocationsById.has(requirement.owner_invocation_id)) {
+      planError('unknown_owner_invocation', [requirement.id, requirement.owner_invocation_id]);
+    }
     requirementsByDemand.set(requirement.id, requirement);
   }
 
-  for (const demand of plan.capability_demand_graph.demands) {
-    if (demand.priority === 'required' && !requirementsByDemand.has(demand.id)) {
-      planError('required_demand_without_owner', [demand.id]);
-    }
-  }
-
-  const primaryOwnersByQuestion = new Map<string, string>();
+  const primaryOwnersByQuestionType = new Map<string, string>();
   for (const requirement of plan.contribution_requirements) {
     for (const questionId of requirement.question_ids) {
-      const existingOwner = primaryOwnersByQuestion.get(questionId);
+      const ownershipKey = `${questionId}:${requirement.demand_type}`;
+      const existingOwner = primaryOwnersByQuestionType.get(ownershipKey);
       if (existingOwner && existingOwner !== requirement.owner_invocation_id) {
         planError('multiple_primary_owners', [
           questionId,
@@ -252,14 +379,34 @@ export function validateCurrentExecutionPlanV3(
           requirement.owner_invocation_id,
         ]);
       }
-      primaryOwnersByQuestion.set(questionId, requirement.owner_invocation_id);
+      primaryOwnersByQuestionType.set(ownershipKey, requirement.owner_invocation_id);
+    }
+  }
+  if (hasFrozenDemandOwnership) {
+    for (const demand of plan.capability_demand_graph.demands) {
+      const owner = ownerByDemand.get(demand.id);
+      if (!owner) continue;
+      for (const questionId of demand.questionIds) {
+        const ownershipKey = `${questionId}:${demand.type}`;
+        const existingOwner = primaryOwnersByQuestionType.get(ownershipKey);
+        if (existingOwner && existingOwner !== owner.invocation_id) {
+          planError('multiple_primary_owners', [questionId, existingOwner, owner.invocation_id]);
+        }
+        primaryOwnersByQuestionType.set(ownershipKey, owner.invocation_id);
+      }
     }
   }
 
   for (const requirement of plan.contribution_requirements) {
-    const owner = invocationsById.get(requirement.owner_invocation_id);
-    if (!owner) {
-      planError('unknown_owner_invocation', [requirement.id, requirement.owner_invocation_id]);
+    const owner = invocationsById.get(requirement.owner_invocation_id)!;
+    if (owner.role !== 'contributor') {
+      planError('contribution_owner_not_contributor', [requirement.id, owner.invocation_id]);
+    }
+    if (
+      hasFrozenDemandOwnership
+      && ownerByDemand.get(requirement.id)?.invocation_id !== owner.invocation_id
+    ) {
+      planError('owner_scope_mismatch', [requirement.id, owner.invocation_id]);
     }
     for (const corroboratorId of requirement.corroborator_invocation_ids) {
       if (!invocationsById.has(corroboratorId)) {
@@ -271,6 +418,27 @@ export function validateCurrentExecutionPlanV3(
     }
     if (requirement.required && (!owner.required || owner.failure_policy !== 'block')) {
       planError('required_owner_may_gap', [owner.invocation_id, requirement.id]);
+    }
+  }
+
+  for (const demand of plan.capability_demand_graph.demands) {
+    if (!hasFrozenDemandOwnership) {
+      if (demand.priority === 'required' && !requirementsByDemand.has(demand.id)) {
+        planError('required_demand_without_owner', [demand.id]);
+      }
+      continue;
+    }
+    const owner = ownerByDemand.get(demand.id);
+    if (demand.priority === 'required' && !owner) {
+      planError('required_demand_without_owner', [demand.id]);
+    }
+    if (!owner) continue;
+    const requirement = requirementsByDemand.get(demand.id);
+    if (owner.role === 'contributor' && !requirement) {
+      planError('required_demand_without_owner', [demand.id, owner.invocation_id]);
+    }
+    if (owner.role === 'synthesizer' && requirement) {
+      planError('contribution_owner_not_contributor', [demand.id, owner.invocation_id]);
     }
   }
 

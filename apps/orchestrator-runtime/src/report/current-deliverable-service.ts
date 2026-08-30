@@ -17,6 +17,7 @@ import type {
   ResearchStrategyReportPayloadV2,
   ResearchStrategyContentDraftV2,
   ResearchStrategyContentPatchV1,
+  ResearchStrategySupportPatchTarget,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -30,6 +31,7 @@ import {
   buildResearchContributionBundle,
   type ContributionBundleInvocationPolicy,
 } from '../skills/research-contribution-bundle.ts';
+import { contextOnlyContributionUnitKeys } from '../skills/contribution-adapter-registry.ts';
 import {
   buildContributionSummary,
   buildGenericReviewedContributionLedger,
@@ -76,11 +78,74 @@ import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
 } from './answer-quality-validator.ts';
-function researchStrategyPatchSchema(): object {
-  return JSON.parse(readFileSync(
+
+function researchStrategySupportPatchTargets(
+  draft: ResearchStrategyContentDraftV2,
+): ResearchStrategySupportPatchTarget[] {
+  const targets: ResearchStrategySupportPatchTarget[] = draft.evidenceFindings.map(({ key }) => ({
+    entity: 'evidence_finding',
+    key,
+  }));
+  for (const block of draft.contentBlocks) {
+    if (block.kind === 'narrative') {
+      targets.push({ entity: 'content_block', key: block.key });
+      continue;
+    }
+    let keys: string[];
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      keys = block.cells.map(({ key }) => key);
+    } else if (block.kind === 'mind_model') {
+      keys = block.nodes.map(({ key }) => key);
+    } else if ('items' in block) {
+      keys = block.items.map(({ key }) => key);
+    } else {
+      continue;
+    }
+    targets.push(...keys.map((key) => ({
+      entity: 'content_item' as const,
+      blockKey: block.key,
+      key,
+    })));
+  }
+  return targets;
+}
+
+function supportTargetSchema(target: ResearchStrategySupportPatchTarget): object {
+  if (target.entity === 'content_item') {
+    return {
+      type: 'object',
+      additionalProperties: false,
+      required: ['entity', 'blockKey', 'key'],
+      properties: {
+        entity: { const: target.entity },
+        blockKey: { const: target.blockKey },
+        key: { const: target.key },
+      },
+    };
+  }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['entity', 'key'],
+    properties: {
+      entity: { const: target.entity },
+      key: { const: target.key },
+    },
+  };
+}
+
+function researchStrategyPatchSchema(draft?: ResearchStrategyContentDraftV2): object {
+  const schema = JSON.parse(readFileSync(
     join(getConfigRoot(), 'schemas/skills/research-strategy-content-patch-v1.schema.json'),
     'utf8',
-  )) as object;
+  )) as { $defs?: Record<string, unknown> };
+  if (draft && schema.$defs) {
+    const targets = researchStrategySupportPatchTargets(draft);
+    schema.$defs.supportTarget = targets.length > 0
+      ? { oneOf: targets.map(supportTargetSchema) }
+      : { not: {} };
+  }
+  return schema;
 }
 
 function patchOperationAudits(value: unknown): string[] {
@@ -1313,6 +1378,7 @@ function contributionBundleForPlan(input: {
   bundle: ResearchContributionBundleV1;
   requirements: CurrentExecutionPlanV3['contribution_requirements'];
   synthesisArtifactId: string;
+  nonAttributableSourceUnitIds: ReadonlySet<string>;
 } | null {
   if (input.plan.execution_contract_version !== 'current-execution-plan-v3') return null;
   const invocations = input.plan.skill_invocations ?? [];
@@ -1336,6 +1402,7 @@ function contributionBundleForPlan(input: {
   const orderedInvocationIds = invocations
     .filter(({ role }) => role === 'contributor')
     .map(({ invocation_id }) => invocation_id);
+  const nonAttributableSourceUnitIds = new Set<string>();
   const valuesByInvocationId = Object.fromEntries(orderedInvocationIds.map((invocationId) => {
     const material = input.materials.find(({ value }) => {
       const artifact = unknownRecord(value) as ResearchContributionArtifactV1 | null;
@@ -1344,6 +1411,9 @@ function contributionBundleForPlan(input: {
     });
     if (!material) return [invocationId, null];
     const artifact = material.value as ResearchContributionArtifactV1;
+    for (const unitKey of contextOnlyContributionUnitKeys(artifact)) {
+      nonAttributableSourceUnitIds.add(`${material.artifactId}:${unitKey}`);
+    }
     return [invocationId, {
       artifactId: material.artifactId,
       artifactContentSha256: material.artifactContentSha256,
@@ -1362,6 +1432,7 @@ function contributionBundleForPlan(input: {
     }),
     requirements: input.plan.contribution_requirements ?? [],
     synthesisArtifactId: synthesisMaterial.artifactId,
+    nonAttributableSourceUnitIds,
   };
 }
 
@@ -1600,18 +1671,21 @@ export class CurrentDeliverableService {
           if (repairable) {
             await persistAssemblyDiagnostic(assemblyRound, error, true);
             const originalDraft = sourceDraft;
+            const allowedSupportTargets = researchStrategySupportPatchTargets(originalDraft);
+            const patchSchema = researchStrategyPatchSchema(originalDraft);
             const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
               prompt: [
                 'Return one research-strategy-content-patch-v1 in structural_repair mode.',
                 'Repair the reviewed Content Draft without rewriting, deleting, or reordering existing semantic content.',
                 'Use replace_direct_answer_binding or replace_support for binding corrections. Use append operations only for genuinely missing required content.',
+                'Use replace_support only with an exact context.allowedSupportTargets entry. content_block is valid only for narrative Blocks; matrix cells, mind-model nodes, principles, opportunities, actions, and channels must use content_item with the exact blockKey and item key.',
                 'Do not use replace_semantic_text in structural_repair mode.',
                 'Use only the exact allowed Question and Evidence IDs supplied in context.',
                 'The allowedEvidence list is the authoritative final Evidence inventory. evidenceBindingSources contains upstream question-indexed citations; use it to restore missing bindings instead of claiming that the Evidence Manifest is unavailable.',
                 'Every non-unanswered Direct Answer, Evidence Finding, and requested content Block must retain relevant Evidence. Keep interpretive claims provisional even when attaching factual context.',
                 `Correct this validation failure: ${redactString(error.message)}`,
               ].join('\n'),
-              schema: researchStrategyPatchSchema(),
+              schema: patchSchema,
               schemaName: 'research-strategy-content-patch-v1',
               context: {
                 draft: redactSensitiveValue(originalDraft),
@@ -1631,6 +1705,7 @@ export class CurrentDeliverableService {
                     value: redactSensitiveValue(value),
                   })),
                 requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
+                allowedSupportTargets,
               },
               ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
               receipt: {
@@ -1644,7 +1719,7 @@ export class CurrentDeliverableService {
             let applied: ReturnType<typeof applyResearchStrategyContentPatch>;
             try {
               this.dependencies.validator.validateSchemaOrThrow(
-                researchStrategyPatchSchema(),
+                patchSchema,
                 repaired.data,
                 'research-strategy-content-patch-v1',
               );
@@ -1730,6 +1805,7 @@ export class CurrentDeliverableService {
           canonical: deliverable.payload,
           contributionRequirements: portfolioContribution.requirements,
           synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+          nonAttributableSourceUnitIds: portfolioContribution.nonAttributableSourceUnitIds,
         });
         this.dependencies.validator.validateFileOrThrow(
           'schemas/cross-skill-review-v1.schema.json',
@@ -2140,18 +2216,21 @@ export class CurrentDeliverableService {
       const allowedReviewIssueTargets = new Map(reviewIssues.map((issue) => (
         [issue.id, new Set(issue.targetNodeIds)] as const
       )));
+      const allowedSupportTargets = researchStrategySupportPatchTargets(currentDraft);
+      const patchSchema = researchStrategyPatchSchema(currentDraft);
       const patch = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
         prompt: [
           'Return one research-strategy-content-patch-v1 in semantic_revision mode.',
           'Resolve only the final review issues through explicit patch operations; never return or rewrite the whole Draft.',
           'Use replace_semantic_text only for the exact semantic units that need weaker or more accurate wording.',
           'Use replace_direct_answer_binding or replace_support for Evidence, status, confidence, and validation changes.',
+          'Use replace_support only with an exact context.allowedSupportTargets entry. content_block is valid only for narrative Blocks; structured Block support must target its exact content_item.',
           'Every semantic operation must include reviewIssueId and reason. Its target must be authorized by that exact context.reviewIssues item.',
           'Do not delete or reorder existing Direct Answers, findings, Blocks, or Block items. Preserve every requested typed content Block.',
           'Do not output Canonical IDs, Coverage, FindingGraph, risk identities, source pointers, or requestedArtifactBindings.',
           `Review issues: ${redactString(revisionInstruction)}`,
         ].join('\n'),
-        schema: researchStrategyPatchSchema(),
+        schema: patchSchema,
         schemaName: 'research-strategy-content-patch-v1',
         context: {
           mode: 'semantic_revision',
@@ -2165,6 +2244,7 @@ export class CurrentDeliverableService {
           })),
           requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
           reviewIssues,
+          allowedSupportTargets,
         },
         ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
         receipt: {
@@ -2178,7 +2258,7 @@ export class CurrentDeliverableService {
       let revised: ReturnType<typeof applyResearchStrategyContentPatch>;
       try {
         this.dependencies.validator.validateSchemaOrThrow(
-          researchStrategyPatchSchema(),
+          patchSchema,
           patch.data,
           'research-strategy-content-patch-v1',
         );

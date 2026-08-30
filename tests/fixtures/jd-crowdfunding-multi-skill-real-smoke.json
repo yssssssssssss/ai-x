@@ -10,7 +10,7 @@
       "profile": "research_synthesis",
       "taskType": "research_synthesis",
       "businessDomain": "jd_crowdfunding",
-      "input": "请基于可追溯公开资料，直接回答京东众筹项目从发现、理解、信任、支持到履约跟踪的用户心智与增长策略。必须分别产出市场与竞品格局、Persona、JTBD/支持动机、核心体验指标与虚拟用户模拟假设，并由 research-strategy-synthesis 统一生成策略地图、心智模型、设计原则、机会点和 P0/P1/P2 行动。虚拟用户结果只允许作为 simulation Evidence 和 provisional 假设，必须写明后续真实用户验证计划；不得把模拟结果陈述为真实用户事实。",
+      "input": "请基于可追溯公开资料，直接回答京东众筹项目从发现、理解、信任、支持到履约跟踪的用户心智与增长策略。分别产出市场与竞品格局、Persona、JTBD/支持动机、核心体验指标与虚拟用户模拟假设，并由 research-strategy-synthesis 统一生成策略地图、心智模型、设计原则、机会点和 P0/P1/P2 行动。虚拟用户输出按 simulation Evidence 和 provisional 假设使用，全程显示合成模拟免责声明，并附后续真实用户验证计划。",
       "researchGoal": "直接回答京东众筹用户心智、动机、体验指标与增长策略",
       "sensitivity": "public",
       "piiDetected": false,
@@ -20,6 +20,7 @@
       "minVisualAssets": 0,
       "variant": "clear",
       "requireMultiSkill": true,
+      "planningScenarioId": "strategy-synthesis",
       "expectedContributorSkillIds": [
         "competitive-web-research",
         "virtual-user-research",

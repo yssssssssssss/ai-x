@@ -22,6 +22,7 @@ import {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
+import { parseReportPackageV2, parseReportPackageV3 } from '../../../../packages/api-contract/report-package.ts';
 import {
   VisualInputDataUrlError,
 } from '../report/visual-input-data-url.ts';
@@ -477,7 +478,37 @@ export class TaskWorkflowService {
           || verifiedPackage.artifact.planVersionId !== input.planVersionId
           || verifiedPackage.artifact.attemptId !== input.attemptId
         ) throw new ControlPlaneConflictError('terminal Report Package cannot reconstruct execution result');
-        const packageValue = parseReportPackageArtifactValue(verifiedPackage.value);
+        let packageValue;
+        if (verifiedPackage.artifact.schemaVersion === 'report-package-v3') {
+          const v3 = parseReportPackageV3(verifiedPackage.value);
+          const canonical = await this.terminalArtifacts.readVerifiedJson<unknown>(
+            v3.canonicalPackageArtifactId,
+          );
+          if (
+            canonical.artifact.id !== v3.canonicalPackageArtifactId
+            || canonical.artifact.state !== 'SEALED'
+            || canonical.artifact.kind !== 'report_package'
+            || canonical.artifact.schemaVersion !== 'report-package-v2'
+            || canonical.artifact.contentSha256 !== v3.canonicalPackageContentSha256
+            || canonical.artifact.taskId !== input.taskId
+            || canonical.artifact.planVersionId !== input.planVersionId
+            || canonical.artifact.attemptId !== input.attemptId
+          ) throw new ControlPlaneConflictError('terminal canonical Report Package cannot reconstruct execution result');
+          packageValue = parseReportPackageV2(canonical.value);
+          if (v3.reportPublicationId !== packageValue.reportPublicationId) {
+            throw new ControlPlaneConflictError('terminal Report Package publication cannot reconstruct execution result');
+          }
+        } else {
+          packageValue = verifiedPackage.artifact.schemaVersion === 'report-package-v2'
+            ? parseReportPackageV2(verifiedPackage.value)
+            : parseReportPackageArtifactValue(verifiedPackage.value);
+        }
+        if (
+          verifiedPackage.artifact.schemaVersion !== 'report-package-v3'
+          && verifiedPackage.artifact.schemaVersion !== packageValue.version
+        ) {
+          throw new ControlPlaneConflictError('terminal Report Package version cannot reconstruct execution result');
+        }
         if (
           packageValue.deliverableArtifactId !== verifiedDeliverable.artifact.id
           || packageValue.evidenceManifestArtifactId !== verifiedManifest.artifact.id

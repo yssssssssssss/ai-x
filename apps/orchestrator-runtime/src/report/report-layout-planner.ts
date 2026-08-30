@@ -69,21 +69,35 @@ export class ReportLayoutPlanner {
   }): Promise<ReportLayoutPlanResult> {
     const fallback = fallbackBlueprint(input.payload);
     const validator = this.dependencies.validator ?? new SchemaValidator();
+    const selectableContentBlockIds = new Set(input.payload.contentBlocks.map(({ id }) => id));
+    const fixedDirectAnswerIds = new Set(
+      input.payload.directAnswers.map(({ questionId }) => `answer-${questionId}`),
+    );
     try {
       const generated = await this.dependencies.llm.generateStructured<ReportLayoutBlueprintV1>({
         prompt: [
           'Arrange the reviewed Canonical Content Blocks into a concise answer-first research report.',
           'Return only a report-layout-blueprint-v1 object.',
           'You may choose section titles, section count, order, grouping, and prominence.',
-          'Reference every supplied Block exactly once. Do not add prose, facts, evidence, or unknown Block IDs.',
+          'Direct Answers are fixed outside this Blueprint and must never appear in blockRefs.',
+          'Reference every selectable Content Block exactly once. Do not add prose, facts, evidence, or unknown Block IDs.',
           'Requested artifact Blocks must not be placed in an appendix.',
         ].join('\n'),
         schema: blueprintSchema(),
         schemaName: 'report-layout-blueprint',
         context: {
           title: input.payload.title,
-          requestedArtifacts: input.payload.requestedArtifactBindings.map(({ artifactType, blockIds }) => ({ artifactType, blockIds })),
-          contentIndex: input.payload.contentBlocks.map((block) => ({
+          fixedDirectAnswers: input.payload.directAnswers.map(({ questionId, question }) => ({
+            id: `answer-${questionId}`,
+            questionId,
+            question,
+          })),
+          requestedArtifacts: input.payload.requestedArtifactBindings.map(({ artifactType, blockIds }) => ({
+            artifactType,
+            fixedDirectAnswerIds: blockIds.filter((id) => fixedDirectAnswerIds.has(id)),
+            selectableContentBlockIds: blockIds.filter((id) => selectableContentBlockIds.has(id)),
+          })),
+          selectableContentBlocks: input.payload.contentBlocks.map((block) => ({
             id: block.id,
             kind: block.kind,
             title: block.title,

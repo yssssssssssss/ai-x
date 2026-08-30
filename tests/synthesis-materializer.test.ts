@@ -271,6 +271,36 @@ test('redacts prompts, credentials, and PII without mutating verified values', a
   assert.deepEqual((reader as unknown as { values: Map<string, { value: unknown }> }).values, original);
 });
 
+test('preserves machine identities and URL arrays while materializing Skill output', async () => {
+  const reader = new Reader(new Map());
+  const source = input(reader);
+  const skill = reader.values.get('artifact-skill');
+  const skillStep = source.outputs.find(({ actorType }) => actorType === 'skill');
+  assert.ok(skill);
+  assert.ok(skillStep);
+  const attemptUuid = '2cc632e5-dddf-4a1e-963a-eef764702717';
+  const sourceUnitId = '41c1a424-dcf2-46b3-aef5-dbb22470122a:F1';
+  const sourceUrl = 'https://example.test/profiles/13800138000';
+  skill.value = {
+    attemptId: attemptUuid,
+    sourceContributionUnitIds: [sourceUnitId],
+    source_urls: [sourceUrl],
+    phone: '13800138000',
+  };
+  skill.artifact.contentSha256 = hash(skill.value);
+  skillStep.artifact.contentSha256 = skill.artifact.contentSha256;
+
+  const materials = await new SynthesisMaterializer(reader).materialize(source);
+  const material = materials.find(({ actorType }) => actorType === 'skill');
+  assert.ok(material);
+  assert.deepEqual(material.value, {
+    attemptId: attemptUuid,
+    sourceContributionUnitIds: [sourceUnitId],
+    source_urls: [sourceUrl],
+    phone: '[REDACTED_PII]',
+  });
+});
+
 test('does not classify an unproven Tool as a fact source', async () => {
   const reader = new Reader(new Map());
   const source = input(reader, { evidenceEntries: [] });

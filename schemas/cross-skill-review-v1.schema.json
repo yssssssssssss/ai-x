@@ -23,7 +23,7 @@
       "required": ["id", "type", "sourceUnitIds", "targetNodeIds", "message", "disposition"],
       "properties": {
         "id": { "$ref": "#/$defs/text" },
-        "type": { "enum": ["coverage", "conflict", "unsupported_claim", "duplicate", "method_mismatch", "synthetic_overclaim", "missing_artifact", "priority_without_basis"] },
+        "type": { "enum": ["coverage", "conflict", "unsupported_claim", "duplicate", "method_mismatch", "provisional_promoted", "scope_mismatch", "synthetic_overclaim", "missing_artifact", "priority_without_basis", "unauthorized_source_rewrite"] },
         "sourceUnitIds": { "$ref": "#/$defs/ids" },
         "targetNodeIds": { "$ref": "#/$defs/ids" },
         "message": { "$ref": "#/$defs/text" },

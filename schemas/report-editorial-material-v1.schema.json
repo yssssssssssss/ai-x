@@ -1,0 +1,622 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "report-editorial-material-v1",
+  "title": "Report Editorial Material v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "binding", "document", "presentationUnits", "leafTraceIndex", "constraints"],
+  "properties": {
+    "version": { "const": "report-editorial-material-v1" },
+    "binding": { "$ref": "#/definitions/binding" },
+    "document": { "$ref": "#/definitions/document" },
+    "presentationUnits": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/presentationUnit" }
+    },
+    "leafTraceIndex": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/leafTrace" }
+    },
+    "constraints": { "$ref": "#/definitions/constraints" }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "idList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "nonEmptyIdList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "presentation": {
+      "enum": [
+        "answer",
+        "paragraph",
+        "fact",
+        "list",
+        "record-table",
+        "graph",
+        "priority-board",
+        "card-grid",
+        "stage-flow",
+        "image",
+        "image-comparison",
+        "chart"
+      ]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "planVersionId",
+        "attemptId",
+        "deliverableArtifactId",
+        "deliverableContentSha256",
+        "reportReviewArtifactId"
+      ],
+      "properties": {
+        "taskId": { "$ref": "#/definitions/nonEmptyString" },
+        "planVersionId": { "$ref": "#/definitions/nonEmptyString" },
+        "attemptId": { "$ref": "#/definitions/nonEmptyString" },
+        "deliverableArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "deliverableContentSha256": { "$ref": "#/definitions/sha256" },
+        "reportReviewArtifactId": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "deliverableType", "requestedArtifactTypes"],
+      "properties": {
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "decisionContext": { "$ref": "#/definitions/nonEmptyString" },
+        "executiveAnswer": { "$ref": "#/definitions/nonEmptyString" },
+        "deliverableType": { "$ref": "#/definitions/nonEmptyString" },
+        "requestedArtifactTypes": { "$ref": "#/definitions/idList" }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "contentSha256", "schemaVersion", "jsonPointer", "sourceNodeIds", "reviewState"],
+      "properties": {
+        "artifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "contentSha256": { "$ref": "#/definitions/sha256" },
+        "schemaVersion": { "$ref": "#/definitions/nonEmptyString" },
+        "jsonPointer": { "type": "string", "pattern": "^/" },
+        "sourceNodeIds": { "$ref": "#/definitions/idList" },
+        "reviewState": { "enum": ["passed", "passed_with_conditions"] }
+      }
+    },
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questionIds", "evidenceIds", "findingIds", "summaryIds"],
+      "properties": {
+        "questionIds": { "$ref": "#/definitions/idList" },
+        "evidenceIds": { "$ref": "#/definitions/idList" },
+        "findingIds": { "$ref": "#/definitions/idList" },
+        "summaryIds": { "$ref": "#/definitions/idList" },
+        "status": { "enum": ["supported", "provisional", "unanswered"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "leafTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supportMode", "origins", "support"],
+      "properties": {
+        "supportMode": { "enum": ["direct", "inherited", "none", "system_derived"] },
+        "origins": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/origin" }
+        },
+        "support": { "$ref": "#/definitions/support" }
+      }
+    },
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "value"],
+      "properties": {
+        "key": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "value": { "$ref": "#/definitions/scalar" }
+      }
+    },
+    "assetReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "manifestArtifactId", "contentSha256", "manifestHash", "mediaType", "exportPolicy"],
+      "properties": {
+        "assetId": { "$ref": "#/definitions/nonEmptyString" },
+        "manifestArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "contentSha256": { "$ref": "#/definitions/sha256" },
+        "manifestHash": { "$ref": "#/definitions/sha256" },
+        "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp"] },
+        "exportPolicy": { "enum": ["allow", "mask"] }
+      }
+    },
+    "assetSourceSummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "pageTitle", "domain", "capturedAt"],
+          "properties": {
+            "kind": { "const": "browser_capture" },
+            "pageTitle": { "$ref": "#/definitions/nonEmptyString" },
+            "domain": { "$ref": "#/definitions/nonEmptyString" },
+            "capturedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "fileName", "role"],
+          "properties": {
+            "kind": { "const": "user_upload" },
+            "fileName": { "$ref": "#/definitions/nonEmptyString" },
+            "role": { "$ref": "#/definitions/nonEmptyString" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "role"],
+          "properties": {
+            "kind": { "enum": ["tool_artifact", "derived"] },
+            "role": { "$ref": "#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "textUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "leafId", "text"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "enum": ["narrative", "evidence_finding", "limitation", "open_question", "risk"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "text" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "text": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "recordUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "leafId", "fields"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "enum": ["direct_answer", "design_principle", "opportunity", "channel_strategy", "requested_artifact_binding"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "record" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/field" }
+        }
+      }
+    },
+    "matrixCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leafId", "row", "column", "value"],
+      "properties": {
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "row": { "$ref": "#/definitions/nonEmptyString" },
+        "column": { "$ref": "#/definitions/nonEmptyString" },
+        "value": { "$ref": "#/definitions/scalar" }
+      }
+    },
+    "matrixUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "rows", "columns", "cells"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "enum": ["comparison_matrix", "strategy_map"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "matrix" },
+        "rows": { "$ref": "#/definitions/nonEmptyIdList" },
+        "columns": { "$ref": "#/definitions/nonEmptyIdList" },
+        "cells": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/matrixCell" }
+        }
+      }
+    },
+    "graphNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "leafId", "label", "description"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "description": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "graphEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "leafId", "from", "to", "label"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "from": { "$ref": "#/definitions/nonEmptyString" },
+        "to": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "graphUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "nodes", "edges"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "const": "mind_model" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "graph" },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/graphNode" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/graphEdge" }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leafId", "action"],
+      "properties": {
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "priority": { "enum": ["P0", "P1", "P2"] },
+        "action": { "$ref": "#/definitions/nonEmptyString" },
+        "owner": { "$ref": "#/definitions/nonEmptyString" },
+        "rationale": { "$ref": "#/definitions/nonEmptyString" },
+        "validationMethod": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "actionsUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "actions"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "enum": ["prioritized_action", "action_plan"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "actions" },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/action" }
+        }
+      }
+    },
+    "structuredRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "leafId", "title", "fields"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "body": { "$ref": "#/definitions/nonEmptyString" },
+        "status": { "$ref": "#/definitions/nonEmptyString" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/field" }
+        }
+      },
+      "anyOf": [
+        { "required": ["body"] },
+        { "properties": { "fields": { "minItems": 1 } } }
+      ]
+    },
+    "recordsUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "records"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": {
+          "enum": [
+            "research_plan_overview",
+            "research_plan_questions",
+            "research_plan_methods",
+            "research_plan_deliverables",
+            "research_plan_quality"
+          ]
+        },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "records" },
+        "records": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/structuredRecord" }
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "leafId", "label", "activities", "outputs"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "description": { "$ref": "#/definitions/nonEmptyString" },
+        "activities": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "timeLabel": { "$ref": "#/definitions/nonEmptyString" },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      },
+      "anyOf": [
+        { "required": ["description"] },
+        { "properties": { "activities": { "minItems": 1 } } },
+        { "required": ["timeLabel"] },
+        { "properties": { "outputs": { "minItems": 1 } } }
+      ]
+    },
+    "stagesUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "stages"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "const": "research_plan_execution" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "stages" },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/stage" }
+        }
+      }
+    },
+    "assetUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "leafId", "assetRef", "sourceSummary", "canonicalBindingIds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "const": "visual_asset" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "asset" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "assetRef": { "$ref": "#/definitions/assetReference" },
+        "sourceSummary": { "$ref": "#/definitions/assetSourceSummary" },
+        "canonicalBindingIds": { "$ref": "#/definitions/idList" }
+      }
+    },
+    "assetPairOriginal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leafId", "assetRef", "sourceSummary"],
+      "properties": {
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "assetRef": { "$ref": "#/definitions/assetReference" },
+        "sourceSummary": { "$ref": "#/definitions/assetSourceSummary" }
+      }
+    },
+    "assetPairAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leafId", "assetRef", "overlayArtifactId"],
+      "properties": {
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "assetRef": { "$ref": "#/definitions/assetReference" },
+        "overlayArtifactId": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "assetPairUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "original", "annotation", "findingIds", "canonicalBindingIds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "const": "visual_comparison" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "asset_pair" },
+        "original": { "$ref": "#/definitions/assetPairOriginal" },
+        "annotation": { "$ref": "#/definitions/assetPairAnnotation" },
+        "findingIds": { "$ref": "#/definitions/idList" },
+        "canonicalBindingIds": { "$ref": "#/definitions/idList" }
+      }
+    },
+    "chartRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chartId", "chartSpecArtifactId", "chartSpecArtifactContentSha256", "assetId", "manifestArtifactId"],
+      "properties": {
+        "chartId": { "$ref": "#/definitions/nonEmptyString" },
+        "chartSpecArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "chartSpecArtifactContentSha256": { "$ref": "#/definitions/sha256" },
+        "assetId": { "$ref": "#/definitions/nonEmptyString" },
+        "manifestArtifactId": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "chartSeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "values", "evidenceIds"],
+      "properties": {
+        "key": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "values": {
+          "type": "array",
+          "items": { "type": ["number", "null"] }
+        },
+        "evidenceIds": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/idList" }
+        }
+      }
+    },
+    "chartSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "chartId", "type", "title", "categories", "series"],
+      "properties": {
+        "version": { "const": "chart-spec-v1" },
+        "chartId": { "$ref": "#/definitions/nonEmptyString" },
+        "type": { "enum": ["comparison", "trend", "heatmap"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/chartSeries" }
+        },
+        "yAxis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min"],
+          "properties": { "min": { "type": "number" } }
+        }
+      }
+    },
+    "chartTableRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "cells", "evidenceIds"],
+      "properties": {
+        "key": { "$ref": "#/definitions/nonEmptyString" },
+        "label": { "$ref": "#/definitions/nonEmptyString" },
+        "cells": { "type": "array", "items": { "type": ["number", "null"] } },
+        "evidenceIds": { "type": "array", "items": { "$ref": "#/definitions/idList" } }
+      }
+    },
+    "chartTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caption", "columns", "rows"],
+      "properties": {
+        "caption": { "$ref": "#/definitions/nonEmptyString" },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/chartTableRow" }
+        }
+      }
+    },
+    "dataArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "contentSha256", "schemaVersion"],
+      "properties": {
+        "artifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "contentSha256": { "$ref": "#/definitions/sha256" },
+        "schemaVersion": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "chartUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semanticKind", "leafIds", "shape", "leafId", "chartRef", "specHash", "spec", "table", "evidenceIds", "canonicalBindingIds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "semanticKind": { "const": "verified_chart" },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "leafIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "shape": { "const": "chart" },
+        "leafId": { "$ref": "#/definitions/nonEmptyString" },
+        "chartRef": { "$ref": "#/definitions/chartRef" },
+        "specHash": { "$ref": "#/definitions/sha256" },
+        "spec": { "$ref": "#/definitions/chartSpec" },
+        "table": { "$ref": "#/definitions/chartTable" },
+        "dataArtifactRef": { "$ref": "#/definitions/dataArtifactRef" },
+        "evidenceIds": { "$ref": "#/definitions/idList" },
+        "canonicalBindingIds": { "$ref": "#/definitions/idList" }
+      }
+    },
+    "presentationUnit": {
+      "oneOf": [
+        { "$ref": "#/definitions/textUnit" },
+        { "$ref": "#/definitions/recordUnit" },
+        { "$ref": "#/definitions/matrixUnit" },
+        { "$ref": "#/definitions/graphUnit" },
+        { "$ref": "#/definitions/actionsUnit" },
+        { "$ref": "#/definitions/recordsUnit" },
+        { "$ref": "#/definitions/stagesUnit" },
+        { "$ref": "#/definitions/assetUnit" },
+        { "$ref": "#/definitions/assetPairUnit" },
+        { "$ref": "#/definitions/chartUnit" }
+      ]
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredQuestionIds",
+        "requiredPresentationUnitIds",
+        "requiredLeafUnitIds",
+        "allowedViews",
+        "projectionProfilesByUnitId"
+      ],
+      "properties": {
+        "requiredQuestionIds": { "$ref": "#/definitions/idList" },
+        "requiredPresentationUnitIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "requiredLeafUnitIds": { "$ref": "#/definitions/nonEmptyIdList" },
+        "allowedViews": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["answers", "topics", "actions", "evidence", "analysis"] }
+        },
+        "projectionProfilesByUnitId": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/definitions/presentation" }
+          }
+        }
+      }
+    }
+  }
+}

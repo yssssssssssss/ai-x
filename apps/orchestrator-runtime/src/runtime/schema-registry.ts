@@ -17,7 +17,7 @@ export interface SchemaSpec {
   arrayItemFile?: string; // 数组项的 schema 文件(仅 envelope)
 }
 
-const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'current-execution-plan' | 'current-execution-plan-v3' | 'research-task-v2' | 'problem-graph' | 'capability-demand-graph-v1' | 'research-contribution-v1' | 'research-contribution-artifact-v1' | 'research-contribution-bundle-v1' | 'cross-skill-review-v1' | 'contribution-summary-v1' | 'contribution-ledger-v1' | 'scenario-guidance' | 'report-review')[] = [
+const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'current-execution-plan' | 'current-execution-plan-v3' | 'research-task-v2' | 'problem-graph' | 'capability-demand-graph-v1' | 'research-contribution-v1' | 'research-contribution-artifact-v1' | 'research-contribution-bundle-v1' | 'cross-skill-review-v1' | 'contribution-summary-v1' | 'contribution-ledger-v1' | 'scenario-guidance' | 'report-review' | 'report-editorial-intent-v2' | 'editorial-presentation-spec-v1' | 'report-package-v3')[] = [
   'research-task',
   'research-task-v2',
   'decision-state',
@@ -38,6 +38,9 @@ const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'curre
   'contribution-summary-v1',
   'contribution-ledger-v1',
   'report-review',
+  'report-editorial-intent-v2',
+  'editorial-presentation-spec-v1',
+  'report-package-v3',
 ];
 
 // 命令经 pnpm scripts 从项目根运行,cwd 恒为项目根(与 validator.ts 一致)。

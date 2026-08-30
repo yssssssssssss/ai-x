@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { extname, isAbsolute } from 'node:path';
+import { extname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
@@ -11,6 +11,9 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
 import { requiredApprovals } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
+import { ReportPackageV2ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v2-artifact.ts';
+import { ReportPackageV3ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v3-artifact.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 export interface RealSmokeConfig {
   ALLOW_REAL_PROVIDER?: string;
@@ -81,6 +84,7 @@ export interface SemanticGoldScenario {
   requireMultiSkill?: boolean;
   expectedContributorSkillIds?: string[];
   requiredToolIds?: string[];
+  planningScenarioId?: string;
 }
 
 export interface SemanticGoldFixture {
@@ -134,6 +138,49 @@ export interface SmokeRunInput {
   designImagePath?: string;
   approvalMode?: ApprovalMode;
   progress?: (event: SmokeProgressEvent) => void;
+}
+
+export interface SmokeReportContract {
+  reportDocumentVersion?: 'report-document-v2' | 'report-document-v3' | 'report-document-v4';
+  reportPackageVersion: 'report-package-v1' | 'report-package-v2' | 'report-package-v3';
+  standaloneHtmlStatus: 'not_applicable' | 'ready';
+  showcaseStatus: 'not_applicable' | 'ready';
+  fixedPackageRoot: boolean;
+}
+
+export function resolveSmokeReportContract(input: {
+  deliverableType: string;
+  reportV3WriterEnabled: boolean;
+  standaloneHtmlBundleV1Enabled: boolean;
+  reportEditorialExperienceV1Enabled?: boolean;
+  reportEditorialShowcaseV1Enabled?: boolean;
+}): SmokeReportContract {
+  const reportV3 = input.deliverableType === 'research_strategy_report'
+    && input.reportV3WriterEnabled;
+  const standaloneHtml = reportV3 && input.standaloneHtmlBundleV1Enabled;
+  const showcase = standaloneHtml
+    && input.reportEditorialExperienceV1Enabled === true
+    && input.reportEditorialShowcaseV1Enabled === true;
+  return {
+    ...(input.deliverableType === 'research_strategy_report'
+      ? { reportDocumentVersion: showcase
+          ? 'report-document-v4'
+          : reportV3 ? 'report-document-v3' : 'report-document-v2' }
+      : {}),
+    reportPackageVersion: showcase
+      ? 'report-package-v3'
+      : standaloneHtml ? 'report-package-v2' : 'report-package-v1',
+    standaloneHtmlStatus: standaloneHtml ? 'ready' : 'not_applicable',
+    showcaseStatus: showcase ? 'ready' : 'not_applicable',
+    fixedPackageRoot: standaloneHtml,
+  };
+}
+
+export class SmokeInfrastructureError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SmokeInfrastructureError';
+  }
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -201,6 +248,51 @@ export function assertRealSmokeConfig(env: RealSmokeConfig): void {
     if (typeof env[field] !== 'string' || env[field].trim() === '') {
       throw new Error(`${field} must be non-empty`);
     }
+  }
+}
+
+export async function assertVirtualUserLabReady(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  let root: URL;
+  try {
+    root = new URL(baseUrl);
+  } catch (cause) {
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed', { cause });
+  }
+  if (root.protocol !== 'http:' && root.protocol !== 'https:') {
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed');
+  }
+  const endpoint = (path: string): string => new URL(path, `${root.toString().replace(/\/+$/u, '')}/`).toString();
+  try {
+    const health = await fetchImpl(endpoint('api/health'), {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!health.ok) throw new SmokeInfrastructureError('virtual-user-lab health preflight failed');
+    const healthBody = await health.json() as { ok?: unknown; service?: unknown };
+    if (healthBody.ok !== true || healthBody.service !== 'virtual-user-lab') {
+      throw new SmokeInfrastructureError('virtual-user-lab health preflight failed');
+    }
+
+    const simulation = await fetchImpl(endpoint('api/simulate'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenario: 'real smoke readiness probe' }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!simulation.ok) throw new SmokeInfrastructureError('virtual-user-lab simulation preflight failed');
+    const simulationBody: unknown = await simulation.json();
+    new SchemaValidator().validateFileOrThrow(
+      join(process.cwd(), 'tools/virtual-user-lab/output.schema.json'),
+      simulationBody,
+    );
+    if ((simulationBody as { status?: unknown }).status !== 'available') {
+      throw new SmokeInfrastructureError('virtual-user-lab simulation preflight failed');
+    }
+  } catch (cause) {
+    if (cause instanceof SmokeInfrastructureError) throw cause;
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed', { cause });
   }
 }
 
@@ -802,7 +894,11 @@ type SmokeRequirementResult<
   TRequirement extends { clarification_questions: unknown[] },
   TPlanning,
 > =
-  | { status: 'clarification_required'; requirement: TRequirement }
+  | {
+      status: 'clarification_required';
+      requirement: TRequirement;
+      planningGuidance?: { options: Array<{ id: string }> };
+    }
   | { status: 'ready_to_plan'; requirement: TRequirement; planningResult?: TPlanning };
 
 export async function resolveSmokeRequirement<
@@ -812,13 +908,20 @@ export async function resolveSmokeRequirement<
   initial: SmokeRequirementResult<TRequirement, TPlanning>,
   clarify: (
     answers: Record<string, unknown>,
+    selectedScenarioId?: string,
   ) => Promise<SmokeRequirementResult<TRequirement, TPlanning>>,
+  preferredScenarioId?: string,
 ): Promise<SmokeRequirementResult<TRequirement, TPlanning>> {
   let current = initial;
   for (let round = 0; round < 3 && current.status === 'clarification_required'; round += 1) {
     const confirmations = current.requirement.clarification_questions;
-    if (confirmations.length === 0) break;
-    current = await clarify(explicitSmokeConfirmationAnswers(confirmations));
+    const selectedScenarioId = confirmations.length === 0
+      ? preferredScenarioId ?? current.planningGuidance?.options[0]?.id
+      : undefined;
+    current = await clarify(
+      confirmations.length === 0 ? {} : explicitSmokeConfirmationAnswers(confirmations),
+      selectedScenarioId,
+    );
   }
   return current;
 }
@@ -981,14 +1084,15 @@ async function executeRealSmoke(
     ownerUserId: seedUser.id,
     originalInput: scenario.input,
   });
-  const finalized = await resolveSmokeRequirement(refined, (answers) => (
+  const finalized = await resolveSmokeRequirement(refined, (answers, selectedScenarioId) => (
     runtime.requirementRefinement.clarify({
       taskId: created.id,
       conversationId: conversation.id,
       ownerUserId: seedUser.id,
       answers,
+      ...(selectedScenarioId ? { selectedScenarioId } : {}),
     })
-  ));
+  ), scenario.planningScenarioId);
   if (finalized.status !== 'ready_to_plan' || !finalized.planningResult) {
     throw new Error(`real smoke requirement did not become ready for ${scenario.profile}`);
   }
@@ -1142,10 +1246,59 @@ async function executeRealSmoke(
         ),
       }
     : null;
-  const verifiedReportPackage = await new ReportPackageArtifactService(runtime.artifacts).verify({
-    artifactId: reportPackageArtifactId,
-    attemptId,
+  const reportContract = resolveSmokeReportContract({
+    deliverableType: scenario.expectedDeliverableType,
+    reportV3WriterEnabled: process.env.REPORT_V3_WRITER_ENABLED === 'true',
+    standaloneHtmlBundleV1Enabled: process.env.STANDALONE_HTML_BUNDLE_V1_ENABLED === 'true',
+    reportEditorialExperienceV1Enabled: process.env.REPORT_EDITORIAL_EXPERIENCE_V1_ENABLED === 'true',
+    reportEditorialShowcaseV1Enabled: process.env.REPORT_EDITORIAL_SHOWCASE_V1_ENABLED === 'true',
   });
+  if (
+    (reportContract.reportPackageVersion === 'report-package-v2'
+      || reportContract.reportPackageVersion === 'report-package-v3')
+    && (
+      reportContract.standaloneHtmlStatus !== 'ready'
+      || reportContract.fixedPackageRoot !== true
+    )
+  ) {
+    throw new Error('Report Package smoke contract is internally inconsistent');
+  }
+  const canonicalPackageService = new ReportPackageV2ArtifactService(runtime.artifacts);
+  const verifiedShowcasePackage = reportContract.reportPackageVersion === 'report-package-v3'
+    ? await new ReportPackageV3ArtifactService({
+        artifacts: runtime.artifacts,
+        canonicalPackages: canonicalPackageService,
+      }).verify({
+        artifactId: reportPackageArtifactId,
+        taskId,
+        planVersionId: selected.planVersionId,
+        attemptId,
+      })
+    : null;
+  const verifiedReportPackage = verifiedShowcasePackage
+    ? await canonicalPackageService.verify({
+        artifactId: verifiedShowcasePackage.value.canonicalPackageArtifactId,
+        taskId,
+        planVersionId: selected.planVersionId,
+        attemptId,
+      })
+    : reportContract.reportPackageVersion === 'report-package-v2'
+      ? await canonicalPackageService.verify({
+          artifactId: reportPackageArtifactId,
+          taskId,
+          planVersionId: selected.planVersionId,
+          attemptId,
+        })
+      : await new ReportPackageArtifactService(runtime.artifacts).verify({
+          artifactId: reportPackageArtifactId,
+          attemptId,
+        });
+  const reportPackageDocumentArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
+    ? verifiedReportPackage.value.sourceReportDocumentArtifactId
+    : verifiedReportPackage.value.reportDocumentArtifactId;
+  const reportPackageBlueprintArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
+    ? verifiedReportPackage.value.layout.blueprintArtifactId
+    : verifiedReportPackage.value.reportLayoutBlueprintArtifactId;
   if (
     verifiedReportPackage.value.taskId !== taskId
     || verifiedReportPackage.value.planVersionId !== selected.planVersionId
@@ -1157,9 +1310,24 @@ async function executeRealSmoke(
       || verifiedReportPackage.value.contributionLedgerArtifactId !== multiSkillArtifactIds.contributionLedgerArtifactId
       || verifiedReportPackage.value.contributionSummaryArtifactId !== multiSkillArtifactIds.contributionSummaryArtifactId
     ))
-    || (scenario.profile === 'research_synthesis' && !verifiedReportPackage.value.reportLayoutBlueprintArtifactId)
+    || (scenario.profile === 'research_synthesis' && !reportPackageBlueprintArtifactId)
   ) {
     throw new Error('Report Package does not match the executed task components');
+  }
+  if (
+    verifiedReportPackage.value.version === 'report-package-v2'
+    && verifiedReportPackage.value.standaloneHtml.status !== reportContract.standaloneHtmlStatus
+  ) {
+    throw new Error('Report Package v2 does not contain the required standalone HTML');
+  }
+  if (
+    reportContract.reportPackageVersion === 'report-package-v3'
+    && (
+      verifiedShowcasePackage?.value.showcase.status !== reportContract.showcaseStatus
+      || verifiedShowcasePackage.value.preferredHtml !== 'showcase'
+    )
+  ) {
+    throw new Error('Report Package v3 does not contain the required Editorial Showcase');
   }
   const delivered = record(
     await runtime.getDeliverable(taskId, seedUser.id),
@@ -1236,12 +1404,40 @@ async function executeRealSmoke(
     )));
     for (const priority of ['P0', 'P1', 'P2']) if (!priorities.has(priority)) throw new Error(`research strategy is missing ${priority} action`);
     const reportDocument = record(delivered.reportDocument, 'reportDocument');
-    if (reportDocument.version !== 'report-document-v2') throw new Error('research strategy requires ReportDocument v2');
+    if (reportDocument.version !== reportContract.reportDocumentVersion) {
+      throw new Error(`research strategy requires ${reportContract.reportDocumentVersion}`);
+    }
     if (reportDocument.layoutMode !== 'model' && reportDocument.layoutMode !== 'fallback') {
       throw new Error('research strategy requires an explicit model or fallback layout mode');
     }
     const answerReview = record(delivered.reportReview, 'reportReview');
     if (answerReview.version !== 'report-review-v2') throw new Error('research strategy requires ReportReview v2');
+    if (reportPackageDocumentArtifactId === undefined) {
+      throw new Error('research strategy Report Package is missing its ReportDocument');
+    }
+    if (verifiedReportPackage.value.version === 'report-package-v2') {
+      const packageHtml = verifiedReportPackage.value.standaloneHtml;
+      if (packageHtml.status !== 'ready') {
+        throw new Error('Report Package v2 does not contain the required standalone HTML');
+      }
+      const deliveredPackage = record(delivered.reportPackage, 'reportPackage');
+      if (
+        deliveredPackage.version !== verifiedReportPackage.value.version
+        || deliveredPackage.reportPublicationId !== verifiedReportPackage.value.reportPublicationId
+        || delivered.reportDocumentContentSha256
+          !== verifiedReportPackage.value.sourceReportDocumentContentSha256
+      ) {
+        throw new Error('Report Package v2 is not fixed to the delivered ReportDocument publication');
+      }
+      const deliveredHtml = record(deliveredPackage.standaloneHtml, 'reportPackage.standaloneHtml');
+      if (
+        deliveredHtml.status !== 'ready'
+        || deliveredHtml.artifactId !== packageHtml.artifactId
+        || deliveredHtml.rendererVersion !== packageHtml.rendererVersion
+      ) {
+        throw new Error('delivered Report Package does not preserve standalone HTML identity');
+      }
+    }
   }
 
   const steps = await runtime.repository.listExecutionSteps(attemptId);
@@ -1522,6 +1718,9 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       throw new Error('required browser evidence needs PLAYWRIGHT_CAPTURE_ENABLED=1');
     }
     assertRealSmokeConfig(process.env);
+    if (scenario.requiredToolIds?.includes('virtual-user-lab')) {
+      await assertVirtualUserLabReady(process.env.VIRTUAL_USER_BASE_URL!);
+    }
     const receipt = await executeRealSmoke(
       scenario,
       input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,

@@ -27,7 +27,11 @@ function reportDocumentVersions(): string[] {
   if (!Array.isArray(versions) || !versions.every((version) => typeof version === 'string')) {
     throw new Error('ReportDocument schema does not declare version values');
   }
-  return [...versions];
+  return [
+    ...versions,
+    schemaConst('schemas/report-document-v3.schema.json', 'version'),
+    schemaConst('schemas/report-document-v4.schema.json', 'version'),
+  ];
 }
 
 function schemaConst(relativePath: string, property: string): string {
@@ -129,6 +133,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     const crossSkillReviewSchemaHash = hashFile('schemas/cross-skill-review-v1.schema.json');
     const contributionLedgerSchemaHash = hashFile('schemas/contribution-ledger-v1.schema.json');
     const contributionSummarySchemaHash = hashFile('schemas/contribution-summary-v1.schema.json');
+    const reportEditorialIntentV2SchemaHash = hashFile('schemas/report-editorial-intent-v2.schema.json');
+    const editorialPresentationSpecSchemaHash = hashFile('schemas/editorial-presentation-spec-v1.schema.json');
+    const reportPackageV3SchemaHash = hashFile('schemas/report-package-v3.schema.json');
     const reportSchemaHash = hashFile('schemas/report-document.schema.json');
     const layoutSchemaHash = hashFile('schemas/report-layout-blueprint.schema.json');
     const diagnosticSchemaHash = hashFile('schemas/deliverable-validation-diagnostic.schema.json');
@@ -151,6 +158,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       crossSkillReviewSchemaHash,
       contributionLedgerSchemaHash,
       contributionSummarySchemaHash,
+      reportEditorialIntentV2SchemaHash,
+      editorialPresentationSpecSchemaHash,
+      reportPackageV3SchemaHash,
       reportSchemaHash,
       layoutSchemaHash,
       diagnosticSchemaHash,
@@ -168,6 +178,11 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       },
       planContractVersions: planContractVersions(),
       multiSkillPlanWriterEnabled: process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true',
+      reportV3WriterEnabled: process.env.REPORT_V3_WRITER_ENABLED === 'true',
+      reportEditorialPlannerV1Enabled: process.env.REPORT_EDITORIAL_PLANNER_V1_ENABLED === 'true',
+      reportEditorialExperienceV1Enabled: process.env.REPORT_EDITORIAL_EXPERIENCE_V1_ENABLED === 'true',
+      reportEditorialShowcaseV1Enabled: process.env.REPORT_EDITORIAL_SHOWCASE_V1_ENABLED === 'true',
+      standaloneHtmlBundleV1Enabled: process.env.STANDALONE_HTML_BUNDLE_V1_ENABLED === 'true',
       capabilityDemandGraphVersions: [schemaConst('schemas/capability-demand-graph-v1.schema.json', 'version')],
       researchContributionVersions: [schemaConst('schemas/research-contribution-v1.schema.json', 'version')],
       researchContributionArtifactVersions: [schemaConst('schemas/research-contribution-artifact-v1.schema.json', 'version')],

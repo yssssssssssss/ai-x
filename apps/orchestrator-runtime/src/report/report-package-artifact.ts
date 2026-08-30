@@ -164,6 +164,7 @@ export class ReportPackageArtifactService {
     crossSkillReviewArtifactId?: string;
     contributionLedgerArtifactId?: string;
     contributionSummaryArtifactId?: string;
+    onArtifactSealed?: (artifact: ControlArtifact) => void;
   }): Promise<ControlArtifact> {
     const value = parseReportPackageArtifactValue({
       version: REPORT_PACKAGE_SCHEMA_VERSION,
@@ -205,6 +206,7 @@ export class ReportPackageArtifactService {
       activeLease: input.activeLease,
       value,
     });
+    input.onArtifactSealed?.(artifact);
     await this.verify({ artifactId: artifact.id, attemptId: input.activeLease.attemptId });
     return artifact;
   }

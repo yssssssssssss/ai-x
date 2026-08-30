@@ -11,6 +11,7 @@ import {
   assembleResearchStrategyDeliverable,
   ResearchStrategyAssemblyError,
 } from '../apps/orchestrator-runtime/src/report/research-strategy-deliverable-assembler.ts';
+import { applyResearchStrategyContentPatch } from '../apps/orchestrator-runtime/src/report/research-strategy-content-patch.ts';
 import type { SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
 import type { EvidenceManifest } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 
@@ -382,7 +383,82 @@ test('assembler maps source-step Evidence aliases and downgrades Knowledge-only 
   assert.match(method.support.validationNeeded, /factual validation/);
 });
 
-test('assembler roots a Knowledge-only finding in factual Direct Answer context for the same question', () => {
+test('assembler keeps a Knowledge-only method provisional without borrowing an unrelated fact', () => {
+  const value = draft();
+  value.evidenceFindings.push({
+    key: 'method-q2',
+    statement: 'The documented method structures validation for Q2.',
+    support: {
+      ...support(),
+      questionIds: ['Q2'],
+      evidenceIds: ['K2-1'],
+      validationNeeded: 'Confirm the method fits this decision context.',
+    },
+  });
+
+  const evidenceManifest = manifestWithKnowledge();
+  const result = assemble({
+    problemGraph: graphWithOptionalQ2(),
+    evidenceManifest,
+    materials: materials(value),
+  });
+  const method = result.payload.evidenceFindings[1]!;
+  const q2Summary = result.findingGraph.subQuestionSummaries.find(({ id }) => id === 'summary-Q2');
+
+  assert.equal(method.support.status, 'provisional');
+  assert.equal(result.findingGraph.findings.some(({ id }) => id === 'evidence-finding-002'), false);
+  assert.equal(result.findingGraph.analyses.some(({ id }) => id === 'analysis-evidence-finding-002'), false);
+  assert.equal(q2Summary, undefined);
+  assert.ok(result.payload.openQuestions.includes('Confirm the method fits this decision context.'));
+  assert.ok(result.findingGraph.findings
+    .filter(({ kind }) => kind === 'fact')
+    .every((finding) => !('evidenceIds' in finding) || !finding.evidenceIds.includes('K2-1')));
+});
+
+test('structural repair downgrades a mixed factual and Knowledge finding before canonical assembly', () => {
+  const source = draft();
+  source.evidenceFindings[0]!.support.evidenceIds = ['K2-1'];
+  const evidenceManifest = manifestWithKnowledge();
+  const applied = applyResearchStrategyContentPatch({
+    source,
+    patch: {
+      version: 'research-strategy-content-patch-v1',
+      mode: 'structural_repair',
+      operations: [{
+        op: 'replace_support',
+        target: { entity: 'evidence_finding', key: 'finding-trust' },
+        support: {
+          ...support(),
+          evidenceIds: ['E1', 'K2-1'],
+          validationNeeded: 'Validate the interpretation against primary research.',
+        },
+      }],
+    },
+    mode: 'structural_repair',
+    problemGraph: graph,
+    evidenceManifest,
+    requestedArtifacts: requirement.requested_artifacts ?? [],
+  });
+
+  assert.equal(applied.draft.evidenceFindings[0]?.support.status, 'provisional');
+  assert.deepEqual(applied.draft.evidenceFindings[0]?.support.evidenceIds, ['E1', 'K2-1']);
+  assert.equal(
+    applied.draft.evidenceFindings[0]?.support.validationNeeded,
+    'Validate the interpretation against primary research.',
+  );
+  const result = assemble({ evidenceManifest, draftOverride: applied.draft });
+  assert.equal(result.payload.evidenceFindings[0]?.support.status, 'provisional');
+  assert.deepEqual(
+    result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-001')?.findingIds,
+    ['evidence-anchor-E1'],
+  );
+  assert.ok(result.payload.openQuestions.includes('Validate the interpretation against primary research.'));
+  assert.ok(result.findingGraph.findings
+    .filter(({ kind }) => kind === 'fact')
+    .every((finding) => !('evidenceIds' in finding) || !finding.evidenceIds.includes('K2-1')));
+});
+
+test('assembler does not root a Knowledge-only finding in unrelated factual Direct Answer context', () => {
   const value = draft();
   value.directAnswers.push({
     questionId: 'Q2',
@@ -408,11 +484,34 @@ test('assembler roots a Knowledge-only finding in factual Direct Answer context 
   });
   const method = result.payload.evidenceFindings[1]!;
   const analysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-002');
+  const summary = result.findingGraph.subQuestionSummaries.find(({ id }) => id === 'summary-Q2');
   assert.equal(method.support.status, 'provisional');
-  assert.deepEqual(analysis?.findingIds, ['evidence-finding-001']);
+  assert.equal(analysis, undefined);
+  assert.equal(summary?.analysisIds.includes('analysis-evidence-finding-002'), false);
 });
 
-test('assembler carries factual roots across provisional findings bound to the same question', () => {
+test('assembler does not let a content Block borrow factual roots from its Question', () => {
+  const value = draft();
+  const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
+  assert.ok(map && map.kind === 'strategy_map');
+  map.cells[0]!.support = {
+    ...map.cells[0]!.support,
+    status: 'provisional',
+    evidenceIds: ['K2-1'],
+    validationNeeded: 'Validate this strategy-map statement with factual evidence.',
+  };
+
+  assert.throws(
+    () => assemble({
+      evidenceManifest: manifestWithKnowledge(),
+      materials: materials(value),
+    }),
+    (error: unknown) => error instanceof ResearchStrategyAssemblyError
+      && /content block content-block-001 has no related evidence finding/u.test(error.message),
+  );
+});
+
+test('assembler does not carry factual roots between provisional findings bound to the same question', () => {
   const value = draft();
   value.evidenceFindings.push({
     key: 'q2-context',
@@ -434,8 +533,10 @@ test('assembler carries factual roots across provisional findings bound to the s
     evidenceManifest: manifestWithKnowledge(),
     materials: materials(value),
   });
+  const contextAnalysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-002');
   const methodAnalysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-003');
-  assert.deepEqual(methodAnalysis?.findingIds, ['evidence-finding-001']);
+  assert.deepEqual(contextAnalysis?.findingIds, ['evidence-finding-001']);
+  assert.equal(methodAnalysis, undefined);
 });
 
 test('assembler restores empty provisional bindings from question-indexed verified Evidence hints', () => {

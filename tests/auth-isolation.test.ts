@@ -23,6 +23,10 @@ import type {
   writeMessage as WriteMessage,
 } from '../database/repository.ts';
 import type { CurrentExecutionPlan } from '../packages/api-contract/research-deliverable.ts';
+import {
+  HtmlBundleIntegrityError,
+  HtmlBundleUnavailableError,
+} from '../apps/orchestrator-runtime/src/report/standalone-html-report-package.ts';
 
 class ScopedMigrationDatabase implements MigrationDatabase {
   constructor(
@@ -938,6 +942,69 @@ test('foreign and missing planning conversations return 404 without SSE existenc
   }
 });
 
+test('Editorial Showcase route is owner-bound and returns offline HTML', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const reads: Array<{ taskId: string; attemptId: string; ownerUserId: string }> = [];
+  const readEditorialShowcaseHtml = async (input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null> => {
+    reads.push(input);
+    if (input.attemptId === 'attempt-unavailable') throw new HtmlBundleUnavailableError();
+    if (input.attemptId === 'attempt-integrity') throw new HtmlBundleIntegrityError();
+    if (input.attemptId !== 'attempt-ready') return null;
+    return '<!doctype html><title>Showcase</title>';
+  };
+  const controlRuntime = {
+    repository: controlRepository,
+    workflow: {},
+    getDeliverable: async () => null,
+    readEditorialShowcaseHtml,
+  };
+  const server = createAgentApiApp({ controlRuntime: controlRuntime as never }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
+  const request = (attemptId: string, token: string) => fetch(
+    `${baseUrl}/api/control-tasks/${currentTaskId}/reports/${attemptId}/editorial-showcase.html`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+  try {
+    const ready = await request('attempt-ready', ownerToken);
+    assert.equal(ready.status, 200);
+    assert.equal(ready.headers.get('content-type'), 'text/html; charset=utf-8');
+    assert.equal(ready.headers.get('content-disposition'), 'inline; filename="editorial-showcase.html"');
+    assert.equal(
+      ready.headers.get('content-security-policy'),
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
+    assert.equal(await ready.text(), '<!doctype html><title>Showcase</title>');
+
+    const unavailable = await request('attempt-unavailable', ownerToken);
+    assert.equal(unavailable.status, 409);
+    assert.equal((await unavailable.json() as { code: string }).code, 'editorial_showcase_unavailable');
+
+    const integrity = await request('attempt-integrity', ownerToken);
+    assert.equal(integrity.status, 409);
+    assert.equal((await integrity.json() as { code: string }).code, 'editorial_showcase_integrity');
+
+    const missing = await request('attempt-missing', ownerToken);
+    assert.equal(missing.status, 404);
+    const foreign = await request('attempt-ready', foreignToken);
+    assert.equal(foreign.status, 404);
+    assert.equal(reads.filter(({ attemptId }) => attemptId === 'attempt-ready').length, 1);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
 test('listMessages returns owner messages and hides them from a foreign owner', async () => {
   const listMessages = repository.listMessages as unknown as OwnerAwareListMessages;
 
@@ -947,4 +1014,66 @@ test('listMessages returns owner messages and hides them from a foreign owner', 
 
   const foreignMessages = await listMessages(conversationId, foreignUserId);
   assert.deepEqual(foreignMessages, []);
+});
+
+test('HTML Bundle route is owner-bound and returns stable download or 409 responses', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const bundleBytes = Buffer.from('PK\u0003\u0004fixture', 'binary');
+  const reads: Array<{ taskId: string; attemptId: string; ownerUserId: string }> = [];
+  const readHtmlBundle = async (input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null> => {
+    reads.push(input);
+    if (input.attemptId === 'attempt-unavailable') throw new HtmlBundleUnavailableError();
+    if (input.attemptId === 'attempt-integrity') throw new HtmlBundleIntegrityError();
+    if (input.attemptId !== 'attempt-ready') return null;
+    return bundleBytes;
+  };
+  const controlRuntime = {
+    repository: controlRepository,
+    workflow: {},
+    getDeliverable: async () => null,
+    readHtmlBundle,
+  };
+  const server = createAgentApiApp({ controlRuntime: controlRuntime as never }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
+  const request = (attemptId: string, token: string) => fetch(
+    `${baseUrl}/api/control-tasks/${currentTaskId}/reports/${attemptId}/html-bundle`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+  try {
+    const ready = await request('attempt-ready', ownerToken);
+    assert.equal(ready.status, 200);
+    assert.equal(ready.headers.get('content-type'), 'application/zip');
+    assert.equal(ready.headers.get('content-disposition'), 'attachment; filename="report-bundle.zip"');
+    assert.equal(ready.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await ready.arrayBuffer()), bundleBytes);
+
+    const unavailable = await request('attempt-unavailable', ownerToken);
+    assert.equal(unavailable.status, 409);
+    assert.equal((await unavailable.json() as { code: string }).code, 'html_bundle_unavailable');
+
+    const integrity = await request('attempt-integrity', ownerToken);
+    assert.equal(integrity.status, 409);
+    assert.equal((await integrity.json() as { code: string }).code, 'html_bundle_integrity_error');
+
+    const missing = await request('attempt-missing', ownerToken);
+    assert.equal(missing.status, 404);
+
+    const foreign = await request('attempt-ready', foreignToken);
+    assert.equal(foreign.status, 404);
+    assert.equal(reads.filter(({ attemptId }) => attemptId === 'attempt-ready').length, 1);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
 });

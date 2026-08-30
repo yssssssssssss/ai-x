@@ -787,6 +787,40 @@ test('production direction gate requires an explicit choice even for an obvious 
   assert.equal(classifierCalls, 0);
 });
 
+test('approval-gated blocking issues do not abort scenario selection or profile planning', async () => {
+  const originalInput = '宠物食品心智设计表达策略研究，以“认知—种草—搜索—购买”为用户决策主线，连接品牌心智、猫狗品类心智与内容平台／App／电商详情页的场域表达';
+  const blockingIssues = [{
+    key: 'regulatory_claims',
+    kind: 'compliance',
+    reason: '宠物食品在广告与电商详情页的功效宣称可能存在合规风险，需法务/监管审核授权。',
+  }];
+  const request = baseRequest({
+    raw_input: originalInput,
+    task: task({
+      task_type: 'research_synthesis',
+      research_goal: originalInput,
+      target_audience: ['猫狗宠物主', '品牌与营销团队'],
+      scope: ['内容平台', 'App', '电商详情页'],
+      expected_deliverables: ['research_strategy_report'],
+    }, { blocking_issues: blockingIssues }),
+  });
+
+  const direction = await resolvePlanningGuidance(request, {
+    ...DYNAMIC_OPTIONS,
+    requireExplicitScenarioSelection: true,
+  });
+  assert.equal(direction.status, 'clarification');
+  assert.equal(direction.clarification?.reason_code, 'scenario_selection_required');
+
+  const selected = await resolvePlanningGuidance({
+    ...request,
+    selected_scenario_id: 'strategy-synthesis',
+  }, DYNAMIC_OPTIONS);
+  assert.equal(selected.status, 'resolved');
+  assert.deepEqual(selected.profiles.map(({ id }) => id), ['speed', 'depth']);
+  assert.deepEqual(request.task.blocking_issues, blockingIssues);
+});
+
 test('the explicit direction gate preserves direct-Skill and fixed-policy behavior', async () => {
   const direct = await resolvePlanningGuidance(baseRequest({
     direct_skill_id: 'competitive-web-research',

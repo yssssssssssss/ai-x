@@ -30,6 +30,7 @@ export class CapabilityPortfolioResolutionError extends Error {
   constructor(
     public readonly kind: CapabilityPortfolioResolutionKind,
     public readonly issueIds: string[],
+    public readonly requiredCoverageSteps?: number,
   ) {
     const uniqueIssueIds = [...new Set(issueIds)];
     super(`capability portfolio ${kind}: ${uniqueIssueIds.join(', ')}`);
@@ -38,8 +39,12 @@ export class CapabilityPortfolioResolutionError extends Error {
   }
 }
 
-function portfolioError(kind: CapabilityPortfolioResolutionKind, issueIds: string[]): never {
-  throw new CapabilityPortfolioResolutionError(kind, issueIds);
+function portfolioError(
+  kind: CapabilityPortfolioResolutionKind,
+  issueIds: string[],
+  requiredCoverageSteps?: number,
+): never {
+  throw new CapabilityPortfolioResolutionError(kind, issueIds, requiredCoverageSteps);
 }
 
 export interface PortfolioInvocationDecision {
@@ -432,6 +437,46 @@ export function portfolioActorValidationIssues(
   return issues;
 }
 
+export function portfolioCompilerOwnedWiringIssues(
+  steps: readonly CurrentPlanStep[],
+): string[] {
+  const stepByNo = new Map(steps.map((step) => [step.step_no, step]));
+  const issues: string[] = [];
+  for (const step of steps) {
+    if (step.skill_invocation_id !== undefined || step.skill_stage_id !== undefined) {
+      issues.push(`compiler_owned_skill_metadata=${step.step_no}`);
+    }
+    if (
+      Reflect.get(step, 'shared_stage_key') !== undefined
+      || Reflect.get(step, 'shared_by_invocation_ids') !== undefined
+      || Reflect.get(step, 'share_fingerprint') !== undefined
+    ) {
+      issues.push(`compiler_owned_shared_metadata=${step.step_no}`);
+    }
+    for (const dependency of step.depends_on) {
+      if (stepByNo.get(dependency)?.actor_type === 'skill') {
+        issues.push(`compiler_owned_skill_dependency=${dependency}->${step.step_no}`);
+      }
+    }
+    for (const binding of step.input_bindings) {
+      if (stepByNo.get(binding.source_step_no)?.actor_type === 'skill') {
+        issues.push(`compiler_owned_skill_binding=${binding.source_step_no}->${step.step_no}`);
+      }
+      if (/^\/(?:prior_contributions|contribution_bundle|contribution_order)(?:\/|$)/u.test(
+        binding.target_pointer,
+      )) {
+        issues.push(`compiler_owned_contribution_binding=${step.step_no}:${binding.target_pointer}`);
+      }
+    }
+    for (const field of ['prior_contributions', 'contribution_bundle', 'contribution_order']) {
+      if (Object.hasOwn(step.input, field)) {
+        issues.push(`compiler_owned_contribution_input=${step.step_no}:/${field}`);
+      }
+    }
+  }
+  return [...new Set(issues)];
+}
+
 export class CapabilityPortfolioResolver {
   resolve(input: CapabilityPortfolioResolveInput): SkillPortfolioDecision {
     const synthesizer = selectSynthesizer(input);
@@ -475,15 +520,16 @@ export class CapabilityPortfolioResolver {
       ownerByDemand.set(demand.id, owner);
     }
 
-    const ownerByQuestion = new Map<string, string>();
+    const ownerByQuestionType = new Map<string, string>();
     for (const demand of requiredDemands) {
       const ownerId = ownerByDemand.get(demand.id)!.decision.skill.id;
       for (const questionId of demand.questionIds) {
-        const existing = ownerByQuestion.get(questionId);
+        const ownershipKey = `${questionId}:${demand.type}`;
+        const existing = ownerByQuestionType.get(ownershipKey);
         if (existing && existing !== ownerId) {
           portfolioError('multiple_primary_owners', [questionId, existing, ownerId]);
         }
-        ownerByQuestion.set(questionId, ownerId);
+        ownerByQuestionType.set(ownershipKey, ownerId);
       }
     }
 
@@ -496,7 +542,7 @@ export class CapabilityPortfolioResolver {
         input.profile.id,
         String(estimatedSteps),
         String(input.profile.max_steps),
-      ]);
+      ], estimatedSteps);
     }
 
     for (const demand of optionalDemands) {

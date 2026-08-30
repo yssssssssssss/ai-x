@@ -6,6 +6,19 @@ import { buildIndex } from './indexer.ts';
 import { inferTypeDomain } from './normalizer.ts';
 import type { SkillRegistryEntry } from '../runtime/config-loader.ts';
 
+export function mergeDerivedSkillRegistryEntries(
+  generated: readonly SkillRegistryEntry[],
+  existing: readonly SkillRegistryEntry[],
+): SkillRegistryEntry[] {
+  const overlays = new Map(existing
+    .filter(({ path }) => String(path ?? '').startsWith('knowledge-base/'))
+    .map((skill) => [skill.id, skill]));
+  return generated.map((skill) => ({
+    ...overlays.get(skill.id),
+    ...skill,
+  }));
+}
+
 function walk(dir: string, acc: string[] = []): string[] {
   for (const n of readdirSync(dir)) {
     if (n === '.index' || n.startsWith('.')) continue;
@@ -31,15 +44,16 @@ export function build(): { knowledge: number; skills: number } {
   // 与编排器原生 skill(手工登记, 带 JSON schema, path 在 skills/ 下, 执行引擎需要)。
   // 只重建 KB 派生部分, 保留原生条目——否则会抹掉编排器可执行的原生能力(破坏既有链路)。
   const registryPath = kbPath('orchestrator/skill-registry.yaml');
-  const native: SkillRegistryEntry[] = existsSync(registryPath)
+  const existing: SkillRegistryEntry[] = existsSync(registryPath)
     ? ((parseYaml(readFileSync(registryPath, 'utf8')) as { skills?: SkillRegistryEntry[] }).skills ?? [])
-        .filter((s) => !String(s.path ?? '').startsWith('knowledge-base/'))
     : [];
-  const derived = skills.map((skill) => {
+  const native = existing.filter((s) => !String(s.path ?? '').startsWith('knowledge-base/'));
+  const derived = mergeDerivedSkillRegistryEntries(skills, existing).map((skill) => {
     const payloadSchema = `${skill.path}/output.schema.json`;
-    return existsSync(kbPath(payloadSchema))
-      ? { ...skill, payload_schema: payloadSchema }
-      : skill;
+    if (existsSync(kbPath(payloadSchema))) return { ...skill, payload_schema: payloadSchema };
+    const withoutStalePayloadSchema = { ...skill };
+    delete withoutStalePayloadSchema.payload_schema;
+    return withoutStalePayloadSchema;
   });
   const mergedSkills = [...native, ...derived];
 

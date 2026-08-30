@@ -23,7 +23,7 @@
 | `generate-persona` | standalone, contributor | answer | strategy report | persona | 首批 Adapter 候选；无真实材料时 provisional |
 | `generate-research-plan` | standalone, synthesizer | plan | research plan | research method | `research_plan` 唯一 Synthesizer |
 | `virtual-user-research` | standalone, contributor | answer | strategy report | virtual user hypothesis | 强制 provisional；依赖真实 `virtual-user-lab` Tool receipt |
-| `research-strategy-synthesis` | standalone, synthesizer | answer | strategy report | strategy, action plan | `research_strategy_report` 唯一 Synthesizer |
+| `research-strategy-synthesis` | standalone, synthesizer | answer | strategy report | qualitative insight, VOC, satisfaction, design audit, accessibility, research method, prioritization, strategy, action plan | `research_strategy_report` 唯一 Synthesizer；无可用 Specialist 输入时仅以显式 provisional/gap 方式兜底 |
 | `generate-survey` | standalone | plan | research plan | — | 问卷 Payload 尚未映射到 planning Contribution |
 | `generate-usability-test` | standalone | plan, answer | research plan, design audit | — | 测试执行包尚非标准 Contribution |
 | `issue-prioritization` | standalone, contributor | answer | strategy/VOC/design audit | prioritization | 有问题清单时可组合 |

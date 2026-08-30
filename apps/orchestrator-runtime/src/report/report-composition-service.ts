@@ -6,9 +6,18 @@ import type {
 } from '../../../../database/control-plane.ts';
 import type { PassedReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
+  ReportDocumentV3,
+  ReportDocumentV4,
+  ReportNoticeV1,
+} from '../../../../packages/api-contract/report-document.ts';
+import type { ReportAuditAppendixMaterialV1 } from '../../../../packages/api-contract/report-editorial.ts';
+import type { ReportPackageLayoutV2 } from '../../../../packages/api-contract/report-package.ts';
+import type {
   ChartSpec,
+  ContributionLedgerV1,
   EvidenceManifest,
   ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
   ResearchStrategyReportPayloadV2,
   VisualAssetManifest,
   VisualAssetReference,
@@ -26,6 +35,7 @@ import {
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
 import {
+  assertReportCompositionInput,
   composeReportDocument,
   type ChartDataArtifactReference,
   type ReportDocument,
@@ -49,6 +59,30 @@ import {
   parseCompetitiveWeightChartData,
   type CompetitiveWeightChartData,
 } from './competitive-weight-chart.ts';
+import { SchemaValidator } from '../schema/validator.ts';
+import { createDeterministicReportEditorialBlueprintV1 } from './report-editorial-blueprint.ts';
+import { createDeterministicReportEditorialIntentCompilation } from './report-editorial-intent-compiler.ts';
+import type {
+  ReportEditorialPlanner,
+  ReportEditorialPlannerDataClassification,
+} from './report-editorial-planner.ts';
+import {
+  buildReportAuditAppendixMaterialV1,
+  buildResearchPlanEditorialMaterialV1,
+  buildResearchStrategyEditorialMaterialV1,
+} from './report-editorial-material-builder.ts';
+import {
+  bindEditorialShowcaseContributions,
+  createDeterministicEditorialShowcaseSpec,
+} from './report-editorial-showcase-compiler.ts';
+import type {
+  EditorialShowcasePublicationResult,
+  EditorialShowcasePublicationService,
+} from './report-editorial-showcase-publication.ts';
+import {
+  projectReportEditorialDocumentV3,
+  projectReportEditorialDocumentV4,
+} from './report-editorial-projector.ts';
 
 interface VerifiedArtifactValue<T> {
   artifact: ControlArtifact;
@@ -106,16 +140,22 @@ export interface ReportCompositionInput extends ReportBinding {
   visualAssets: VerifiedVisualAsset[];
   charts: CompositionVerifiedChart[];
   activeLease: ControlExecutionLease;
+  contributionLedgerArtifactId?: string;
+  onArtifactSealed?: (artifact: ControlArtifact) => void;
   expectedModel?: string;
   layoutStepNo?: number;
+  editorialPlannerDataClassification?: ReportEditorialPlannerDataClassification;
   cancellationSignal?: AbortSignal;
 }
 
 export interface ReportCompositionResult {
   artifact: ControlArtifact;
-  document: ReportDocument;
+  document: ReportDocument | ReportDocumentV3 | ReportDocumentV4;
+  editorialBlueprintArtifactId?: string;
+  editorialLayout?: ReportPackageLayoutV2;
   layoutBlueprintArtifactId?: string;
   layoutDiagnosticArtifactId?: string;
+  editorialShowcase?: EditorialShowcasePublicationResult;
 }
 
 export interface ReportCompositionPort {
@@ -155,6 +195,28 @@ function assertMaterialArtifact(artifact: ControlArtifact, binding: ReportBindin
   }
   if (!artifact.contentSha256 || artifact.byteSize === null) {
     throw new Error(`report material ${artifact.id} has no sealed hash or byte size`);
+  }
+}
+
+function reportArtifactWasSealed(input: {
+  artifact: ControlArtifact;
+  binding: ReportBinding;
+  kind: 'report_editorial_blueprint' | 'report_document';
+  schemaVersion: 'report-editorial-blueprint-v1' | 'report-document-v3' | 'report-document-v4';
+  onArtifactSealed?: (artifact: ControlArtifact) => void;
+}): void {
+  if (input.artifact.state === 'SEALED') input.onArtifactSealed?.(input.artifact);
+  if (
+    input.artifact.state !== 'SEALED'
+    || !input.artifact.contentSha256
+    || input.artifact.byteSize === null
+    || input.artifact.taskId !== input.binding.taskId
+    || input.artifact.planVersionId !== input.binding.planVersionId
+    || input.artifact.attemptId !== input.binding.attemptId
+    || input.artifact.kind !== input.kind
+    || input.artifact.schemaVersion !== input.schemaVersion
+  ) {
+    throw new Error(`${input.kind} Artifact was not sealed with the active report binding`);
   }
 }
 
@@ -238,6 +300,18 @@ export class ReportCompositionService implements ReportCompositionPort {
     visualAssets: Pick<VisualAssetService, 'readVerified'>;
     repository: Pick<ControlPlaneRepository, 'listArtifactsForAttempt'>;
     layoutPlanner?: Pick<ReportLayoutPlanner, 'plan'>;
+    editorialPlanner?: Pick<ReportEditorialPlanner, 'plan'>;
+    showcasePublisher?: Pick<EditorialShowcasePublicationService, 'publish'>;
+    validator?: Pick<SchemaValidator, 'validateFileOrThrow' | 'validateOrThrow'>;
+    reportV3Writer?: {
+      enabled: boolean;
+      editorialExperienceV1Enabled?: boolean;
+      verifiedPresentations?: {
+        recordTable?: boolean;
+        graph?: boolean;
+        priorityBoard?: boolean;
+      };
+    };
   }) {}
 
   async discoverAttemptMaterials(input: ReportMaterialDiscoveryInput): Promise<ReportAttemptMaterials> {
@@ -582,6 +656,218 @@ export class ReportCompositionService implements ReportCompositionPort {
         manifestArtifactId: asset.manifestArtifact.id,
       })));
     const charts = refreshedCharts;
+    const payload = input.deliverable.value.payload;
+    const editorialExperienceV1Enabled = this.dependencies.reportV3Writer
+      ?.editorialExperienceV1Enabled === true;
+    const editorialStrategyPayload = input.deliverable.value.deliverableType === 'research_strategy_report'
+      && isResearchStrategyPayloadV2(payload)
+      ? payload
+      : undefined;
+    const researchPlanPayload = input.deliverable.value.deliverableType === 'research_plan'
+      ? payload as ResearchPlanPayload
+      : undefined;
+    const useEditorialPipeline = this.dependencies.reportV3Writer?.enabled === true
+      && (editorialStrategyPayload !== undefined
+        || (editorialExperienceV1Enabled && researchPlanPayload !== undefined));
+    if (useEditorialPipeline) {
+      assertReportCompositionInput({
+        templateId: contract.entry.report_template,
+        requiredQuestionIds: input.requiredQuestionIds,
+        deliverable: input.deliverable,
+        evidenceManifest: input.evidenceManifest,
+        evidenceArtifactResolver: input.evidenceArtifactResolver,
+        review: input.review,
+        visualAssets,
+        charts,
+      });
+      const validator = this.dependencies.validator ?? new SchemaValidator();
+      const materialInput = {
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        requiredQuestionIds: input.requiredQuestionIds,
+        review: input.review,
+      };
+      const material = editorialStrategyPayload
+        ? buildResearchStrategyEditorialMaterialV1({
+            ...materialInput,
+            deliverable: {
+              artifact: input.deliverable.artifact,
+              value: { ...input.deliverable.value, payload: editorialStrategyPayload },
+            },
+          })
+        : buildResearchPlanEditorialMaterialV1({
+            ...materialInput,
+            deliverable: {
+              artifact: input.deliverable.artifact,
+              value: { ...input.deliverable.value, payload: researchPlanPayload! },
+            },
+          });
+      validator.validateFileOrThrow(
+        'schemas/report-editorial-material-v1.schema.json',
+        material,
+      );
+      let auditAppendix: ReportAuditAppendixMaterialV1 | undefined;
+      if (input.contributionLedgerArtifactId) {
+        const contributionLedger = await this.dependencies.artifacts
+          .readVerifiedJson<ContributionLedgerV1>(input.contributionLedgerArtifactId);
+        validator.validateOrThrow('contribution-ledger-v1', contributionLedger.value);
+        auditAppendix = buildReportAuditAppendixMaterialV1({ material, contributionLedger });
+      }
+      const presentations = this.dependencies.reportV3Writer?.verifiedPresentations;
+      const presentationOptions = {
+        recordTable: presentations?.recordTable === true,
+        graph: presentations?.graph === true,
+        priorityBoard: presentations?.priorityBoard === true,
+        cardGrid: editorialExperienceV1Enabled,
+        stageFlow: editorialExperienceV1Enabled,
+      };
+      const showcaseRequested = this.dependencies.showcasePublisher !== undefined
+        && editorialStrategyPayload !== undefined;
+      const editorialPlan = this.dependencies.editorialPlanner && input.expectedModel
+        ? await this.dependencies.editorialPlanner.plan({
+            material,
+            attemptId: input.attemptId,
+            stepNo: input.layoutStepNo ?? 0,
+            expectedModel: input.expectedModel,
+            presentationOptions,
+            enableEditorialCopy: editorialExperienceV1Enabled,
+            enableEditorialShowcase: showcaseRequested,
+            ...(input.editorialPlannerDataClassification
+              ? { dataClassification: input.editorialPlannerDataClassification }
+              : {}),
+            ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
+          })
+        : editorialExperienceV1Enabled
+          ? (() => {
+              const fallback = createDeterministicReportEditorialIntentCompilation(
+                material,
+                presentationOptions,
+              );
+              return {
+                blueprint: fallback.blueprint,
+                mode: 'fallback' as const,
+                reasonCode: 'planner_disabled' as const,
+                warnings: [],
+                editorialCopy: fallback.editorialCopy,
+                ...(showcaseRequested
+                  ? { showcaseSpec: createDeterministicEditorialShowcaseSpec(material) }
+                  : {}),
+              };
+            })()
+          : {
+              blueprint: createDeterministicReportEditorialBlueprintV1(material, presentationOptions),
+              mode: 'fallback' as const,
+              reasonCode: 'planner_disabled' as const,
+              warnings: [],
+              editorialCopy: undefined,
+              ...(showcaseRequested
+                ? { showcaseSpec: createDeterministicEditorialShowcaseSpec(material) }
+                : {}),
+            };
+      const blueprint = editorialPlan.blueprint;
+      validator.validateFileOrThrow(
+        'schemas/report-editorial-blueprint-v1.schema.json',
+        blueprint,
+      );
+      const editorialBlueprintArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'report_editorial_blueprint',
+        relativePath: 'reports/report-editorial-blueprint.json',
+        value: blueprint,
+        schemaVersion: blueprint.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+      });
+      reportArtifactWasSealed({
+        artifact: editorialBlueprintArtifact,
+        binding: input,
+        kind: 'report_editorial_blueprint',
+        schemaVersion: 'report-editorial-blueprint-v1',
+        ...(input.onArtifactSealed ? { onArtifactSealed: input.onArtifactSealed } : {}),
+      });
+      const notices: ReportNoticeV1[] = editorialPlan.mode === 'fallback'
+        && editorialPlan.reasonCode !== 'planner_disabled'
+        ? [{
+            id: editorialPlan.reasonCode === 'data_policy_denied'
+              ? 'notice-data-policy-fallback'
+              : 'notice-layout-fallback',
+            code: editorialPlan.reasonCode === 'data_policy_denied'
+              ? 'data_policy_fallback'
+              : 'layout_fallback',
+            severity: 'info',
+            scope: 'report',
+            relatedUnitIds: [],
+          }]
+        : [];
+      const document = editorialExperienceV1Enabled
+        ? projectReportEditorialDocumentV4({
+            material,
+            blueprint,
+            editorialCopy: editorialPlan.editorialCopy,
+            layoutMode: editorialPlan.mode,
+            ...(auditAppendix ? { auditAppendix } : {}),
+            ...(notices.length > 0 ? { notices } : {}),
+          })
+        : projectReportEditorialDocumentV3({
+            material,
+            blueprint,
+            layoutMode: editorialPlan.mode,
+            ...(auditAppendix ? { auditAppendix } : {}),
+            ...(notices.length > 0 ? { notices } : {}),
+          });
+      validator.validateOrThrow('report-document', document);
+      const artifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'report_document',
+        relativePath: 'reports/report-document.json',
+        value: document,
+        schemaVersion: document.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+      });
+      reportArtifactWasSealed({
+        artifact,
+        binding: input,
+        kind: 'report_document',
+        schemaVersion: document.version,
+        ...(input.onArtifactSealed ? { onArtifactSealed: input.onArtifactSealed } : {}),
+      });
+      const editorialLayout: ReportPackageLayoutV2 = editorialPlan.mode === 'model'
+        ? { mode: 'model', blueprintArtifactId: editorialBlueprintArtifact.id }
+        : {
+            mode: 'fallback',
+            blueprintArtifactId: editorialBlueprintArtifact.id,
+            reasonCode: editorialPlan.reasonCode,
+          };
+      const editorialShowcase = this.dependencies.showcasePublisher && editorialStrategyPayload
+        ? await this.dependencies.showcasePublisher.publish({
+            activeLease: input.activeLease,
+            material,
+            evidenceManifest: input.evidenceManifest.value,
+            evidenceManifestArtifact: input.evidenceManifest.artifact,
+            spec: bindEditorialShowcaseContributions(
+              editorialPlan.showcaseSpec ?? createDeterministicEditorialShowcaseSpec(material),
+              material,
+              auditAppendix,
+            ),
+            ...(input.onArtifactSealed ? { onArtifactSealed: input.onArtifactSealed } : {}),
+          })
+        : undefined;
+      return {
+        artifact,
+        document,
+        editorialBlueprintArtifactId: editorialBlueprintArtifact.id,
+        editorialLayout,
+        ...(editorialShowcase === undefined ? {} : { editorialShowcase }),
+      };
+    }
     const strategyPayload = isResearchStrategyPayloadV2(input.deliverable.value.payload)
       ? input.deliverable.value.payload as ResearchStrategyReportPayloadV2
       : null;

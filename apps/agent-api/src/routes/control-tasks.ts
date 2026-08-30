@@ -13,6 +13,10 @@ import {
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import {
+  HtmlBundleIntegrityError,
+  HtmlBundleUnavailableError,
+} from '../../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
 import {
@@ -58,6 +62,16 @@ export interface ControlTasksRuntime {
     bytes: Uint8Array;
     manifest: unknown;
   } | null>;
+  readHtmlBundle?(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null>;
+  readEditorialShowcaseHtml?(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null>;
   clarification?: ControlClarificationPort;
 }
 
@@ -476,6 +490,83 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       res.send(Buffer.from(asset.bytes));
     } catch {
       hidden();
+    }
+  });
+
+  router.get('/:id/reports/:attemptId/html-bundle', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.readHtmlBundle) {
+      res.status(409).json({ error: '离线 HTML 报告不可用', code: 'html_bundle_unavailable' });
+      return;
+    }
+    try {
+      const bytes = await runtime.readHtmlBundle({
+        taskId: req.params.id,
+        attemptId: req.params.attemptId,
+        ownerUserId: actor.userId,
+      });
+      if (!bytes) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': 'attachment; filename="report-bundle.zip"',
+        'Content-Type': 'application/zip',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(Buffer.from(bytes));
+    } catch (error) {
+      if (error instanceof HtmlBundleUnavailableError) {
+        res.status(409).json({ error: '离线 HTML 报告不可用', code: error.code });
+        return;
+      }
+      if (error instanceof HtmlBundleIntegrityError) {
+        res.status(409).json({ error: '离线 HTML 报告完整性校验失败', code: error.code });
+        return;
+      }
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/reports/:attemptId/editorial-showcase.html', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.readEditorialShowcaseHtml) {
+      res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+      return;
+    }
+    try {
+      const html = await runtime.readEditorialShowcaseHtml({
+        taskId: req.params.id,
+        attemptId: req.params.attemptId,
+        ownerUserId: actor.userId,
+      });
+      if (!html) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': 'inline; filename="editorial-showcase.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Type': 'text/html; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(html);
+    } catch (error) {
+      if (error instanceof HtmlBundleUnavailableError) {
+        res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+        return;
+      }
+      if (error instanceof HtmlBundleIntegrityError) {
+        res.status(409).json({ error: 'Editorial Showcase 完整性校验失败', code: 'editorial_showcase_integrity' });
+        return;
+      }
+      responseError(res, error);
     }
   });
 

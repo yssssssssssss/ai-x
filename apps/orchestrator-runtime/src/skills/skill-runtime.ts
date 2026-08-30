@@ -8,6 +8,16 @@ import type { LoadedSkillExecutionContract } from './skill-execution-contract.ts
 import type { SchemaValidator } from '../schema/validator.ts';
 
 export const SKILL_EXECUTION_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied verified inputs.';
+const CONTRIBUTOR_EXECUTION_PROMPT_SUFFIX = 'Portfolio Contributor status describes execution completeness, not evidence strength. Use succeeded only when every required output field can be produced from the supplied input, frozen Knowledge, and upstream evidence; disclose inference and missing primary data in assumptions and limitations. Use degraded when required context or output is missing, or execution is incomplete.';
+
+export function buildSkillExecutionPrompt(
+  preparedPrompt: string,
+  contributionMode: boolean,
+): string {
+  return contributionMode
+    ? `${preparedPrompt}\n${CONTRIBUTOR_EXECUTION_PROMPT_SUFFIX}`
+    : preparedPrompt;
+}
 
 export interface PreparedSkillExecution {
   skill: SkillRegistryEntry;

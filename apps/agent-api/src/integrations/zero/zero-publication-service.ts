@@ -9,11 +9,17 @@ import type {
 import type {
   VisualAssetReference,
 } from '../../../../../packages/api-contract/research-deliverable.ts';
-import type { CurrentReportPackageReader } from '../../../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import type {
-  ReportBlock,
-  ReportDocument,
-} from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
+  RenderableReportDocument,
+  ReportBlockV1V2,
+  ReportBlockV3,
+  ReportBlockV4,
+} from '../../../../../packages/api-contract/report-document.ts';
+import {
+  isReportDocumentV3,
+  isReportDocumentV4,
+} from '../../../../../packages/api-contract/report-document.ts';
+import type { CurrentReportPackageReader } from '../../../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import type { VerifiedVisualAsset } from '../../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import type {
   ZeroIntegrationStatusResponse,
@@ -37,6 +43,7 @@ import {
 } from './zero-image-transcoder.ts';
 
 const LEASE_MS = 60_000;
+type ZeroReadableBlock = ReportBlockV1V2 | ReportBlockV3 | ReportBlockV4;
 
 export class ZeroPublicationServiceError extends Error {
   constructor(
@@ -181,7 +188,7 @@ function metadataNodes(xml: string): Map<string, { id: string; width?: number; h
 }
 
 function blockVisuals(
-  block: ReportBlock,
+  block: ZeroReadableBlock,
 ): Array<{ ref: VisualAssetReference; role: ZeroVisualRole; pairKey?: string; key: string }> {
   if (block.type === 'image') {
     return [{ ref: block.assetRef, role: 'image', key: `${block.id}:image` }];
@@ -205,7 +212,7 @@ function blockVisuals(
   return [];
 }
 
-function visualLabel(block: ReportBlock, role: ZeroVisualRole): string {
+function visualLabel(block: ZeroReadableBlock, role: ZeroVisualRole): string {
   if (block.type === 'chart' || block.type === 'image') return block.caption;
   if (block.type === 'image-comparison') {
     return role === 'image_original'
@@ -228,9 +235,11 @@ function assertMultimodal(
 
 function reportDocumentWithContributionSummary(
   report: Extract<CurrentReportPackageResponse, { presentationMode: 'multimodal' }>,
-): ReportDocument {
+): RenderableReportDocument {
+  const document = report.reportDocument as RenderableReportDocument;
+  if (isReportDocumentV3(document) || isReportDocumentV4(document)) return document;
   const summary = report.contributionSummary;
-  if (!summary) return report.reportDocument;
+  if (!summary) return document;
   const contributors = summary.contributors;
   const dispositionCounts = new Map<string, number>();
   for (const contributor of contributors) {
@@ -251,9 +260,9 @@ function reportDocumentWithContributionSummary(
     ...contributors.flatMap(({ limitations }) => limitations.map((limitation) => `局限：${limitation}`)),
   ];
   return {
-    ...report.reportDocument,
+    ...document,
     sections: [
-      ...report.reportDocument.sections,
+      ...document.sections,
       {
         id: 'multi-skill-contribution-summary',
         title: 'Multi-Skill 贡献摘要',
@@ -358,7 +367,11 @@ export class ZeroPublicationService {
       !reportPackage
       || reportPackage.planVersionId !== task.activePlanVersionId
       || !reportPackage.contentSha256
-      || reportPackage.schemaVersion !== 'report-package-v1'
+      || (
+        reportPackage.schemaVersion !== 'report-package-v1'
+        && reportPackage.schemaVersion !== 'report-package-v2'
+        && reportPackage.schemaVersion !== 'report-package-v3'
+      )
     ) {
       throw new ZeroPublicationServiceError('report_package_missing', 'Verified Report Package is unavailable');
     }
@@ -438,7 +451,8 @@ export class ZeroPublicationService {
   ): Promise<ZeroVisualInput[]> {
     const manifestByAsset = new Map(report.visualAssetManifests.map((manifest) => [manifest.assetId, manifest]));
     const inputs: ZeroVisualInput[] = [];
-    for (const section of report.reportDocument.sections) {
+    const document = report.reportDocument as RenderableReportDocument;
+    for (const section of document.sections) {
       for (const block of section.blocks) {
         for (const visual of blockVisuals(block)) {
           const manifest = manifestByAsset.get(visual.ref.assetId);
@@ -552,6 +566,7 @@ export class ZeroPublicationService {
         document: reportDocumentWithContributionSummary(report),
         publicationId: publication.id,
         visuals: transcoded.placements,
+        sourceReportDocumentContentSha256: report.reportDocumentContentSha256,
       });
       publication = await this.update(publication, 'creating_draft', 40);
       const draft = await this.dependencies.zero.createHtmlDraft({

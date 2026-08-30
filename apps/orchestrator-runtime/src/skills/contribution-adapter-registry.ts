@@ -6,7 +6,7 @@ import type {
   ResearchContributionUnit,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import { SchemaValidator } from '../schema/validator.ts';
-import { stableJsonHash } from '../runtime/stable-json.ts';
+import { stableJsonHash, stableJsonStringify } from '../runtime/stable-json.ts';
 import { validateResearchContribution } from './research-contribution.ts';
 
 export type ContributionAdapterErrorCode =
@@ -73,6 +73,31 @@ const ADAPTER_VERSION = '1.0.0';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function contextOnlyContributionUnitKeys(
+  artifact: ResearchContributionArtifactV1,
+): string[] {
+  if (artifact.source.adapterId !== SKILL_ENVELOPE_PROVISIONAL_ADAPTER_ID) return [];
+  const unitsByKey = new Map(artifact.contribution.units.map((unit) => [unit.key, unit]));
+  const keys = new Set<string>();
+  for (const mapping of artifact.source.unitMappings) {
+    if (!mapping.sourceJsonPointer.startsWith('/payload/')) continue;
+    const unit = unitsByKey.get(mapping.targetUnitKey);
+    if (!unit) continue;
+    try {
+      const value: unknown = JSON.parse(unit.statement);
+      if (
+        (Array.isArray(value) || isRecord(value))
+        && stableJsonHash(value) === mapping.sourceSemanticHash
+      ) {
+        keys.add(unit.key);
+      }
+    } catch {
+      // Scalar payload text remains an attributable Contribution unit.
+    }
+  }
+  return [...keys].sort();
 }
 
 function parseEnvelope(value: unknown): SkillOutputEnvelope {
@@ -191,6 +216,18 @@ function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContri
     requestedArtifactTypes: [...input.requestedArtifactTypes],
     support: provisionalSupport(input, 0.5),
   }, `/recommendations/${index}`, statement));
+  Object.entries(envelope.payload)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .forEach(([field, value], index) => addUnit({
+      key: `payload-${String(index + 1).padStart(3, '0')}`,
+      kind: unitKind(primaryType),
+      title: field.trim() || `Payload ${index + 1}`,
+      statement: typeof value === 'string' && value.trim()
+        ? value
+        : stableJsonStringify(value),
+      requestedArtifactTypes: [...input.requestedArtifactTypes],
+      support: provisionalSupport(input, 0.5),
+    }, `/payload/${field.replaceAll('~', '~0').replaceAll('/', '~1')}`, value));
   if (units.length === 0) {
     throw new ContributionAdapterError('no_contribution_units', 'Skill output has no deterministic contribution units');
   }
@@ -231,7 +268,7 @@ function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContri
       adapterVersion: ADAPTER_VERSION,
       adapterHash: stableJsonHash({ id: SKILL_ENVELOPE_PROVISIONAL_ADAPTER_ID, version: ADAPTER_VERSION }),
       unitMappings: mappings,
-      diagnosticFields: ['/summary', '/payload', '/status'],
+      diagnosticFields: ['/summary', '/status'],
     },
   };
 }

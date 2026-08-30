@@ -39,11 +39,35 @@ test('model layout can choose section titles, grouping, and order without writin
     'content-block-001',
   ]);
   assert.ok(Object.keys(llm.calls[0]?.schema ?? {}).length > 0);
-  assert.deepEqual(Object.keys((llm.calls[0]?.context as Record<string, unknown>) ?? {}).sort(), [
-    'contentIndex',
+  const context = (llm.calls[0]?.context as Record<string, unknown>) ?? {};
+  assert.deepEqual(Object.keys(context).sort(), [
+    'fixedDirectAnswers',
     'requestedArtifacts',
+    'selectableContentBlocks',
     'title',
   ]);
+  assert.deepEqual(context.fixedDirectAnswers, [{
+    id: 'answer-Q1',
+    questionId: 'Q1',
+    question: 'What should change?',
+  }]);
+  assert.deepEqual(
+    (context.selectableContentBlocks as Array<{ id: string }>).map(({ id }) => id),
+    ['content-block-001', 'content-block-002'],
+  );
+  assert.deepEqual(context.requestedArtifacts, [{
+    artifactType: 'executive_answers',
+    fixedDirectAnswerIds: ['answer-Q1'],
+    selectableContentBlockIds: [],
+  }, {
+    artifactType: 'strategy_map',
+    fixedDirectAnswerIds: [],
+    selectableContentBlockIds: ['content-block-001'],
+  }, {
+    artifactType: 'prioritized_actions',
+    fixedDirectAnswerIds: [],
+    selectableContentBlockIds: ['content-block-002'],
+  }]);
   assert.equal(JSON.stringify(llm.calls[0]?.context).includes('Lead with verifiable trust signals.'), false);
 });
 

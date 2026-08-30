@@ -44,6 +44,11 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
       const requiredTools = Array.isArray(fm.required_tools)
         ? fm.required_tools.map(String)
         : undefined;
+      const composition = fm.composition !== null
+        && typeof fm.composition === 'object'
+        && !Array.isArray(fm.composition)
+        ? fm.composition as SkillRegistryEntry['composition']
+        : undefined;
       skills.push({
         id: fm.name as string,
         name: fm.name as string,
@@ -61,6 +66,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
           ? { execution_contract: fm.execution_contract }
           : {}),
         ...(requiredTools === undefined ? {} : { required_tools: requiredTools }),
+        ...(composition === undefined ? {} : { composition }),
         status: toRegistryStatus(fm.status),
       });
     } else if (fm.id && fm.type !== 'asset') {

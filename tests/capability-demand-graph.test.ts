@@ -122,6 +122,7 @@ test('deterministic demand derivation maps required questions and explicit virtu
   assert.deepEqual(graph.demands.map(({ type }) => type), [
     'competitive_analysis',
     'jobs_to_be_done',
+    'market_landscape',
     'virtual_user_hypothesis',
   ]);
   assert.deepEqual(graph.demands[0]!.requestedArtifactTypes, ['strategy_map']);

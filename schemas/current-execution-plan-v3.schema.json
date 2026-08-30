@@ -303,6 +303,11 @@
         "invocation_id": { "$ref": "#/$defs/id" },
         "skill_id": { "$ref": "#/$defs/id" },
         "role": { "enum": ["contributor", "synthesizer"] },
+        "demand_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
         "contribution_types": {
           "type": "array",
           "minItems": 1,

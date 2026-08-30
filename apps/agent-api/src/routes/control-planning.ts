@@ -7,6 +7,7 @@ import type {
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import { ModelDriftError } from '../../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import { requireAuth } from '../middleware.ts';
 
 export type CurrentCandidatesResponse = ControlPlanCandidatesResponse & {
@@ -41,9 +42,10 @@ function isConversationLookupError(error: unknown): boolean {
 }
 
 function planningErrorMessage(error: unknown): string {
+  if (error instanceof ModelDriftError) return error.message;
   return isConversationLookupError(error)
     ? '会话不存在'
-    : error instanceof Error ? error.message : '规划失败';
+    : '需求解析或规划未完成，请重试；如仍失败，请补充希望获得的结果类型。';
 }
 
 

@@ -76,3 +76,38 @@ test('Scenario direction submission exposes candidate generation progress', asyn
   assert.match(markup, /aria-busy="true"/u);
   assert.match(markup, /正在生成候选方案/u);
 });
+
+test('deliverable intent clarification renders business-language choices', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        structuredTask: {
+          ...response.structuredTask,
+          task_type: 'competitive_research',
+          expected_deliverables: ['competitive_analysis_report'],
+          clarification_questions: [{
+            key: 'deliverable_intent',
+            question: '你希望结果聚焦竞品对比，还是综合研究证据形成策略建议？',
+            rationale: '两种结果会采用不同的专业能力和报告结构。',
+          }],
+        },
+      },
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /竞品分析报告/u);
+  assert.match(markup, /综合策略报告/u);
+  assert.match(markup, /value="competitive_analysis_report"/u);
+  assert.match(markup, /value="research_strategy_report"/u);
+});

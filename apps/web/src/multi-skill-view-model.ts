@@ -33,7 +33,10 @@ export function multiSkillPlanViewModel(plan: FinalizedPlan): MultiSkillPlanView
   const synthesizers = invocations.filter(({ role }) => role === 'synthesizer');
   if (synthesizers.length !== 1) return null;
   const requiredDemands = plan.capability_demand_graph.demands.filter(({ priority }) => priority === 'required');
-  const covered = new Set(plan.contribution_requirements.filter(({ required }) => required).map(({ id }) => id));
+  const covered = new Set([
+    ...plan.contribution_requirements.filter(({ required }) => required).map(({ id }) => id),
+    ...(synthesizers[0]!.demand_ids ?? []),
+  ]);
   return {
     contributorCount: invocations.filter(({ role }) => role === 'contributor').length,
     synthesizer: synthesizers[0]!,

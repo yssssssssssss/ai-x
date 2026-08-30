@@ -8,6 +8,12 @@ import type {
   ControlZeroPublication,
 } from '../database/control-plane.ts';
 import type { CurrentReportPackageResponse } from '../packages/api-contract/control-workflow.ts';
+import type {
+  RenderableReportDocument,
+  ReportDocumentV3,
+  ReportDocumentV4,
+} from '../packages/api-contract/report-document.ts';
+import { collectReportDocumentV4Semantics } from '../packages/report-rendering/report-document-visitor.ts';
 import type { VisualAssetManifest } from '../packages/api-contract/research-deliverable.ts';
 import {
   ZeroPublicationService,
@@ -16,6 +22,7 @@ import {
   type ZeroPublicationMcp,
   type ZeroPublicationStore,
 } from '../apps/agent-api/src/integrations/zero/zero-publication-service.ts';
+import { reportDocumentV3Fixture, reportDocumentV3Trace } from './fixtures/report-document-v3.ts';
 
 const ownerUserId = '11111111-1111-4111-8111-111111111111';
 const taskId = '22222222-2222-4222-8222-222222222222';
@@ -249,11 +256,14 @@ async function reportFixture(): Promise<{
   };
 }
 
-async function harness() {
+async function harness(reportDocument?: RenderableReportDocument) {
   const store = new MemoryPublicationStore();
   const artifacts = new MemoryArtifacts();
   const zero = new FakeZero();
   const fixture = await reportFixture();
+  if (reportDocument && fixture.report.presentationMode === 'multimodal') {
+    Object.assign(fixture.report, { reportDocument });
+  }
   const reportReads: Array<Record<string, unknown>> = [];
   const service = new ZeroPublicationService({
     store, artifacts, zero,
@@ -263,6 +273,85 @@ async function harness() {
   });
   return { service, store, artifacts, zero, reportReads };
 }
+
+function v3DocumentWithVisuals(): ReportDocumentV3 {
+  const document = reportDocumentV3Fixture();
+  document.sections[0]!.blocks.push({
+    id: 'v3-comparison',
+    type: 'image-comparison',
+    visibility: 'always',
+    unitRefs: ['v3-comparison-unit'],
+    leafRefs: ['v3-original-leaf', 'v3-annotation-leaf'],
+    beforeLeafRef: 'v3-original-leaf',
+    afterLeafRef: 'v3-annotation-leaf',
+    beforeAssetRef: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
+    afterAssetRef: { assetId: 'asset-annotation', manifestArtifactId: 'manifest-annotation' },
+    caption: 'v3 对照',
+    altText: 'v3 对照图',
+  });
+  for (const leafId of ['v3-original-leaf', 'v3-annotation-leaf']) {
+    document.traceIndex[leafId] = reportDocumentV3Trace(`/test/${leafId}`);
+  }
+  document.semanticManifest.presentationUnitIds.push('v3-comparison-unit');
+  document.semanticManifest.leafUnitIds.push('v3-original-leaf', 'v3-annotation-leaf');
+  document.semanticManifest.assetIds.push('asset-original', 'asset-annotation');
+  return document;
+}
+
+function v4DocumentWithVisuals(): ReportDocumentV4 {
+  const v3 = v3DocumentWithVisuals();
+  const firstLeafId = v3.sections[0]!.blocks[0]!.leafRefs[0]!;
+  const document: ReportDocumentV4 = {
+    ...v3,
+    version: 'report-document-v4',
+    title: {
+      id: 'copy-title', provenance: 'model', text: 'V4 Zero 发布', sourceLeafIds: [firstLeafId],
+    },
+    executiveSummary: {
+      id: 'copy-summary', provenance: 'model', text: 'V4 发布摘要', sourceLeafIds: [firstLeafId],
+    },
+    copyMode: 'model',
+    sections: v3.sections.map((section) => ({
+      ...section,
+      title: {
+        id: `copy-${section.id}`,
+        provenance: 'model' as const,
+        text: section.title,
+        sourceLeafIds: [section.blocks[0]!.leafRefs[0]!],
+      },
+    })),
+    semanticManifest: {
+      version: 'report-semantic-manifest-v2',
+      presentationUnitIds: [],
+      leafUnitIds: [],
+      assetIds: [],
+      auditRecordIds: [],
+      noticeIds: [],
+      copyFragmentIds: [],
+    },
+  };
+  document.semanticManifest = collectReportDocumentV4Semantics(document);
+  return document;
+}
+
+test('Zero publication accepts a sealed Report Package v3 root', async () => {
+  const { service, store } = await harness();
+  store.reportArtifact = {
+    ...store.reportArtifact,
+    schemaVersion: 'report-package-v3',
+    storageUri: '/safe/report-package-v3.json',
+  };
+
+  const created = await service.create({
+    taskId,
+    ownerUserId,
+    expectedTaskState: 'completed',
+    idempotencyKey: 'idem-v3',
+  });
+
+  assert.equal(created.reportPackageArtifactId, reportPackageArtifactId);
+  assert.equal(created.reportPackageHash, store.reportArtifact.contentSha256);
+});
 
 test('Zero publication service creates and completes a multimodal publication with real image fills', async () => {
   const { service, store, artifacts, zero, reportReads } = await harness();
@@ -289,6 +378,42 @@ test('Zero publication service creates and completes a multimodal publication wi
     reportPackageArtifactId,
     reportPackageHash: `sha256:${'a'.repeat(64)}`,
   }]);
+});
+
+test('Zero publication service publishes v3 auditAppendix without appending the legacy contribution summary', async () => {
+  const { service, zero } = await harness(v3DocumentWithVisuals());
+  const created = await service.create({
+    taskId,
+    ownerUserId,
+    expectedTaskState: 'completed',
+    idempotencyKey: 'idem-v3-audit',
+  });
+  const completed = await service.execute(created.id, ownerUserId);
+
+  assert.equal(completed.status, 'completed');
+  assert.ok((completed.imageManifest?.length ?? 0) >= 2, 'v3 visual references are published');
+  assert.match(zero.draftHtml, /分析审计附录/u);
+  assert.match(zero.draftHtml, /data-audit-record-id="audit-1"/u);
+  assert.doesNotMatch(zero.draftHtml, /Multi-Skill 贡献摘要/u);
+  assert.doesNotMatch(zero.draftHtml, /包含合成模拟证据|仅供真实研究验证/u);
+});
+
+test('Zero publication service accepts package v2 and publishes v4 without a legacy contribution section', async () => {
+  const { service, store, zero } = await harness(v4DocumentWithVisuals());
+  store.reportArtifact = { ...store.reportArtifact, schemaVersion: 'report-package-v2' };
+  const created = await service.create({
+    taskId,
+    ownerUserId,
+    expectedTaskState: 'completed',
+    idempotencyKey: 'idem-v4-package-v2',
+  });
+  const completed = await service.execute(created.id, ownerUserId);
+
+  assert.equal(completed.status, 'completed');
+  assert.ok((completed.imageManifest?.length ?? 0) >= 2, 'v4 visual references are published');
+  assert.equal(zero.draftName, '[ai-x-draft:' + created.id + '] V4 Zero 发布');
+  assert.match(zero.draftHtml, /V4 发布摘要/u);
+  assert.doesNotMatch(zero.draftHtml, /\[object Object\]|Multi-Skill 贡献摘要/u);
 });
 
 test('Zero publication service fails before persistence when Zero is offline', async () => {

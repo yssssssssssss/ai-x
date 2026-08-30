@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertGatewayModelReceipts,
+  assertVirtualUserLabReady,
   assertMultiSkillSmokePlan,
   assertRealSmokeConfig,
   assertSmokePlanApprovalPolicy,
@@ -14,6 +15,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   mayAutoApproveSmoke,
+  resolveSmokeReportContract,
   resolveApprovalMode,
   resolveSmokeRequirement,
   requireActorCoverage,
@@ -21,6 +23,7 @@ import {
   safeSmokeErrorMessage,
   selectSmokeScenario,
   selectSmokeCandidate,
+  SmokeInfrastructureError,
   summarizeSmokeEvidence,
   verifySmokeGapSummaryHashes,
   verifySmokeHistoryReread,
@@ -260,6 +263,146 @@ test('real smoke configuration rejects mock and half-real provider modes', () =>
   assert.throws(() => assertRealSmokeConfig({ ...valid, ALLOW_REAL_PROVIDER: '0' }), /exactly 1/u);
   assert.throws(() => assertRealSmokeConfig({ ...valid, LLM_PROVIDER: 'mock' }), /exactly gateway/u);
   assert.throws(() => assertRealSmokeConfig({ ...valid, TOOL_ADAPTER: 'fake' }), /exactly real/u);
+});
+
+test('research synthesis smoke selects the report contract from the publication flags', () => {
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: false,
+    standaloneHtmlBundleV1Enabled: false,
+  }), {
+    reportDocumentVersion: 'report-document-v2',
+    reportPackageVersion: 'report-package-v1',
+    standaloneHtmlStatus: 'not_applicable',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: false,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+  }), {
+    reportDocumentVersion: 'report-document-v3',
+    reportPackageVersion: 'report-package-v2',
+    standaloneHtmlStatus: 'ready',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: true,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+    reportEditorialExperienceV1Enabled: true,
+    reportEditorialShowcaseV1Enabled: true,
+  }), {
+    reportDocumentVersion: 'report-document-v4',
+    reportPackageVersion: 'report-package-v3',
+    standaloneHtmlStatus: 'ready',
+    showcaseStatus: 'ready',
+    fixedPackageRoot: true,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'competitive_analysis_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+  }), {
+    reportPackageVersion: 'report-package-v1',
+    standaloneHtmlStatus: 'not_applicable',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: false,
+  });
+});
+
+function validVirtualUserSimulationResponse(): Record<string, unknown> {
+  return {
+    status: 'available',
+    isSimulated: true,
+    summary: 'Synthetic readiness probe completed.',
+    digitalPersonas: [{
+      id: 'persona-1',
+      name: 'Readiness probe persona',
+      type: 'synthetic evaluator',
+      description: 'A synthetic persona used only to verify service readiness.',
+      goals: ['Evaluate the supplied scenario.'],
+      concerns: ['Simulation output is not real user evidence.'],
+    }],
+    reviews: [{
+      profileId: 'persona-1',
+      personaName: 'Readiness probe persona',
+      personaType: 'synthetic evaluator',
+      firstImpression: 'The scenario can be evaluated.',
+      detailedExperience: 'The service returned a complete synthetic review.',
+      scores: { usability: 0.8 },
+      overallScore: 0.8,
+      topChangeRequest: 'Keep the synthetic-evidence boundary explicit.',
+      stance: 'positive',
+      isSimulated: true,
+    }],
+    aggregate: {
+      scoreSummary: { usability: 0.8 },
+      sharedPainPoints: [],
+      sharedHighlights: ['The simulation contract is available.'],
+      divergences: [],
+      churnRisks: [],
+    },
+    recommendations: ['Use the result only as a synthetic hypothesis.'],
+    warnings: ['This is not real user research.'],
+    boundaryNotes: ['No factual user conclusion may be drawn from this probe.'],
+  };
+}
+
+test('virtual-user-lab preflight checks both liveness and the simulation contract', async () => {
+  const calls: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? 'GET'} ${url}`);
+    if (url.endsWith('/api/health')) {
+      return Response.json({ ok: true, service: 'virtual-user-lab' });
+    }
+    return Response.json(validVirtualUserSimulationResponse());
+  };
+
+  await assertVirtualUserLabReady('http://127.0.0.1:8804/', fakeFetch);
+  assert.deepEqual(calls, [
+    'GET http://127.0.0.1:8804/api/health',
+    'POST http://127.0.0.1:8804/api/simulate',
+  ]);
+});
+
+test('virtual-user-lab preflight rejects output that only satisfies the legacy shallow checks', async () => {
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async (input) => (
+      String(input).endsWith('/api/health')
+        ? Response.json({ ok: true, service: 'virtual-user-lab' })
+        : Response.json({ status: 'available', isSimulated: true, reviews: [{ profileId: 'test' }] })
+    )),
+    (error: unknown) => error instanceof SmokeInfrastructureError
+      && error.message === 'virtual-user-lab preflight failed',
+  );
+});
+
+test('virtual-user-lab preflight classifies unreachable or degraded service as infrastructure failure', async () => {
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async () => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:8804');
+    }),
+    (error: unknown) => error instanceof Error
+      && error.name === 'SmokeInfrastructureError'
+      && error.message === 'virtual-user-lab preflight failed',
+  );
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async (input) => (
+      String(input).endsWith('/api/health')
+        ? Response.json({ ok: true, service: 'virtual-user-lab' })
+        : Response.json({
+            ...validVirtualUserSimulationResponse(),
+            status: 'insufficient_inputs',
+            digitalPersonas: [],
+            reviews: [],
+          })
+    )),
+    /virtual-user-lab simulation preflight failed/u,
+  );
 });
 
 test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
@@ -836,6 +979,27 @@ test('real smoke continues clarification until the requirement becomes ready', a
   assert.equal(result.status, 'ready_to_plan');
   assert.equal(answers.length, 2);
   assert.match(String(answers[0]?.scope), /^Controlled smoke decision:/);
+});
+
+test('real smoke finalizes a direction gate with no remaining requirement questions', async () => {
+  const answers: Array<Record<string, unknown>> = [];
+  const selectedScenarios: Array<string | undefined> = [];
+  const result = await resolveSmokeRequirement({
+    status: 'clarification_required',
+    requirement: { clarification_questions: [] },
+    planningGuidance: { options: [{ id: 'strategy-synthesis' }] },
+  }, async (roundAnswers, selectedScenarioId) => {
+    answers.push(roundAnswers);
+    selectedScenarios.push(selectedScenarioId);
+    return {
+      status: 'ready_to_plan',
+      requirement: { clarification_questions: [] },
+      planningResult: { id: 'plan' },
+    };
+  }, 'strategy-synthesis');
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(answers, [{}]);
+  assert.deepEqual(selectedScenarios, ['strategy-synthesis']);
 });
 
 test('real smoke bounds clarification to three rounds', async () => {

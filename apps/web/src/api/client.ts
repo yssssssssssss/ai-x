@@ -184,6 +184,10 @@ export interface ControlVisualAssetResponse {
   mediaType: VisualAssetManifest['mediaType'];
 }
 
+export interface ControlHtmlBundleResponse {
+  blob: Blob;
+}
+
 interface PlanningStreamHandlers {
   onConversation?: (conversationId: string) => void;
   onProgress?: (event: PlanProgress) => void;
@@ -361,6 +365,32 @@ export const api = {
       throw new ApiError(502, '视觉资产媒体类型无效');
     }
     return { blob: await response.blob(), mediaType };
+  },
+  controlHtmlBundle: async (
+    taskId: string,
+    attemptId: string,
+  ): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/html-bundle`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/zip') {
+      throw new ApiError(502, '离线 HTML 报告包媒体类型无效');
+    }
+    return { blob: await response.blob() };
+  },
+  controlEditorialShowcase: async (
+    taskId: string,
+    attemptId: string,
+  ): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-showcase.html`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'text/html') {
+      throw new ApiError(502, 'Editorial Showcase 媒体类型无效');
+    }
+    return { blob: await response.blob() };
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
     await req<unknown>(`/control-tasks/${taskId}/deliverable`),

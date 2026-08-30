@@ -55,10 +55,6 @@ function uniqueSorted(values: readonly number[]): number[] {
   return [...new Set(values)].sort((left, right) => left - right);
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
 function escapePointerSegment(value: string): string {
   return value.replaceAll('~', '~0').replaceAll('/', '~1');
 }
@@ -148,6 +144,95 @@ function deduplicateSharedSourceSteps(
   }));
 }
 
+function normalizePortfolioOwnedWiring(
+  sourceSteps: readonly CurrentPlanStep[],
+  allowedPrerequisites: ReadonlySet<string>,
+): CurrentPlanStep[] {
+  for (const step of sourceSteps) {
+    if (step.actor_type === 'skill') continue;
+    if (
+      (step.actor_type === 'tool' || step.actor_type === 'knowledge')
+      && allowedPrerequisites.has(`${step.actor_type}:${step.actor_id}`)
+    ) continue;
+    throw new Error(
+      `Portfolio candidate contains unauthorized actor ${step.actor_type}:${step.actor_id}`,
+    );
+  }
+  const retained = sourceSteps;
+  const newStepNoByOld = new Map(retained.map((step, index) => [step.step_no, index + 1]));
+  const skillStepNos = new Set(retained
+    .filter(({ actor_type }) => actor_type === 'skill')
+    .map(({ step_no }) => step_no));
+  return retained.map((step, index) => {
+    const allowedOldDependencies = step.depends_on.filter((stepNo) => (
+      stepNo < step.step_no
+      && newStepNoByOld.has(stepNo)
+      && !skillStepNos.has(stepNo)
+    ));
+    const allowedBindings = step.input_bindings.filter(({ source_step_no }) => (
+      source_step_no < step.step_no
+      && newStepNoByOld.has(source_step_no)
+      && !skillStepNos.has(source_step_no)
+    ));
+    const normalized = structuredClone(step);
+    delete normalized.skill_invocation_id;
+    delete normalized.skill_stage_id;
+    Reflect.deleteProperty(normalized, 'shared_stage_key');
+    Reflect.deleteProperty(normalized, 'shared_by_invocation_ids');
+    Reflect.deleteProperty(normalized, 'share_fingerprint');
+    return {
+      ...normalized,
+      step_no: index + 1,
+      depends_on: allowedOldDependencies.map((stepNo) => newStepNoByOld.get(stepNo)!),
+      input_bindings: allowedBindings.map((binding) => ({
+        ...binding,
+        source_step_no: newStepNoByOld.get(binding.source_step_no)!,
+      })),
+    };
+  });
+}
+
+function canonicalizeSharedSourceInputs(
+  sourceSteps: readonly CurrentPlanStep[],
+  portfolio: SkillPortfolioDecision,
+  skillLoader: SkillLoader,
+): CurrentPlanStep[] {
+  const steps = sourceSteps.map((step) => structuredClone(step));
+  for (const prerequisite of portfolio.sharedPrerequisites) {
+    const sourceMatches = steps.filter((step) => (
+      step.actor_type === prerequisite.capabilityType
+      && step.actor_id === prerequisite.capabilityId
+    ));
+    if (sourceMatches.length === 0) continue;
+    const contractStages = prerequisite.consumerSkillIds.flatMap((skillId) => {
+      const loaded = skillLoader.loadSkillExecution(skillId);
+      if (!loaded) return [];
+      const stage = loaded.contract.stages.find((candidate) => (
+        candidate.actor_type === prerequisite.capabilityType
+        && candidate.actor_id === prerequisite.capabilityId
+        && candidate.share_scope === 'plan'
+      ));
+      return stage ? [stage] : [];
+    });
+    if (contractStages.length === 0) continue;
+    for (const source of sourceMatches) {
+      const canonicalInputs = contractStages.map((stage) => {
+        const dynamicInput = Object.fromEntries((stage.share_input_fields ?? []).flatMap((field) => (
+          Object.hasOwn(source.input, field) ? [[field, structuredClone(source.input[field])]] : []
+        )));
+        return { ...structuredClone(stage.input), ...dynamicInput };
+      });
+      if (canonicalInputs.some((input) => !isDeepStrictEqual(input, canonicalInputs[0]))) {
+        throw new Error(
+          `Shared prerequisite ${prerequisite.capabilityType}:${prerequisite.capabilityId} has incompatible canonical inputs`,
+        );
+      }
+      source.input = canonicalInputs[0]!;
+    }
+  }
+  return steps;
+}
+
 function sourceBindings(
   sourceSteps: readonly CurrentPlanStep[],
   compiledSteps: readonly CurrentPlanStepV3[],
@@ -216,7 +301,6 @@ function remapInvocationIds(
 
 function portfolioDependencies(
   portfolio: SkillPortfolioDecision,
-  bindings: ReadonlyMap<string, SourceSkillBinding>,
 ): Map<string, string[]> {
   const result = new Map<string, string[]>();
   const contributors = portfolio.invocations.filter(({ role }) => role === 'contributor');
@@ -225,12 +309,7 @@ function portfolioDependencies(
       result.set(invocation.skillId, contributors.map(({ skillId }) => skillId));
       continue;
     }
-    const binding = bindings.get(invocation.skillId)!;
-    const dependencySkillIds = binding.sourceStep.depends_on.flatMap((stepNo) => {
-      const dependency = [...bindings.values()].find(({ sourceStep }) => sourceStep.step_no === stepNo);
-      return dependency ? [dependency.sourceStep.actor_id] : [];
-    });
-    result.set(invocation.skillId, uniqueStrings(dependencySkillIds));
+    result.set(invocation.skillId, []);
   }
   return result;
 }
@@ -259,6 +338,106 @@ function wireExternalDependencies(
     }
     const output = steps[binding.outputStepNo - 1]!;
     output.depends_on = uniqueSorted([...output.depends_on, ...dependencyStepNos]);
+  }
+}
+
+function wireRequiredToolDependencies(
+  steps: CurrentPlanStepV3[],
+  portfolio: SkillPortfolioDecision,
+  bindings: ReadonlyMap<string, SourceSkillBinding>,
+  skillLoader: SkillLoader,
+): void {
+  const sharedConsumers = new Set(portfolio.sharedPrerequisites.flatMap((prerequisite) => (
+    prerequisite.capabilityType === 'tool'
+      ? prerequisite.consumerSkillIds.map((skillId) => `${skillId}:${prerequisite.capabilityId}`)
+      : []
+  )));
+  const claimedToolStepNos = new Set<number>();
+  for (const invocation of portfolio.invocations) {
+    const binding = bindings.get(invocation.skillId)!;
+    const ownStepNos = new Set(binding.stepNos);
+    const roots = binding.stepNos
+      .map((stepNo) => steps[stepNo - 1]!)
+      .filter((step) => !step.depends_on.some((dependency) => ownStepNos.has(dependency)));
+    for (const toolId of skillLoader.getSkill(invocation.skillId)?.required_tools ?? []) {
+      if (sharedConsumers.has(`${invocation.skillId}:${toolId}`)) continue;
+      if (binding.stepNos.some((stepNo) => {
+        const step = steps[stepNo - 1]!;
+        return step.actor_type === 'tool' && step.actor_id === toolId;
+      })) continue;
+      const tool = [...steps].reverse().find((step) => (
+        step.actor_type === 'tool'
+        && step.actor_id === toolId
+        && step.skill_invocation_id === undefined
+        && step.step_no < binding.outputStepNo
+        && !claimedToolStepNos.has(step.step_no)
+      ));
+      if (!tool) {
+        throw new Error(
+          `Required Tool ${toolId} for ${invocation.skillId} has no unclaimed compiled source step`,
+        );
+      }
+      claimedToolStepNos.add(tool.step_no);
+      for (const root of roots) {
+        root.depends_on = uniqueSorted([...root.depends_on, tool.step_no]);
+      }
+    }
+  }
+}
+
+function topologicallyRenumberPortfolioSteps(
+  steps: CurrentPlanStepV3[],
+  bindings: ReadonlyMap<string, SourceSkillBinding>,
+): void {
+  const byStepNo = new Map(steps.map((step) => [step.step_no, step]));
+  const dependents = new Map<number, number[]>();
+  const indegree = new Map<number, number>();
+  for (const step of steps) {
+    indegree.set(step.step_no, step.depends_on.length);
+    for (const dependency of step.depends_on) {
+      const values = dependents.get(dependency) ?? [];
+      values.push(step.step_no);
+      dependents.set(dependency, values);
+    }
+  }
+  const ready = [...steps]
+    .filter((step) => (indegree.get(step.step_no) ?? 0) === 0)
+    .map(({ step_no }) => step_no)
+    .sort((left, right) => left - right);
+  const orderedOldStepNos: number[] = [];
+  while (ready.length > 0) {
+    const stepNo = ready.shift()!;
+    orderedOldStepNos.push(stepNo);
+    for (const dependent of dependents.get(stepNo) ?? []) {
+      const next = (indegree.get(dependent) ?? 0) - 1;
+      indegree.set(dependent, next);
+      if (next === 0) {
+        ready.push(dependent);
+        ready.sort((left, right) => left - right);
+      }
+    }
+  }
+  if (orderedOldStepNos.length !== steps.length) return;
+  const newStepNoByOld = new Map(orderedOldStepNos.map((stepNo, index) => [stepNo, index + 1]));
+  const reordered = orderedOldStepNos.map((oldStepNo, index) => {
+    const step = byStepNo.get(oldStepNo)!;
+    return {
+      ...step,
+      step_no: index + 1,
+      depends_on: uniqueSorted(step.depends_on.map((dependency) => newStepNoByOld.get(dependency)!)),
+      input_bindings: step.input_bindings.map((binding) => ({
+        ...binding,
+        source_step_no: newStepNoByOld.get(binding.source_step_no)!,
+      })),
+    };
+  });
+  steps.splice(0, steps.length, ...reordered);
+  for (const binding of bindings.values()) {
+    binding.stepNos = binding.stepNos.map((stepNo) => newStepNoByOld.get(stepNo)!).sort((left, right) => left - right);
+    binding.outputStepNo = newStepNoByOld.get(binding.outputStepNo)!;
+  }
+  for (const step of steps) {
+    if (step.shared_stage_key) step.share_fingerprint = planShareFingerprint(step);
   }
 }
 
@@ -317,13 +496,25 @@ function markSharedPrerequisites(
       step.actor_type === prerequisite.capabilityType
       && step.actor_id === prerequisite.capabilityId
     ));
-    if (!source) continue;
+    if (!source) {
+      throw new Error(
+        `Shared prerequisite ${prerequisite.capabilityType}:${prerequisite.capabilityId} has no source step`,
+      );
+    }
     const actorMatches = steps.filter((step) => (
       step.actor_type === source.actor_type && step.actor_id === source.actor_id
     ));
-    if (actorMatches.length !== 1) continue;
+    if (actorMatches.length !== 1) {
+      throw new Error(
+        `Shared prerequisite ${prerequisite.capabilityType}:${prerequisite.capabilityId} has ${actorMatches.length} compiled source steps`,
+      );
+    }
     const compiled = actorMatches[0]!;
-    if (stableJsonStringify(compiled.input) !== stableJsonStringify(source.input)) continue;
+    if (stableJsonStringify(compiled.input) !== stableJsonStringify(source.input)) {
+      throw new Error(
+        `Shared prerequisite ${prerequisite.capabilityType}:${prerequisite.capabilityId} input drifted during compilation`,
+      );
+    }
     const consumerInvocationIds = prerequisite.consumerSkillIds.map((skillId) => {
       const binding = bindings.get(skillId);
       if (!binding) throw new Error(`Shared prerequisite consumer ${skillId} is unknown`);
@@ -332,6 +523,19 @@ function markSharedPrerequisites(
     compiled.shared_stage_key = `shared:${prerequisite.capabilityType}:${prerequisite.capabilityId}`;
     compiled.shared_by_invocation_ids = consumerInvocationIds;
     compiled.share_fingerprint = planShareFingerprint(compiled);
+    for (const skillId of prerequisite.consumerSkillIds) {
+      const binding = bindings.get(skillId)!;
+      const ownSteps = new Set(binding.stepNos);
+      const roots = binding.stepNos
+        .map((stepNo) => steps[stepNo - 1]!)
+        .filter((step) => (
+          step.step_no !== compiled.step_no
+          && !step.depends_on.some((dependency) => ownSteps.has(dependency))
+        ));
+      for (const root of roots) {
+        root.depends_on = uniqueSorted([...root.depends_on, compiled.step_no]);
+      }
+    }
   }
 }
 
@@ -347,6 +551,7 @@ function invocationContracts(
       invocation_id: decision.invocationId,
       skill_id: decision.skillId,
       role: decision.role,
+      demand_ids: [...decision.demandIds],
       contribution_types: [...decision.contributionTypes],
       question_ids: [...decision.questionIds],
       requested_artifact_types: [...decision.requestedArtifactTypes],
@@ -387,10 +592,14 @@ function contributionRequirements(
   portfolio: SkillPortfolioDecision,
   bindings: ReadonlyMap<string, SourceSkillBinding>,
 ): PlanContributionRequirement[] {
-  return portfolio.demandCoverage.map((coverage) => {
+  const contributorSkillIds = new Set(portfolio.invocations
+    .filter(({ role }) => role === 'contributor')
+    .map(({ skillId }) => skillId));
+  return portfolio.demandCoverage.flatMap((coverage): PlanContributionRequirement[] => {
     const owner = bindings.get(coverage.ownerSkillId);
     if (!owner) throw new Error(`Contribution owner ${coverage.ownerSkillId} is unknown`);
-    return {
+    if (!contributorSkillIds.has(coverage.ownerSkillId)) return [];
+    return [{
       id: coverage.demandId,
       demand_type: coverage.demandType,
       question_ids: [...coverage.questionIds],
@@ -402,7 +611,7 @@ function contributionRequirements(
         return corroborator.invocationId;
       }),
       required: coverage.required,
-    };
+    }];
   });
 }
 
@@ -488,14 +697,23 @@ export function assertCompiledPortfolioPlan(
         && contractStage.share_scope !== 'plan'
       ) portfolioDrift(`Portfolio invocation ${invocation.invocation_id} shared stage is not contract-authorized at ${contractStage.stage_id}`);
       if (
-        !isDeepStrictEqual(step.expected_outputs, contractStage.expected_outputs)
-        || !isDeepStrictEqual(step.acceptance_criteria, contractStage.acceptance_criteria)
+        !(
+          invocation.role === 'contributor'
+          && contractStage.stage_id === loaded.contract.output_stage_id
+        )
+        && !isDeepStrictEqual(step.expected_outputs, contractStage.expected_outputs)
+      ) portfolioDrift(`Portfolio invocation ${invocation.invocation_id} output contract drift at ${contractStage.stage_id}`);
+      if (
+        !isDeepStrictEqual(step.acceptance_criteria, contractStage.acceptance_criteria)
       ) portfolioDrift(`Portfolio invocation ${invocation.invocation_id} output contract drift at ${contractStage.stage_id}`);
       for (const [key, value] of Object.entries(contractStage.input)) {
         const portfolioInjected = invocation.role === 'synthesizer'
           && contractStage.stage_id === loaded.contract.output_stage_id
           && (key === 'contribution_bundle' || key === 'contribution_order');
-        if (!portfolioInjected && !isDeepStrictEqual(step.input[key], value)) {
+        const sharedInputOverride = step.shared_by_invocation_ids?.includes(invocation.invocation_id)
+          && contractStage.share_scope === 'plan'
+          && contractStage.share_input_fields?.includes(key);
+        if (!portfolioInjected && !sharedInputOverride && !isDeepStrictEqual(step.input[key], value)) {
           portfolioDrift(`Portfolio invocation ${invocation.invocation_id} input drift at ${contractStage.stage_id}/${key}`);
         }
       }
@@ -525,7 +743,9 @@ export function assertCompiledPortfolioPlan(
       !output
       || output.actor_type !== 'skill'
       || output.actor_id !== invocation.skill_id
-      || !output.expected_outputs.some(({ pointer }) => pointer === loaded.contract.output_pointer)
+      || !output.expected_outputs.some(({ pointer }) => (
+        pointer === (invocation.role === 'contributor' ? '/contribution' : loaded.contract.output_pointer)
+      ))
     ) portfolioDrift(`Portfolio invocation ${invocation.invocation_id} output stage drift`);
   }
 }
@@ -552,15 +772,46 @@ export function compilePortfolioSkillSteps(
       }
     }
   }
-  const sourceSteps = deduplicateSharedSourceSteps(input.steps, input.portfolio);
-  const intraSkill = compileSkillSteps(sourceSteps, input.task, skillLoader);
+  const allowedPrerequisites = new Set<string>();
+  for (const invocation of input.portfolio.invocations) {
+    const skill = skillLoader.getSkill(invocation.skillId);
+    for (const toolId of skill?.required_tools ?? []) allowedPrerequisites.add(`tool:${toolId}`);
+  }
+  for (const prerequisite of input.portfolio.sharedPrerequisites) {
+    allowedPrerequisites.add(`${prerequisite.capabilityType}:${prerequisite.capabilityId}`);
+  }
+  const normalizedSourceSteps = canonicalizeSharedSourceInputs(
+    normalizePortfolioOwnedWiring(input.steps, allowedPrerequisites),
+    input.portfolio,
+    skillLoader,
+  );
+  const sourceSteps = deduplicateSharedSourceSteps(normalizedSourceSteps, input.portfolio);
+  const intraSkill = compileSkillSteps(sourceSteps, input.task, skillLoader, {
+    canReuseStage: ({ stage, existingStep, skillStep }) => {
+      if (stage.actor_type !== 'tool' && stage.actor_type !== 'knowledge') return true;
+      if (stage.share_scope !== 'plan') return false;
+      const shared = input.portfolio.sharedPrerequisites.some((prerequisite) => (
+        prerequisite.capabilityType === stage.actor_type
+        && prerequisite.capabilityId === existingStep.actor_id
+        && prerequisite.consumerSkillIds.includes(skillStep.actor_id)
+      ));
+      if (shared) return true;
+      if (stage.actor_type !== 'tool') return false;
+      const consumers = input.portfolio.invocations.filter((invocation) => (
+        skillLoader.getSkill(invocation.skillId)?.required_tools?.includes(existingStep.actor_id) === true
+      ));
+      return consumers.length === 1 && consumers[0]?.skillId === skillStep.actor_id;
+    },
+  });
   const steps = intraSkill.steps.map((step): CurrentPlanStepV3 => structuredClone(step));
   const bindings = sourceBindings(sourceSteps, steps, intraSkill.invocations, input.portfolio);
   remapInvocationIds(steps, bindings);
-  const dependencies = portfolioDependencies(input.portfolio, bindings);
+  const dependencies = portfolioDependencies(input.portfolio);
   markSharedPrerequisites(steps, sourceSteps, input.portfolio, bindings);
+  wireRequiredToolDependencies(steps, input.portfolio, bindings, skillLoader);
   wireExternalDependencies(steps, bindings, dependencies);
   wireContributionBundle(steps, input.portfolio, bindings);
+  topologicallyRenumberPortfolioSteps(steps, bindings);
   return {
     steps,
     invocations: invocationContracts(input.portfolio, bindings, steps, dependencies),

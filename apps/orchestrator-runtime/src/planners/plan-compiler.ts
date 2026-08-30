@@ -795,6 +795,7 @@ export function validateResolverCompatibleTargetPointers(
 function validateBindings(
   steps: CurrentPlanStep[],
   toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+  requiredToolIds: ReadonlySet<string> = new Set(),
 ): void {
   const stepNos = steps.map((step) => step.step_no);
   for (const step of steps) {
@@ -818,6 +819,7 @@ function validateBindings(
       if (
         source.actor_type === 'tool'
         && (toolsById.get(source.actor_id)?.tier ?? 'optional') === 'optional'
+        && !requiredToolIds.has(source.actor_id)
       ) {
         fail('optional_binding_source', source.actor_id, String(source.step_no));
       }
@@ -1084,7 +1086,11 @@ export class PlanCompiler {
     validateSkillOutputPointers(steps);
     validateFixedActorOutputPointers(steps);
     validateSkillInvocations(steps, expandedSkills.invocations);
-    validateBindings(steps, toolsById);
+    validateBindings(
+      steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
     if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
 
     const plan: CompiledPlan['plan'] = {
@@ -1152,12 +1158,21 @@ export class PlanCompiler {
     const frozenCapabilityDecisions = freezeCapabilityDecisions(input.capability_resolution);
     const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
     const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
-    const compiledPortfolio = compilePortfolioSkillSteps({
-      steps: input.candidate.steps,
-      task: input.task,
-      portfolio: input.portfolio,
-      ...(input.skillLoader ? { skillLoader: input.skillLoader } : {}),
-    });
+    let compiledPortfolio: ReturnType<typeof compilePortfolioSkillSteps>;
+    try {
+      compiledPortfolio = compilePortfolioSkillSteps({
+        steps: input.candidate.steps,
+        task: input.task,
+        portfolio: input.portfolio,
+        ...(input.skillLoader ? { skillLoader: input.skillLoader } : {}),
+      });
+    } catch (error) {
+      if (error instanceof PlanCompilerValidationError) throw error;
+      fail(
+        'skill_execution_contract_invalid',
+        error instanceof Error ? error.message : 'unknown Portfolio compilation failure',
+      );
+    }
     const steps = compiledPortfolio.steps.map((step): CurrentPlanStep => structuredClone(step));
     const estimatedStepsByInvocation = new Map(input.portfolio.invocations.map((invocation) => (
       [invocation.invocationId, invocation.estimatedSteps] as const
@@ -1190,7 +1205,11 @@ export class PlanCompiler {
     validatePendingInputSchemas(eligibleSkills);
     validatePortfolioSkillOutputPointers(steps, compiledPortfolio.invocations);
     validateFixedActorOutputPointers(steps);
-    validateBindings(steps, toolsById);
+    validateBindings(
+      steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
     if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
 
     const plan: CompiledPortfolioPlan['plan'] = {
@@ -1285,7 +1304,11 @@ export function validateCurrentPlanRevision(input: {
     validateStepDependencies(plan.steps);
     validateQuestions(plan.steps, plan.problem_graph);
     validateEvidencePolicy(plan.problem_graph, plan.evidence_requirements);
-    validateBindings(plan.steps, toolsById);
+    validateBindings(
+      plan.steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
     const pendingInputs = derivePendingInputs(plan.steps, eligibleSkills, toolsById);
     if (!isDeepStrictEqual(pendingInputs, input.pending_inputs)) {
       fail('candidate_schema_invalid', 'pending_inputs_mismatch');

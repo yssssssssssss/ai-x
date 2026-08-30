@@ -25,6 +25,20 @@ domain: general
 title: Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）
 task_types:
   - user_research_planning
+required_tools:
+  - tavily-web-search
+execution_mode: compiled
+execution_contract: orchestrator/skill-executions/jobs-to-be-done.yaml
+composition:
+  modes: [standalone, contributor]
+  supported_outcomes: [answer]
+  compatible_deliverables: [research_strategy_report]
+  contribution_types: [jobs_to_be_done]
+  contribution_schema: schemas/research-contribution-v1.schema.json
+  contribution_adapter: skill-envelope-provisional-v1
+  required_input_roles: [research_goal]
+  optional_input_roles: [user_materials, qualitative_insights]
+  shareable_prerequisites: [tavily-web-search]
 inputs: []
 outputs: []
 status: approved

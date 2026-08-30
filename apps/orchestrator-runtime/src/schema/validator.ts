@@ -29,7 +29,10 @@ export type SchemaName =
   | 'contribution-summary-v1'
   | 'contribution-ledger-v1'
   | 'scenario-guidance'
-  | 'report-review';
+  | 'report-review'
+  | 'report-editorial-intent-v2'
+  | 'editorial-presentation-spec-v1'
+  | 'report-package-v3';
 
 // checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。
 interface ResearchReportShape {
@@ -56,8 +59,13 @@ export class SchemaValidator {
   private load(name: string): ValidateFunction {
     const cached = this.cache.get(name);
     if (cached) return cached;
+    if (name === 'report-document-v4' && !this.ajv.getSchema('report-document-v3')) {
+      const dependency = JSON.parse(readFileSync(join(this.dir, 'report-document-v3.schema.json'), 'utf8'));
+      this.ajv.addSchema(dependency);
+    }
     const raw = JSON.parse(readFileSync(join(this.dir, `${name}.schema.json`), 'utf8'));
-    const validate = this.ajv.compile(raw);
+    const validate = (typeof raw.$id === 'string' ? this.ajv.getSchema(raw.$id) : undefined)
+      ?? this.ajv.compile(raw);
     this.cache.set(name, validate);
     return validate;
   }
@@ -82,7 +90,13 @@ export class SchemaValidator {
       && 'execution_contract_version' in data
       && data.execution_contract_version === 'current-execution-plan-v3'
       ? 'current-execution-plan-v3'
-      : name;
+      : name === 'report-document'
+        && typeof data === 'object'
+        && data !== null
+        && 'version' in data
+        && (data.version === 'report-document-v3' || data.version === 'report-document-v4')
+        ? data.version
+        : name;
     const validate = this.load(schemaName);
     const structural = validate(data)
       ? []

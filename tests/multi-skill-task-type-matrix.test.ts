@@ -213,7 +213,25 @@ test('all active Task Types support simple and complex Portfolio fixtures', () =
         skillLoader: new MatrixSkillLoader([contributor, synthesizer]),
       });
       assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v3', `${item.taskType}:${label}`);
-      assert.equal(compiled.plan.contribution_requirements.length, fixture.demandGraph.demands.length, `${item.taskType}:${label}`);
+      const contributorDemandIds = portfolio.invocations
+        .filter(({ role }) => role === 'contributor')
+        .flatMap(({ demandIds }) => demandIds)
+        .sort();
+      assert.deepEqual(
+        compiled.plan.contribution_requirements.map(({ id }) => id).sort(),
+        contributorDemandIds,
+        `${item.taskType}:${label}:contributions`,
+      );
+      assert.deepEqual(
+        [...new Set([
+          ...contributorDemandIds,
+          ...compiled.plan.skill_invocations
+            .filter(({ role }) => role === 'synthesizer')
+            .flatMap(({ demand_ids }) => demand_ids ?? []),
+        ])].sort(),
+        fixture.demandGraph.demands.map(({ id }) => id).sort(),
+        `${item.taskType}:${label}:coverage`,
+      );
     }
   }
 });

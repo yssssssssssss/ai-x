@@ -3,6 +3,16 @@ import type { EvidenceClass } from '../../../../packages/api-contract/research-d
 
 export type { EvidenceClass };
 
+const FACTUAL_EVIDENCE_CLASSES = new Set<EvidenceClass>([
+  'public_source',
+  'screenshot',
+  'dataset',
+]);
+
+export function isFactualEvidenceClass(evidenceClass: EvidenceClass): boolean {
+  return FACTUAL_EVIDENCE_CLASSES.has(evidenceClass);
+}
+
 export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot';
 
 export interface ToolProof {
@@ -270,11 +280,7 @@ export class EvidenceService {
         for (const evidenceId of finding.evidenceIds) {
           const entry = evidence.get(evidenceId);
           if (!entry) throw new EvidenceGraphValidationError(`fact ${id} references unknown evidence ${evidenceId}`);
-          if (
-            entry.evidenceClass !== 'public_source'
-            && entry.evidenceClass !== 'screenshot'
-            && entry.evidenceClass !== 'dataset'
-          ) {
+          if (!isFactualEvidenceClass(entry.evidenceClass)) {
             throw new EvidenceGraphValidationError(`fact ${id} is rooted in non-factual evidence ${evidenceId}`);
           }
         }

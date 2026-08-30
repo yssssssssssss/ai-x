@@ -1397,8 +1397,10 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
 test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Canonical Deliverable', async () => {
   const content = openStrategyDraft();
   const contributionArtifactId = 'contribution-market-1';
+  const payloadSourceId = `${contributionArtifactId}:payload-001`;
   content.evidenceFindings[0]!.support.sourceContributionUnitIds = [
     `${contributionArtifactId}:market-1`,
+    payloadSourceId,
   ];
   const contributionMaterial: SynthesisMaterial = {
     stepNo: 2,
@@ -1425,6 +1427,22 @@ test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Cano
             questionIds: ['q1'], evidenceIds: ['E1'], status: 'supported',
             confidence: 0.8, validationNeeded: '',
           },
+        }, {
+          key: 'market-provisional', kind: 'finding', title: 'Market hypothesis',
+          statement: 'A provisional market hypothesis still needs validation.',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: [], status: 'provisional',
+            confidence: 0.5, validationNeeded: 'Validate the market hypothesis.',
+          },
+        }, {
+          key: 'payload-001', kind: 'finding', title: 'contribution',
+          statement: '{"strategy":"context only"}',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: [], status: 'provisional',
+            confidence: 0.5, validationNeeded: 'Validate the structured payload context.',
+          },
         }],
         limitations: [], openQuestions: [],
       },
@@ -1435,6 +1453,13 @@ test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Cano
         unitMappings: [{
           sourceUnitKey: 'market-1', targetUnitKey: 'market-1', sourceJsonPointer: '/findings/0',
           sourceSemanticHash: `sha256:${'f'.repeat(64)}`,
+        }, {
+          sourceUnitKey: 'market-provisional', targetUnitKey: 'market-provisional',
+          sourceJsonPointer: '/findings/1', sourceSemanticHash: `sha256:${'1'.repeat(64)}`,
+        }, {
+          sourceUnitKey: 'payload-001', targetUnitKey: 'payload-001',
+          sourceJsonPointer: '/payload/contribution',
+          sourceSemanticHash: `sha256:${createHash('sha256').update('{"strategy":"context only"}').digest('hex')}`,
         }],
         diagnosticFields: ['/summary'],
       },
@@ -1480,6 +1505,28 @@ test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Cano
   assert.ok(result.crossSkillReviewArtifactId);
   assert.ok(result.contributionLedgerArtifactId);
   assert.ok(result.contributionSummaryArtifactId);
+  const crossSkillReview = writes.find(({ kind }) => kind === 'cross_skill_review')?.value as {
+    verdict?: string;
+    issues?: Array<{ disposition?: string }>;
+  } | undefined;
+  const contributionLedger = writes.find(({ kind }) => kind === 'contribution_ledger')?.value as {
+    entries?: Array<{ sourceUnitKey?: string; disposition?: string }>;
+  } | undefined;
+  assert.equal(crossSkillReview?.verdict, 'pass_with_conditions');
+  assert.equal(crossSkillReview?.issues?.[0]?.disposition, 'omitted');
+  assert.deepEqual(
+    contributionLedger?.entries?.map(({ sourceUnitKey, disposition }) => ({ sourceUnitKey, disposition })),
+    [
+      { sourceUnitKey: 'market-1', disposition: 'included' },
+      { sourceUnitKey: 'market-provisional', disposition: 'omitted' },
+      { sourceUnitKey: 'payload-001', disposition: 'omitted' },
+    ],
+  );
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2)
+      .evidenceFindings[0]!.support.sourceContributionUnitIds,
+    [`${contributionArtifactId}:market-1`],
+  );
   assert.deepEqual(writes.map(({ kind }) => kind), [
     'content_fidelity_diagnostic',
     'cross_skill_review',
@@ -1727,6 +1774,61 @@ test('malformed semantic Patch responses keep diagnostics and reviewed preview i
     'deliverable_validation_diagnostic',
     'content_fidelity_diagnostic',
   ]);
+});
+
+test('repair schema permits support only on exact leaf-owning targets', async () => {
+  const content = openStrategyDraft();
+  const support = structuredClone(content.evidenceFindings[0]!.support);
+  content.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  content.contentBlocks.push({
+    key: 'mind-model',
+    kind: 'mind_model',
+    title: 'Mind model',
+    nodes: [{ key: 'trust', label: 'Trust', description: 'Verified trust.', support }],
+    edges: [],
+  });
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(structuralEvidencePatch(), materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  (strategyInput.finalizedRequirement as { requested_artifacts?: string[] }).requested_artifacts?.push('mind_model');
+
+  await service.generate(strategyInput);
+
+  const call = llm.structuredCalls[0]!;
+  const context = call.context as { allowedSupportTargets?: unknown[] };
+  assert.deepEqual(context.allowedSupportTargets, [{ entity: 'evidence_finding', key: 'fact' }, {
+    entity: 'content_block', key: 'narrative',
+  }, {
+    entity: 'content_item', blockKey: 'mind-model', key: 'trust',
+  }]);
+  const invalidBlockTarget: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_support',
+      target: { entity: 'content_block', key: 'mind-model' },
+      support,
+    }],
+  };
+  assert.throws(
+    () => new SchemaValidator().validateSchemaOrThrow(
+      call.schema,
+      invalidBlockTarget,
+      'research-strategy-content-patch-v1',
+    ),
+    SchemaValidationError,
+  );
+  assert.doesNotThrow(() => new SchemaValidator().validateSchemaOrThrow(
+    call.schema,
+    {
+      ...invalidBlockTarget,
+      operations: [{
+        ...invalidBlockTarget.operations[0],
+        target: { entity: 'content_item', blockKey: 'mind-model', key: 'trust' },
+      }],
+    },
+    'research-strategy-content-patch-v1',
+  ));
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {

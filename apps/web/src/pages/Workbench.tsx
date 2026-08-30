@@ -10,6 +10,7 @@ import {
   ApiError,
 } from '../api/client.ts';
 import {
+  approvalSubmissionAllowed,
   applyTaskHistoryPreferences,
   executionFailureAllowsAction,
   mergeTaskHistory,
@@ -73,7 +74,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
   useEffect(refreshHistory, [refreshHistory]);
 
   // 新任务和 Current 历史走同一恢复主链；Legacy 历史保持只读。
-  const flow = useTaskFlow(user.role);
+  const flow = useTaskFlow();
   const {
     phase,
     clarification,
@@ -511,7 +512,6 @@ function AwaitingApprovalNotice({
           <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>正在读取审批门禁…</div>
         )}
         {requirements.map((requirement) => {
-          const pending = requirement.decision === 'pending';
           const decisionLabel = requirement.decision === 'approved'
             ? '已批准'
             : requirement.decision === 'rejected' ? '已拒绝' : '待审批';
@@ -534,7 +534,7 @@ function AwaitingApprovalNotice({
                   {APPROVAL_AUTHORITY_LABELS[requirement.requiredAuthority]} · {decisionLabel}
                 </div>
               </div>
-              {pending && requirement.canApprove && (
+              {approvalSubmissionAllowed(requirement) && (
                 <button
                   type="button"
                   className="btn-primary"

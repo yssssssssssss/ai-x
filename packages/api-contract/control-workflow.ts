@@ -12,7 +12,8 @@ import type {
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
 } from './research-deliverable.ts';
-import type { ReportDocument } from '../../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import type { ReadableReportDocument } from './report-document.ts';
+import type { ReportPackageV2, ReportPackageV3 } from './report-package.ts';
 
 export type ControlWorkflowState =
   | 'awaiting_clarification'
@@ -280,6 +281,18 @@ interface CoreReportPackageResponse<TDeliverable> {
   contributionSummary?: ContributionSummaryV1;
 }
 
+export type CurrentReportPackageV2Metadata = Pick<
+  ReportPackageV2,
+  | 'version'
+  | 'reportPublicationId'
+  | 'layout'
+  | 'assetSnapshot'
+  | 'standaloneHtml'
+  | 'notices'
+>;
+
+export type CurrentReportPackageV3Metadata = ReportPackageV3;
+
 export type CurrentReportPackageResponse<TPayload = unknown> =
   | CoreReportPackageResponse<LegacyResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'legacy_text';
@@ -296,8 +309,11 @@ export type CurrentReportPackageResponse<TPayload = unknown> =
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'multimodal';
       reportReview: PassedReportReviewArtifact;
-      reportDocument: ReportDocument;
+      reportDocument: ReadableReportDocument;
+      reportDocumentContentSha256: string;
       visualAssetManifests: VisualAssetManifest[];
+      reportPackage?: CurrentReportPackageV2Metadata;
+      editorialShowcase?: CurrentReportPackageV3Metadata;
     };
 
 

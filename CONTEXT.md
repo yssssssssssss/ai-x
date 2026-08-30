@@ -19,11 +19,14 @@ _Avoid_: Skill 候选、Task Type、关键词标签
 **Skill Portfolio**：为一次任务冻结的一个或多个 Skill Invocation 集合，并记录各自角色、覆盖责任、依赖和失败策略；简单任务可以只有一个 Skill。
 _Avoid_: Skill 列表、强制多 Skill、运行时自由选 Skill
 
-**Analysis Owner**：对一个必答问题承担主要分析责任的唯一 Contributor Skill Invocation。
-_Avoid_: 多个共同主责、最终报告作者
+**Contribution Owner**：对一个必答问题中的一种 Contribution Type 承担主要分析责任的唯一 Contributor Skill Invocation；同一问题可以由不同专业类型分别贡献，但同一 `Question + Contribution Type` 不能有多个主责。
+_Avoid_: 把不同专业贡献误判为重复 Owner、把 Contributor 当最终报告作者
 
-**Corroborator**：对已有 Analysis Owner 的问题提供独立佐证或反证的 Contributor Skill Invocation；它不取代主责。
+**Corroborator**：对已有 Contribution Owner 的同类贡献提供独立佐证或反证的 Contributor Skill Invocation；它不取代主责。Virtual User 只提供补充性的 simulation 假设，不拥有事实结论。
 _Avoid_: 第二主责、重复执行
+
+**Question Answer Owner**：对一个必答问题的最终直接答案承担唯一责任的 Synthesizer Skill Invocation；它综合不同 Contribution Type，并保留证据边界、冲突与缺口。
+_Avoid_: 任一 Contributor 直接成为最终答案作者、多个最终作者
 
 ## 组合编排
 
@@ -86,8 +89,8 @@ _Avoid_: 运行时任务工作区、含原始材料/Base64/完整提示词的全
 **基础设施失败**:金标真实运行中与研究能力无关、可辨识的运行环境故障,如网关超时或 5xx、检索配额耗尽、网络不可达。留痕后可重试补齐,不占批次三次名额。
 _Avoid_: 能力失败(报告已产出但质量不达标)、以 infra 为名重跑能力失败样本
 
-**Tool 可用性层级**:Tool 按是否平台常在分层。`core` 为托管、常在的公开检索能力(如网页检索),是关键结论证据的必经来源,失败按基础设施失败处理;`optional` 为依赖外部后端的增强能力(如竞品截图库、各实验室),只作补充证据,其缺失不得阻断报告——规划不得将其置于关键结论的必经依赖,金标真实运行遇其失败自动跳过成缺口。
-_Avoid_: 把增强能力当关键证据、因增强后端未就绪而判整轮失败
+**Tool 可用性层级**:Tool 按是否平台常在分层。`core` 为托管、常在的公开检索能力(如网页检索),是关键结论证据的必经来源,失败按基础设施失败处理;`optional` 为依赖外部后端的增强能力(如竞品截图库、各实验室),默认只作补充证据,其缺失转成缺口且不得阻断核心报告。只有 finalized Requirement 明确把该能力独有的产出提升为 Required Demand 时,才可在任何付费执行前因后端不可用而按基础设施失败停止；不得伪造增强结果或把它误报为研究质量失败。
+_Avoid_: 把默认增强能力当关键证据、已承诺 Required Demand 后静默省略、因增强后端未就绪而消耗真实模型调用
 
 **评审表单**:研究员对单次金标真实运行做可用性判定的结构化载体。逐条勾选可用性最低线,并对报告中每条 tool_result 结论的来源引用做逐条打开核验。机器预填客观字段,判定与结论字段只能由独立研究员填写。
 _Avoid_: 自由格式结论、模型代填判定、只看来源是否标注而不实际核验
@@ -111,6 +114,9 @@ _Avoid_: 无约束自由文本、固定空章节、从未复核中间产物直�
 
 **开放式动态报告**：由模型决定章节标题、数量、顺序和类型化内容组合，但由系统固定答案覆盖、证据约束、请求交付物和风险披露的动态研究报告；布局异常只能降级展示，不能改写研究内容。
 _Avoid_: 任意 Markdown、模型自定义 Schema、布局失败等同内容失败
+
+**编辑展示报告**：在 Final Review 通过后，由受约束的展示意图、确定性 Compiler 和确定性 Renderer 从 Reviewed Canonical 派生的离线桌面 HTML。它可以按内容结构重组章节和组件，但不新增研究事实、不读取未审 Step、不替代 Canonical，也不依赖生成视觉参考的模型或案例文件。
+_Avoid_: 模型自由生成 HTML、第二份事实源、固定案例模板、只替换文案的同构页面
 
 **布局蓝图**：只引用已 Review 的 Canonical Deliverable 内容节点并描述章节分组和顺序的展示计划；它不能新增、改写或删除研究结论。
 _Avoid_: 第二份研究报告、未经 Review 的摘要、自由内容生成

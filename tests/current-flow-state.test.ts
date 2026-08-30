@@ -94,6 +94,10 @@ interface TaskHistoryPreference {
 }
 
 interface CurrentFlowStateModule {
+  approvalSubmissionAllowed(requirement: {
+    decision: 'pending' | 'approved' | 'rejected';
+    canApprove: boolean;
+  } | undefined): boolean;
   buildConfirmationAnswers(
     requirements: ConfirmationRequirement[],
     userAnswers: Record<string, unknown>,
@@ -205,6 +209,7 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   );
   const moduleExports = await import(currentFlowStateModulePath) as unknown as Record<string, unknown>;
   for (const exportName of [
+    'approvalSubmissionAllowed',
     'buildConfirmationAnswers',
     'executionStepsToExecLog',
     'currentExecutionGapCount',
@@ -226,6 +231,15 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+
+test('approval submission follows the server decision without reinterpreting the UI account role', async () => {
+  const { approvalSubmissionAllowed } = await loadCurrentFlowStateModule();
+
+  assert.equal(approvalSubmissionAllowed({ decision: 'pending', canApprove: true }), true);
+  assert.equal(approvalSubmissionAllowed({ decision: 'pending', canApprove: false }), false);
+  assert.equal(approvalSubmissionAllowed({ decision: 'approved', canApprove: true }), false);
+  assert.equal(approvalSubmissionAllowed(undefined), false);
+});
 
 test('selects one authoritative failed step independent of response order', async () => {
   const {

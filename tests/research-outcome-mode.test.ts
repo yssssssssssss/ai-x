@@ -83,6 +83,122 @@ test('explicit answer signals recover an incorrectly competitive model classific
   assert.deepEqual(value.clarification_questions, []);
 });
 
+test('a generic direct-answer request is not trapped by an unsupported competitive model guess', () => {
+  const misclassified: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['宠物食品电商推广调研报告'],
+  };
+  const value = normalizeOutcomeRequirement(
+    misclassified,
+    '我想做一个关于“宠物食品在电商应该怎么做推广的调研”',
+    null,
+  );
+  assert.equal(value.task_type, 'research_synthesis');
+  assert.equal(value.outcome_mode, 'answer');
+  assert.deepEqual(value.expected_deliverables, ['research_strategy_report']);
+});
+
+test('a direct-answer signal does not override an explicit competitive research request', () => {
+  const competitive: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['宠物品牌推广研究'],
+  };
+  const value = normalizeOutcomeRequirement(
+    competitive,
+    '请对比皇家和渴望的电商推广打法，并告诉我应该怎么做差异化推广。',
+    null,
+  );
+  assert.equal(value.task_type, 'competitive_research');
+  assert.equal(value.outcome_mode, 'answer');
+});
+
+test('conflicting competitive and strategy-report signals require a deliverable choice', () => {
+  const competitive: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+  };
+  const unresolved = normalizeOutcomeRequirement(
+    competitive,
+    '请对比皇家和渴望两个品牌，并输出策略地图和心智模型。',
+    null,
+  );
+  assert.equal(unresolved.task_type, 'competitive_research');
+  assert.equal(unresolved.outcome_mode, 'answer');
+  assert.equal(unresolved.clarification_questions[0]?.key, 'deliverable_intent');
+
+  const selected = normalizeOutcomeRequirement(
+    competitive,
+    '请对比皇家和渴望两个品牌，并输出策略地图和心智模型。',
+    { deliverable_intent: 'research_strategy_report' },
+  );
+  assert.equal(selected.task_type, 'research_synthesis');
+  assert.equal(selected.outcome_mode, 'answer');
+  assert.deepEqual(selected.expected_deliverables, ['research_strategy_report']);
+  assert.equal(selected.clarification_questions.some(({ key }) => key === 'deliverable_intent'), false);
+});
+
+test('a deliverable choice resolves only outcome ambiguity and preserves unrelated blockers', () => {
+  const generated: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+    ambiguities: [{
+      id: 'outcome-mode',
+      statement: '未明确需要研究方案（plan）还是直接研究结论（answer）。',
+      blocking: true,
+    }, {
+      id: 'market-scope',
+      statement: '未明确对比中国市场还是全球市场。',
+      blocking: true,
+    }],
+    clarification_questions: [{
+      key: 'outcome_mode',
+      question: '需要方案还是结论？',
+      rationale: '决定交付类型。',
+    }, {
+      key: 'market_scope',
+      question: '对比哪个市场？',
+      rationale: '决定证据范围。',
+    }],
+  };
+
+  const selected = normalizeOutcomeRequirement(
+    generated,
+    '请对比皇家和渴望两个品牌，并输出策略地图和心智模型。',
+    { deliverable_intent: 'research_strategy_report' },
+  );
+
+  assert.equal(selected.ambiguities[0]?.blocking, false);
+  assert.equal(selected.ambiguities[1]?.blocking, true);
+  assert.deepEqual(selected.clarification_questions.map(({ key }) => key), ['market_scope']);
+});
+
+test('strategy artifact words do not turn other explicit specialist audits into competitor choices', () => {
+  for (const specialist of [
+    { taskType: 'voc_diagnosis', input: '请分析用户反馈并输出策略地图。' },
+    { taskType: 'design_audit', input: '请做一次设计走查并输出策略地图。' },
+    { taskType: 'a11y_audit', input: '请做一次无障碍审计并输出策略地图。' },
+  ] as const) {
+    const normalized = normalizeOutcomeRequirement(
+      {
+        ...requirement(),
+        task_type: specialist.taskType,
+      },
+      specialist.input,
+      null,
+    );
+
+    assert.equal(normalized.task_type, specialist.taskType);
+    assert.equal(
+      normalized.clarification_questions.some(({ key }) => key === 'deliverable_intent'),
+      false,
+    );
+  }
+});
+
 test('public-only normalization keeps real access blockers instead of hiding them', () => {
   const blocked: ResearchTaskV2 = {
     ...requirement(),

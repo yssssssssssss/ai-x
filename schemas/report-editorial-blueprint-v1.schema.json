@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "report-editorial-blueprint-v1",
+  "title": "Report Editorial Blueprint v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "style", "density", "sections"],
+  "properties": {
+    "version": { "const": "report-editorial-blueprint-v1" },
+    "style": { "enum": ["editorial", "analytical", "operational"] },
+    "density": { "enum": ["comfortable", "compact"] },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/section" }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "unitRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "singleUnitRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "singleUnitBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presentation", "unitRefs", "visibility"],
+      "properties": {
+        "presentation": {
+          "enum": [
+            "answer",
+            "paragraph",
+            "fact",
+            "card-grid",
+            "stage-flow",
+            "image",
+            "image-comparison",
+            "chart"
+          ]
+        },
+        "unitRefs": { "$ref": "#/definitions/singleUnitRefs" },
+        "visibility": { "enum": ["always", "collapsible"] }
+      }
+    },
+    "multiUnitBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presentation", "unitRefs", "visibility"],
+      "properties": {
+        "presentation": {
+          "enum": ["list", "record-table", "priority-board"]
+        },
+        "unitRefs": { "$ref": "#/definitions/unitRefs" },
+        "visibility": { "enum": ["always", "collapsible"] }
+      }
+    },
+    "graphBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presentation", "unitRefs", "visibility", "variant"],
+      "properties": {
+        "presentation": { "const": "graph" },
+        "unitRefs": { "$ref": "#/definitions/singleUnitRefs" },
+        "visibility": { "enum": ["always", "collapsible"] },
+        "variant": { "enum": ["linear", "hub_spoke", "two_sided"] }
+      }
+    },
+    "block": {
+      "oneOf": [
+        { "$ref": "#/definitions/singleUnitBlock" },
+        { "$ref": "#/definitions/multiUnitBlock" },
+        { "$ref": "#/definitions/graphBlock" }
+      ]
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headingMode", "view", "prominence", "blocks"],
+      "properties": {
+        "headingMode": { "enum": ["view_label", "first_source_title"] },
+        "view": { "enum": ["answers", "topics", "actions", "evidence", "analysis"] },
+        "prominence": { "enum": ["primary", "supporting", "appendix"] },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/block" }
+        }
+      }
+    }
+  }
+}

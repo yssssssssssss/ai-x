@@ -611,8 +611,35 @@ test('rejects duplicate decoded binding targets before execution', () => {
 test('rejects input bindings sourced from a registry-optional Tool', () => {
   expectCompileError((value) => {
     const optionalToolId = 'aesthetic-quant-lab';
-    value.capability_resolution.eligible[0]!.skill.required_tools = [optionalToolId];
-    value.candidate.steps[0]!.actor_id = optionalToolId;
+    const skill = value.capability_resolution.eligible[0]!.skill;
+    skill.optional_tools = [optionalToolId];
+    value.capability_resolution.eligible[0]!.optional_tool_decisions = [{
+      tool_id: optionalToolId,
+      status: 'available',
+    }];
+    value.candidate.steps.splice(1, 0, {
+      step_no: 2,
+      step_name: 'optional aesthetic result',
+      actor_type: 'tool',
+      actor_id: optionalToolId,
+      question_ids: [...value.candidate.steps[0]!.question_ids],
+      depends_on: [],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/status', description: 'optional status' }],
+      acceptance_criteria: ['optional result'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    });
+    const owner = value.candidate.steps[2]!;
+    owner.step_no = 3;
+    owner.depends_on = [1, 2];
+    owner.input = { business_domain: null };
+    owner.input_bindings = [{
+      target_pointer: '/business_domain',
+      source_step_no: 2,
+      source_pointer: '/status',
+    }];
   }, 'optional_binding_source', 'aesthetic-quant-lab');
 });
 
@@ -1346,6 +1373,14 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.match(candidateCall.prompt, /统一输出根 \/payload/);
   assert.match(candidateCall.prompt, /目标槽必须预先存在于 step\.input/);
   assert.match(candidateCall.prompt, /optional Tool.*不得作为 input_bindings.*prior_outputs/);
+  const candidateSchema = candidateCall.schema as {
+    $defs?: { step?: { properties?: Record<string, unknown> } };
+  };
+  assert.equal(candidateSchema.$defs?.step?.properties?.skill_invocation_id, undefined);
+  assert.equal(candidateSchema.$defs?.step?.properties?.skill_stage_id, undefined);
+  assert.equal(candidateSchema.$defs?.step?.properties?.shared_stage_key, undefined);
+  assert.equal(candidateSchema.$defs?.step?.properties?.shared_by_invocation_ids, undefined);
+  assert.equal(candidateSchema.$defs?.step?.properties?.share_fingerprint, undefined);
   assert.match(candidateCall.prompt, /source_step_no.*必须 >= 1.*禁止把 planning_input 虚构成第 0 步/);
   assert.match(candidateCall.prompt, /每个 question\.id 必须至少出现在一个 step\.question_ids/);
   assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);

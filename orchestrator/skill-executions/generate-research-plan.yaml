@@ -73,6 +73,7 @@ stages:
     actor_type: tool
     actor_id: tavily-web-search
     share_scope: plan
+    share_input_fields: [query, topic, max_results, search_depth, include_answer]
     depends_on: []
     input:
       query: research goal public evidence

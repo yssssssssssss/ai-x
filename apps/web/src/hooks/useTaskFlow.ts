@@ -17,6 +17,7 @@ import {
   type Upload,
 } from '../api/client.ts';
 import {
+  approvalSubmissionAllowed,
   beginClarificationSubmission,
   buildConfirmationAnswers,
   createClarificationSubmissionState,
@@ -129,7 +130,7 @@ function upsertPlanningProgress(
   return next;
 }
 
-export function useTaskFlow(actorRole?: string) {
+export function useTaskFlow() {
   const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [candidatesResp, setCandidatesResp] = useState<ControlPlanCandidatesResponse | null>(null);
@@ -582,12 +583,7 @@ export function useTaskFlow(actorRole?: string) {
   async function approveTask(gateKey: string): Promise<void> {
     if (!currentTaskId || !selectedCandidate || stateVersion == null) return;
     const requirement = approvalRequirements.find((item) => item.gateKey === gateKey);
-    if (
-      !requirement
-      || requirement.decision !== 'pending'
-      || !requirement.canApprove
-      || (actorRole !== undefined && requirement.requiredAuthority !== actorRole)
-    ) return;
+    if (!approvalSubmissionAllowed(requirement)) return;
 
     setApprovalSubmitting(true);
     setError('');

@@ -370,6 +370,7 @@ test('full Markdown renderer preserves the canonical plan for a multimodal packa
   };
   const multimodal: CurrentResearchPlanResponse = {
     presentationMode: 'multimodal',
+    reportDocumentContentSha256: `sha256:${'a'.repeat(64)}`,
     deliverable: current.deliverable,
     evidenceManifest: current.evidenceManifest,
     reportReview: current.reportReview,

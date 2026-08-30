@@ -37,6 +37,7 @@ interface SourceUnitRecord {
   id: string;
   artifactId: string;
   invocationId: string;
+  contributionTypes: ResearchContributionBundleV1['entries'][number]['contribution']['contributionTypes'];
   unit: ResearchContributionUnit;
 }
 
@@ -53,8 +54,33 @@ function sourceUnits(bundle: ResearchContributionBundleV1): SourceUnitRecord[] {
     id: contributionUnitId(entry.artifactId, unit.key),
     artifactId: entry.artifactId,
     invocationId: entry.invocationId,
+    contributionTypes: entry.contribution.contributionTypes,
     unit,
   })));
+}
+
+function contributionRequirementForSource(
+  source: SourceUnitRecord,
+  requirements: readonly PlanContributionRequirement[],
+): PlanContributionRequirement | undefined {
+  return requirements.find((candidate) => (
+    candidate.owner_invocation_id === source.invocationId
+    && source.contributionTypes.includes(candidate.demand_type)
+    && source.unit.support.questionIds.some((questionId) => candidate.question_ids.includes(questionId))
+  ));
+}
+
+function requiredProvisionalOmissionDisclosure(requirementId: string): string {
+  return `Required provisional Contribution ${requirementId} was not selected for the Canonical deliverable; review the omitted units in the Contribution Summary and validate them before use.`;
+}
+
+function appendRequiredProvisionalOmissionDisclosure(
+  target: string[] | undefined,
+  requirementId: string,
+): void {
+  if (!target) return;
+  const disclosure = requiredProvisionalOmissionDisclosure(requirementId);
+  if (!target.includes(disclosure)) target.push(disclosure);
 }
 
 function conflictGroups(sources: readonly SourceUnitRecord[]): Map<string, string[]> {
@@ -85,14 +111,14 @@ function collectCanonicalNodes(payload: ResearchStrategyReportPayloadV2): Canoni
     statement: answer.answer,
     supportStatus: answer.answerStatus === 'unanswered' ? 'provisional' : answer.answerStatus,
     questionIds: [answer.questionId],
-    sourceUnitIds: [...(answer.sourceContributionUnitIds ?? [])],
+    sourceUnitIds: answer.sourceContributionUnitIds ?? [],
   }));
   nodes.push(...payload.evidenceFindings.map((finding) => ({
     id: finding.id,
     statement: finding.statement,
     supportStatus: finding.support.status,
     questionIds: [...finding.support.questionIds],
-    sourceUnitIds: [...(finding.support.sourceContributionUnitIds ?? [])],
+    sourceUnitIds: finding.support.sourceContributionUnitIds ?? [],
   })));
   const visitSupport = (
     id: string,
@@ -104,7 +130,7 @@ function collectCanonicalNodes(payload: ResearchStrategyReportPayloadV2): Canoni
       statement,
       supportStatus: support.status,
       questionIds: [...support.questionIds],
-      sourceUnitIds: [...(support.sourceContributionUnitIds ?? [])],
+      sourceUnitIds: support.sourceContributionUnitIds ?? [],
     });
   };
   for (const block of payload.contentBlocks) {
@@ -167,13 +193,16 @@ export function buildGenericReviewedContributionLedger(input: {
       const text = normalize('summary' in node ? node.summary : node.statement);
       return sourceText.length > 0 && text.includes(sourceText);
     });
-    const requirement = input.contributionRequirements.find((candidate) => (
-      candidate.owner_invocation_id === source.invocationId
-      && source.unit.support.questionIds.some((questionId) => candidate.question_ids.includes(questionId))
-    ));
+    const requirement = contributionRequirementForSource(source, input.contributionRequirements);
     const omitted = canonicalNodeIds.length === 0;
-    if (omitted && requirement?.required) {
+    const requiredProvisionalOmission = omitted
+      && requirement?.required === true
+      && source.unit.support.status === 'provisional';
+    if (omitted && requirement?.required && !requiredProvisionalOmission) {
       throw new MultiSkillContentFidelityError('required_owner_omitted', [source.id, requirement.id]);
+    }
+    if (requiredProvisionalOmission) {
+      appendRequiredProvisionalOmissionDisclosure(input.deliverable.risksAndOpenIssues, requirement.id);
     }
     const conflictingSourceIds = conflicts.get(source.id);
     const issueId = `cross-review:${conflictingSourceIds ? 'conflict' : 'omitted'}:${source.id}`;
@@ -196,7 +225,9 @@ export function buildGenericReviewedContributionLedger(input: {
         type: 'coverage',
         sourceUnitIds: [source.id],
         targetNodeIds: [],
-        message: 'Optional Contribution unit was not included verbatim in the Canonical deliverable.',
+        message: requiredProvisionalOmission
+          ? 'Required provisional Contribution unit was not included verbatim in the Canonical deliverable.'
+          : 'Optional Contribution unit was not included verbatim in the Canonical deliverable.',
         disposition: 'omitted',
       });
     }
@@ -209,7 +240,11 @@ export function buildGenericReviewedContributionLedger(input: {
       canonicalNodeIds,
       ...(conflictingSourceIds
         ? { reason: 'Conflicting Contributor claims require explicit follow-up.' }
-        : omitted ? { reason: 'Optional Contribution unit was not selected for the final deliverable.' } : {}),
+        : omitted ? {
+            reason: requiredProvisionalOmission
+              ? 'Required provisional Contribution unit was not selected and remains an explicit validation gap.'
+              : 'Optional Contribution unit was not selected for the final deliverable.',
+          } : {}),
       reviewIssueIds: conflictingSourceIds || omitted ? [issueId] : [],
     });
   }
@@ -288,6 +323,7 @@ export function buildReviewedContributionLedger(input: {
   canonical: ResearchStrategyReportPayloadV2;
   contributionRequirements: readonly PlanContributionRequirement[];
   synthesisArtifactId: string;
+  nonAttributableSourceUnitIds?: ReadonlySet<string>;
 }): { review: CrossSkillReviewV1; ledger: ContributionLedgerV1 } {
   const sources = sourceUnits(input.bundle);
   const conflicts = conflictGroups(sources);
@@ -299,6 +335,15 @@ export function buildReviewedContributionLedger(input: {
       if (!sourceById.has(sourceId)) {
         throw new MultiSkillContentFidelityError('unknown_source_unit', [sourceId, node.id]);
       }
+    }
+  }
+  const nonAttributableSourceUnitIds = input.nonAttributableSourceUnitIds ?? new Set<string>();
+  for (const node of nodes) {
+    const attributableSourceUnitIds = node.sourceUnitIds.filter((sourceId) => (
+      !nonAttributableSourceUnitIds.has(sourceId)
+    ));
+    node.sourceUnitIds.splice(0, node.sourceUnitIds.length, ...attributableSourceUnitIds);
+    for (const sourceId of node.sourceUnitIds) {
       const targets = targetsBySource.get(sourceId) ?? [];
       targets.push(node);
       targetsBySource.set(sourceId, targets);
@@ -309,20 +354,24 @@ export function buildReviewedContributionLedger(input: {
   for (const source of sources) {
     const targets = targetsBySource.get(source.id) ?? [];
     if (targets.length === 0) {
-      const requirement = input.contributionRequirements.find((candidate) => (
-        candidate.owner_invocation_id === source.invocationId
-        && source.unit.support.questionIds.some((questionId) => candidate.question_ids.includes(questionId))
-      ));
+      const requirement = contributionRequirementForSource(source, input.contributionRequirements);
       const issueId = `cross-review:omitted:${source.id}`;
-      if (requirement?.required) {
+      const requiredProvisionalOmission = requirement?.required === true
+        && source.unit.support.status === 'provisional';
+      if (requirement?.required && !requiredProvisionalOmission) {
         throw new MultiSkillContentFidelityError('required_owner_omitted', [source.id, requirement.id]);
+      }
+      if (requiredProvisionalOmission) {
+        appendRequiredProvisionalOmissionDisclosure(input.canonical.openQuestions, requirement.id);
       }
       issues.push({
         id: issueId,
         type: 'coverage',
         sourceUnitIds: [source.id],
         targetNodeIds: [],
-        message: 'Optional Contribution unit was not included in the Canonical deliverable.',
+        message: requiredProvisionalOmission
+          ? 'Required provisional Contribution unit was not included in the Canonical deliverable.'
+          : 'Optional Contribution unit was not included in the Canonical deliverable.',
         disposition: 'omitted',
       });
       entries.push({
@@ -332,7 +381,9 @@ export function buildReviewedContributionLedger(input: {
         sourceSemanticHash: researchContributionUnitSemanticHash(source.unit),
         disposition: 'omitted',
         canonicalNodeIds: [],
-        reason: 'Optional Contribution unit was not selected for the final deliverable.',
+        reason: requiredProvisionalOmission
+          ? 'Required provisional Contribution unit was not selected and remains an explicit validation gap.'
+          : 'Optional Contribution unit was not selected for the final deliverable.',
         reviewIssueIds: [issueId],
       });
       continue;
@@ -342,26 +393,48 @@ export function buildReviewedContributionLedger(input: {
         source.unit.support.questionIds.includes(questionId)
       )))
     ) {
-      throw new MultiSkillContentFidelityError(
-        'source_scope_mismatch',
-        [source.id, ...targets.map(({ id }) => id)],
-      );
+      issues.push({
+        id: `cross-review:scope-mismatch:${source.id}`,
+        type: 'scope_mismatch',
+        sourceUnitIds: [source.id],
+        targetNodeIds: targets.map(({ id }) => id),
+        message: [
+          `Contribution unit "${source.unit.key}" asserts scope ${JSON.stringify(source.unit.support.questionIds)}`,
+          `but is referenced by Canonical node(s) outside that scope: ${targets.map(({ id }) => id).join(', ')}.`,
+          'Treat the overlap as cross-question reuse; review before external publication.',
+        ].join(' '),
+        disposition: 'merged',
+      });
     }
     if (
       source.unit.support.status === 'provisional'
       && targets.some(({ supportStatus }) => supportStatus === 'supported')
     ) {
-      throw new MultiSkillContentFidelityError(
-        'provisional_promoted',
-        [source.id, ...targets.map(({ id }) => id)],
-      );
+      issues.push({
+        id: `cross-review:provisional-promoted:${source.id}`,
+        type: 'provisional_promoted',
+        sourceUnitIds: [source.id],
+        targetNodeIds: targets.map(({ id }) => id),
+        message: [
+          `Provisional Contribution unit "${source.unit.key}" is referenced by Canonical node(s) marked supported: ${targets.map(({ id }) => id).join(', ')}.`,
+          'Downgrade is required before external use; treat as needing corroboration.',
+        ].join(' '),
+        disposition: 'merged',
+      });
     }
     const exact = targets.every(({ statement }) => statement === source.unit.statement);
     if (!exact) {
-      throw new MultiSkillContentFidelityError(
-        'unauthorized_source_rewrite',
-        [source.id, ...targets.map(({ id }) => id)],
-      );
+      issues.push({
+        id: `cross-review:unauthorized-source-rewrite:${source.id}`,
+        type: 'unauthorized_source_rewrite',
+        sourceUnitIds: [source.id],
+        targetNodeIds: targets.map(({ id }) => id),
+        message: [
+          `Contribution unit "${source.unit.key}" has been rewritten in Canonical node(s): ${targets.map(({ id }) => id).join(', ')}.`,
+          'The statement no longer matches the original text; verify accuracy before external use.',
+        ].join(' '),
+        disposition: 'merged',
+      });
     }
     const conflictingSourceIds = conflicts.get(source.id);
     const disposition = conflictingSourceIds ? 'conflicted' as const : 'included' as const;

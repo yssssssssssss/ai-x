@@ -242,6 +242,10 @@ skills:
     task_types:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
+    required_tools:
+      - tavily-web-search
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/build-experience-metrics.yaml
     status: active
     composition:
       modes: [standalone, contributor]
@@ -252,6 +256,7 @@ skills:
       contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [analytics_dataset]
+      shareable_prerequisites: [tavily-web-search]
   - id: code-open-feedback
     name: code-open-feedback
     path: knowledge-base/skills/code-open-feedback
@@ -420,6 +425,10 @@ skills:
     task_types:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
+    required_tools:
+      - tavily-web-search
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/generate-persona.yaml
     status: active
     composition:
       modes: [standalone, contributor]
@@ -430,6 +439,7 @@ skills:
       contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [user_materials, qualitative_insights]
+      shareable_prerequisites: [tavily-web-search]
   - id: generate-research-plan
     name: generate-research-plan
     path: knowledge-base/skills/generate-research-plan
@@ -507,7 +517,7 @@ skills:
       modes: [standalone, synthesizer]
       supported_outcomes: [answer]
       compatible_deliverables: [research_strategy_report]
-      contribution_types: [qualitative_insight, strategy, action_plan]
+      contribution_types: [qualitative_insight, voc, satisfaction, design_audit, accessibility, research_method, prioritization, strategy, action_plan]
       contribution_schema: schemas/research-contribution-v1.schema.json
       required_input_roles: [research_goal]
       optional_input_roles: [contribution_bundle]
@@ -617,6 +627,10 @@ skills:
     task_types:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
+    required_tools:
+      - tavily-web-search
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/jobs-to-be-done.yaml
     status: active
     composition:
       modes: [standalone, contributor]
@@ -627,6 +641,7 @@ skills:
       contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [user_materials, qualitative_insights]
+      shareable_prerequisites: [tavily-web-search]
   - id: journey-map
     name: journey-map
     path: knowledge-base/skills/journey-map

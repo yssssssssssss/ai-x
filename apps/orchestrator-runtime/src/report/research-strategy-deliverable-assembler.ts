@@ -13,7 +13,10 @@ import type {
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2, RequestedArtifact } from '../../../../packages/api-contract/plan.ts';
-import type { EvidenceManifest } from '../evidence/evidence-service.ts';
+import {
+  isFactualEvidenceClass,
+  type EvidenceManifest,
+} from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import type { SynthesisMaterial } from './synthesis-materializer.ts';
 import { canonicalResearchQuestionId } from './research-strategy-reference-normalizer.ts';
@@ -21,7 +24,6 @@ import { contentBlockMatchesRequestedArtifact } from './research-strategy-artifa
 
 const DRAFT_SCHEMA = 'schemas/skills/research-strategy-content-draft-v2.schema.json';
 const PAYLOAD_SCHEMA = 'schemas/deliverables/research-strategy-report-v2.schema.json';
-const FACTUAL_EVIDENCE_CLASSES = new Set(['public_source', 'screenshot', 'dataset']);
 
 export class ResearchStrategyAssemblyError extends Error {
   constructor(message: string) {
@@ -161,7 +163,7 @@ function validateSupportBindings(input: {
     if (finding.support.status !== 'supported') continue;
     for (const evidenceId of finding.support.evidenceIds) {
       const entry = input.evidenceManifest.entries.find(({ id }) => id === evidenceId);
-      if (!entry || !FACTUAL_EVIDENCE_CLASSES.has(entry.evidenceClass)) {
+      if (!entry || !isFactualEvidenceClass(entry.evidenceClass)) {
         fail(`evidence finding ${index + 1} is rooted in non-factual Evidence ${evidenceId}`);
       }
     }
@@ -218,7 +220,7 @@ function graphAndCoverage(input: {
     const existing = factIdsByEvidence.get(evidenceId) ?? [];
     if (existing.length > 0) return existing;
     const evidence = evidenceById.get(evidenceId);
-    if (!evidence || !FACTUAL_EVIDENCE_CLASSES.has(evidence.evidenceClass)) return [];
+    if (!evidence || !isFactualEvidenceClass(evidence.evidenceClass)) return [];
     const anchorId = `evidence-anchor-${evidenceId}`;
     if (!facts.some(({ id }) => id === anchorId)) {
       facts.push({
@@ -241,38 +243,22 @@ function graphAndCoverage(input: {
   }
   const provisionalAnalyses = input.findings
     .filter(({ support }) => support.status === 'provisional')
-    .map((finding) => {
-      let relatedFacts = unique([
-        ...finding.support.questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []),
-        ...finding.support.evidenceIds.flatMap((evidenceId) => factIdsByEvidence.get(evidenceId) ?? []),
-      ]);
-      if (relatedFacts.length === 0) {
-        relatedFacts = unique(finding.support.evidenceIds.flatMap(factualRootsForEvidence));
-      }
-      if (relatedFacts.length === 0) fail(`provisional evidence finding ${finding.id} has no factual Evidence root`);
-      for (const questionId of finding.support.questionIds) {
-        factIdsByQuestion.set(questionId, unique([
-          ...(factIdsByQuestion.get(questionId) ?? []),
-          ...relatedFacts,
-        ]));
-      }
-      return {
+    .flatMap((finding) => {
+      const relatedFacts = unique(finding.support.evidenceIds.flatMap(factualRootsForEvidence));
+      if (relatedFacts.length === 0) return [];
+      return [{
         id: `analysis-${finding.id}`,
         findingIds: relatedFacts,
         statement: finding.statement,
         questionIds: finding.support.questionIds,
-      };
+      }];
     });
   if (facts.length === 0) fail('at least one factual Evidence root is required');
 
   const blockAnalyses = input.blocks.map((block) => {
     const supports = supportForBlock(block);
-    const questionIds = unique(supports.flatMap(({ questionIds }) => questionIds));
     const evidenceIds = new Set(supports.flatMap(({ evidenceIds }) => evidenceIds));
-    const relatedFacts = unique([
-      ...questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []),
-      ...[...evidenceIds].flatMap((evidenceId) => factIdsByEvidence.get(evidenceId) ?? []),
-    ]);
+    const relatedFacts = unique([...evidenceIds].flatMap(factualRootsForEvidence));
     if (relatedFacts.length === 0) fail(`content block ${block.id} has no related evidence finding`);
     return {
       id: `analysis-${block.id}`,
@@ -494,7 +480,7 @@ function canonicalizeEvidenceAliases(
 ): ResearchStrategyContentDraftV2 {
   const draft = structuredClone(source);
   const known = new Set(manifest.entries.map(({ id }) => id));
-  const factual = manifest.entries.filter(({ evidenceClass }) => FACTUAL_EVIDENCE_CLASSES.has(evidenceClass));
+  const factual = manifest.entries.filter(({ evidenceClass }) => isFactualEvidenceClass(evidenceClass));
   const aliases = new Map(factual.map((entry, index) => [`E${index + 1}`, entry.id]));
   for (const entry of manifest.entries) {
     const match = /^([EK])(\d+-\d+)$/u.exec(entry.id);
@@ -509,9 +495,9 @@ function canonicalizeEvidenceAliases(
     finding.support.evidenceIds = normalize(finding.support.evidenceIds);
     if (
       finding.support.status === 'supported'
-      && !finding.support.evidenceIds.some((evidenceId) => {
+      && finding.support.evidenceIds.some((evidenceId) => {
         const entry = manifest.entries.find(({ id }) => id === evidenceId);
-        return Boolean(entry && FACTUAL_EVIDENCE_CLASSES.has(entry.evidenceClass));
+        return Boolean(entry && !isFactualEvidenceClass(entry.evidenceClass));
       })
     ) {
       finding.support.status = 'provisional';
@@ -623,6 +609,10 @@ export function assembleResearchStrategyDeliverable(input: {
   const uniqueRisks = [...new Map(riskDisclosures.map((risk) => [`${risk.sourceType}:${risk.sourceId}`, risk])).values()];
   const limitations = [...draft.limitations];
   const openQuestions = [...draft.openQuestions];
+  for (const finding of draft.evidenceFindings) {
+    if (finding.support.status !== 'provisional') continue;
+    appendUniqueText(openQuestions, finding.support.validationNeeded);
+  }
   for (const risk of uniqueRisks) {
     appendUniqueText(risk.disposition === 'limitation' ? limitations : openQuestions, risk.statement);
   }

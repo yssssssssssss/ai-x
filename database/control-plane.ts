@@ -259,6 +259,22 @@ function publicExecutionFailure(value: unknown): Record<string, unknown> | null 
   };
 }
 
+function publicExecutionStepFailure(row: Record<string, unknown>): Record<string, unknown> | null {
+  const failure = publicExecutionFailure(row.failure_json);
+  const skillProvenance = asRecord(row.skill_provenance);
+  const legacySkillOutputSchemaFailure = failure?.kind === 'schema'
+    && row.actor_type === 'skill'
+    && skillProvenance?.status === 'failed'
+    && typeof skillProvenance.modelReceiptId === 'string'
+    && typeof skillProvenance.outputHash === 'string';
+  if (!legacySkillOutputSchemaFailure) return failure;
+  return {
+    ...failure,
+    retryable: true,
+    allowedActions: ['retry', 'abort'],
+  };
+}
+
 function hashLeaseToken(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
@@ -522,6 +538,25 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
     publicationId: typeof row.publication_id === 'string' ? row.publication_id : null,
     mediaType: typeof row.media_type === 'string' ? row.media_type : null,
     metadata: asRecord(row.metadata_json),
+  };
+}
+
+function modelCallFromRow(row: Record<string, unknown>): ControlModelCall {
+  return {
+    id: asString(row.id, 'id'),
+    stage: asString(row.stage, 'stage'),
+    stepNo: row.step_no == null ? null : asNumber(row.step_no, 'step_no'),
+    provider: asString(row.provider, 'provider'),
+    endpointHost: asString(row.endpoint_host, 'endpoint_host'),
+    requestedModel: asString(row.requested_model, 'requested_model'),
+    actualModel: asString(row.actual_model, 'actual_model'),
+    modelVersion: asString(row.model_version, 'model_version'),
+    promptHash: asString(row.prompt_hash, 'prompt_hash'),
+    contextManifestHash: typeof row.context_manifest_hash === 'string' ? row.context_manifest_hash : null,
+    traceId: typeof row.trace_id === 'string' ? row.trace_id : null,
+    tokens: asRecord(row.tokens_json),
+    status: asString(row.status, 'status'),
+    failure: asRecord(row.failure_json),
   };
 }
 
@@ -1913,7 +1948,8 @@ export class ControlPlaneRepository {
                    artifact.state = 'SEALED'
                    AND artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document',
-                     'report_package', 'cross_skill_review', 'contribution_ledger', 'contribution_summary',
+                     'report_package', 'report_editorial_showcase_spec', 'editorial_showcase_html',
+                     'cross_skill_review', 'contribution_ledger', 'contribution_summary',
                      'research_contribution_bundle',
                      'visual_asset', 'visual_asset_manifest',
                      'image_annotation', 'chart_spec', 'chart_data'
@@ -2378,7 +2414,9 @@ export class ControlPlaneRepository {
            AND attempt_id = $3
            AND kind IN (
              'evidence_manifest', 'deliverable', 'report_document', 'report_review', 'report_package',
-             'report_layout_blueprint', 'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
+             'report_layout_blueprint', 'report_editorial_blueprint', 'standalone_html_report',
+             'report_editorial_showcase_spec', 'editorial_showcase_html',
+             'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
              'cross_skill_review', 'contribution_ledger', 'contribution_summary',
              'research_contribution_bundle',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
@@ -4469,7 +4507,7 @@ export class ControlPlaneRepository {
         outputArtifactId: typeof row.output_artifact_id === 'string' ? row.output_artifact_id : null,
         toolProvenance: asRecord(row.tool_provenance),
         skillProvenance: asRecord(row.skill_provenance),
-        failure: publicExecutionFailure(row.failure_json),
+        failure: publicExecutionStepFailure(row),
         latencyMs: row.latency_ms == null ? null : asNumber(row.latency_ms, 'latency_ms'),
         startedAt: row.started_at == null ? null : asDate(row.started_at, 'started_at'),
         finishedAt: row.finished_at == null ? null : asDate(row.finished_at, 'finished_at'),
@@ -4525,26 +4563,27 @@ export class ControlPlaneRepository {
          FROM control_model_calls WHERE attempt_id = $1 ORDER BY started_at`,
         [attemptId],
       );
-      return result.rows.map((row) => ({
-        id: asString(row.id, 'id'),
-        stage: asString(row.stage, 'stage'),
-        stepNo: row.step_no == null ? null : asNumber(row.step_no, 'step_no'),
-        provider: asString(row.provider, 'provider'),
-        endpointHost: asString(row.endpoint_host, 'endpoint_host'),
-        requestedModel: asString(row.requested_model, 'requested_model'),
-        actualModel: asString(row.actual_model, 'actual_model'),
-        modelVersion: asString(row.model_version, 'model_version'),
-        promptHash: asString(row.prompt_hash, 'prompt_hash'),
-        contextManifestHash: typeof row.context_manifest_hash === 'string' ? row.context_manifest_hash : null,
-        traceId: typeof row.trace_id === 'string' ? row.trace_id : null,
-        tokens: asRecord(row.tokens_json),
-        status: asString(row.status, 'status'),
-        failure: asRecord(row.failure_json),
-      }));
+      return result.rows.map(modelCallFromRow);
     } finally {
       connection.release();
     }
   }
+
+  async getModelCall(modelCallId: string): Promise<ControlModelCall | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT id, stage, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+                prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json
+         FROM control_model_calls WHERE id = $1`,
+        [modelCallId],
+      );
+      return result.rows[0] ? modelCallFromRow(result.rows[0]) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
   async findPersistedIndependentReview(attemptId: string): Promise<PersistedIndependentReview | null> {
     const connection = await this.database.connect();
     try {
@@ -4578,7 +4617,10 @@ export class ControlPlaneRepository {
 
   async completeExecution(
     input: ControlExecutionLease,
-    options: { status: 'completed' | 'completed_with_gaps' } = { status: 'completed' },
+    options: {
+      status: 'completed' | 'completed_with_gaps';
+      reportPackageArtifactId?: string;
+    } = { status: 'completed' },
   ): Promise<ControlTask> {
     const outcome = await this.transaction(async (connection): Promise<ControlTask | null> => {
       const lockedTask = await connection.query(
@@ -4592,6 +4634,56 @@ export class ControlPlaneRepository {
       );
       if (!lockedTask.rows[0]) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);
+      }
+      if (options.reportPackageArtifactId) {
+        const selectedPackage = await connection.query(
+          `SELECT id, storage_uri
+           FROM control_artifacts
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND attempt_id = $4
+             AND kind = 'report_package'
+             AND schema_version IN ('report-package-v1', 'report-package-v2', 'report-package-v3')
+             AND state = 'SEALED'
+             AND content_sha256 IS NOT NULL
+             AND byte_size IS NOT NULL
+           FOR SHARE`,
+          [
+            options.reportPackageArtifactId,
+            input.taskId,
+            input.planVersionId,
+            input.attemptId,
+          ],
+        );
+        const selectedRow = selectedPackage.rows[0];
+        const storageUri = selectedRow ? asString(selectedRow.storage_uri, 'storage_uri') : '';
+        if (!selectedRow || !/(?:^|\/)reports\/report-package(?:-v3)?\.json$/u.test(storageUri)) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} Report Package root is not a sealed fixed-path Artifact`,
+          );
+        }
+        const packageRoots = await connection.query(
+          `SELECT id
+           FROM control_artifacts
+           WHERE task_id = $1
+             AND plan_version_id = $2
+             AND attempt_id = $3
+             AND kind = 'report_package'
+             AND storage_uri = $4
+             AND state = 'SEALED'
+           ORDER BY id
+           FOR SHARE`,
+          [input.taskId, input.planVersionId, input.attemptId, storageUri],
+        );
+        if (
+          packageRoots.rows.length !== 1
+          || asString(packageRoots.rows[0]?.id, 'id') !== options.reportPackageArtifactId
+        ) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} does not have one unique sealed Report Package root`,
+          );
+        }
       }
       const attempt = await connection.query(
         `UPDATE control_execution_attempts
@@ -4727,7 +4819,7 @@ export class ControlPlaneRepository {
         throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not paused`);
       }
       const persistedSteps = await connection.query(
-        `SELECT step_no, state, failure_json
+        `SELECT step_no, state, actor_type, skill_provenance, failure_json
          FROM control_execution_steps
          WHERE attempt_id = $1
          ORDER BY step_no
@@ -4738,7 +4830,7 @@ export class ControlPlaneRepository {
         persistedSteps.rows.map((row) => ({
           stepNo: asNumber(row.step_no, 'step_no'),
           state: asString(row.state, 'state'),
-          failure: publicExecutionFailure(row.failure_json),
+          failure: publicExecutionStepFailure(row),
         })),
       );
       if (
@@ -4770,6 +4862,7 @@ export class ControlPlaneRepository {
                  AND (
                    artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document', 'report_package',
+                     'report_editorial_showcase_spec', 'editorial_showcase_html',
                      'cross_skill_review', 'contribution_ledger', 'contribution_summary',
                      'research_contribution_bundle',
                      'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
@@ -4983,7 +5076,7 @@ export class ControlPlaneRepository {
            AND artifact.plan_version_id = $3
            AND artifact.attempt_id = $4
            AND artifact.kind = 'report_package'
-           AND artifact.schema_version = 'report-package-v1'
+           AND artifact.schema_version IN ('report-package-v1', 'report-package-v2', 'report-package-v3')
            AND artifact.state = 'SEALED'
          FOR SHARE`,
         [

@@ -8,7 +8,11 @@ import type {
   ResearchStrategySupportBindingV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { RequestedArtifact } from '../../../../packages/api-contract/plan.ts';
-import type { EvidenceManifest } from '../evidence/evidence-service.ts';
+import {
+  isFactualEvidenceClass,
+  type EvidenceClass,
+  type EvidenceManifest,
+} from '../evidence/evidence-service.ts';
 import {
   assertSemanticRevisionFidelity,
   assertStructuralRepairFidelity,
@@ -33,8 +37,6 @@ export interface AppliedResearchStrategyContentPatch {
   fidelity: ResearchStrategyContentFidelityResult;
 }
 
-const FACTUAL_EVIDENCE_CLASSES = new Set(['public_source', 'screenshot', 'dataset']);
-
 function fail(message: string): never {
   throw new ResearchStrategyContentPatchError(message);
 }
@@ -52,7 +54,7 @@ function normalizeQuestionIds(questionIds: string[], knownQuestionIds: readonly 
 
 function validateEvidenceIds(
   evidenceIds: string[],
-  evidenceClassById: ReadonlyMap<string, string>,
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>,
 ): string[] {
   const normalized = unique(evidenceIds);
   for (const evidenceId of normalized) {
@@ -61,12 +63,20 @@ function validateEvidenceIds(
   return normalized;
 }
 
+function isFactualEvidenceId(
+  evidenceId: string,
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>,
+): boolean {
+  const evidenceClass = evidenceClassById.get(evidenceId);
+  return evidenceClass !== undefined && isFactualEvidenceClass(evidenceClass);
+}
+
 function normalizedSupport(input: {
   support: ResearchStrategySupportBindingV2;
   previousStatus?: ResearchStrategySupportBindingV2['status'];
   previousConfidence?: number;
   knownQuestionIds: readonly string[];
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): ResearchStrategySupportBindingV2 {
   if (input.previousStatus === 'provisional' && input.support.status === 'supported') {
     fail('structural repair cannot promote provisional support to supported');
@@ -81,7 +91,7 @@ function normalizedSupport(input: {
   };
   if (
     support.status === 'supported'
-    && !support.evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+    && !support.evidenceIds.some((evidenceId) => isFactualEvidenceId(evidenceId, input.evidenceClassById))
   ) {
     fail('supported content requires factual Evidence');
   }
@@ -122,7 +132,7 @@ function validateAppendedAnswer(input: {
   draft: ResearchStrategyContentDraftV2;
   knownQuestionIds: readonly string[];
   requiredQuestionIds: ReadonlySet<string>;
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): ResearchStrategyDirectAnswer {
   const questionId = canonicalResearchQuestionId(input.answer.questionId, input.knownQuestionIds)
     ?? fail(`unknown Question ${input.answer.questionId}`);
@@ -135,7 +145,7 @@ function validateAppendedAnswer(input: {
   const evidenceIds = validateEvidenceIds(input.answer.evidenceIds, input.evidenceClassById);
   if (
     input.answer.answerStatus === 'supported'
-    && !evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+    && !evidenceIds.some((evidenceId) => isFactualEvidenceId(evidenceId, input.evidenceClassById))
   ) {
     fail(`supported Direct Answer ${questionId} requires factual Evidence`);
   }
@@ -150,7 +160,7 @@ function validateAppendedBlock(input: {
   draft: ResearchStrategyContentDraftV2;
   requestedArtifacts: readonly RequestedArtifact[];
   knownQuestionIds: readonly string[];
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): ResearchStrategyContentBlockDraftV2 {
   if (input.draft.contentBlocks.some(({ key }) => key === input.block.key)) {
     fail(`Content Block ${input.block.key} already exists`);
@@ -180,7 +190,7 @@ function replaceSupport(input: {
   draft: ResearchStrategyContentDraftV2;
   operation: Extract<ResearchStrategyContentPatchOperationV1, { op: 'replace_support' }>;
   knownQuestionIds: readonly string[];
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): void {
   const { target } = input.operation;
   let current: ResearchStrategySupportBindingV2 | null = null;
@@ -195,8 +205,22 @@ function replaceSupport(input: {
     current = item?.support as ResearchStrategySupportBindingV2 | undefined ?? null;
   }
   if (!current) fail(`support target ${JSON.stringify(target)} does not exist`);
+  const proposed = structuredClone(input.operation.support);
+  if (
+    target.entity === 'evidence_finding'
+    && proposed.status === 'supported'
+    && proposed.evidenceIds.some((evidenceId) => {
+      const evidenceClass = input.evidenceClassById.get(evidenceId);
+      return evidenceClass !== undefined && !isFactualEvidenceClass(evidenceClass);
+    })
+  ) {
+    proposed.status = 'provisional';
+    if (!proposed.validationNeeded.trim() || proposed.validationNeeded === 'not_applicable') {
+      proposed.validationNeeded = 'This method-grounded statement requires factual validation.';
+    }
+  }
   const replacement = normalizedSupport({
-    support: input.operation.support,
+    support: proposed,
     previousStatus: current.status,
     previousConfidence: current.confidence,
     knownQuestionIds: input.knownQuestionIds,
@@ -313,7 +337,7 @@ function appendBlockItem(input: {
   draft: ResearchStrategyContentDraftV2;
   operation: Extract<ResearchStrategyContentPatchOperationV1, { op: 'append_block_item' }>;
   knownQuestionIds: readonly string[];
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): void {
   const block = input.draft.contentBlocks.find(({ key }) => key === input.operation.blockKey);
   if (!block) fail(`Content Block ${input.operation.blockKey} does not exist`);
@@ -361,7 +385,7 @@ function applyOperation(input: {
   mode: ResearchStrategyContentPatchV1['mode'];
   knownQuestionIds: readonly string[];
   requiredQuestionIds: ReadonlySet<string>;
-  evidenceClassById: ReadonlyMap<string, string>;
+  evidenceClassById: ReadonlyMap<string, EvidenceClass>;
   requestedArtifacts: readonly RequestedArtifact[];
   allowedReviewIssueTargets?: ReadonlyMap<string, ReadonlySet<string>>;
   changedSemanticUnitKeys: Set<string>;
@@ -384,7 +408,7 @@ function applyOperation(input: {
     const evidenceIds = validateEvidenceIds(operation.evidenceIds, input.evidenceClassById);
     if (
       operation.answerStatus === 'supported'
-      && !evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+      && !evidenceIds.some((evidenceId) => isFactualEvidenceId(evidenceId, input.evidenceClassById))
     ) {
       fail(`supported Direct Answer ${questionId} requires factual Evidence`);
     }

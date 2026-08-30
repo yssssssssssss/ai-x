@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
+import {
+  isReportDocumentV3,
+  isReportDocumentV4,
+  type ReadableReportDocument,
+  type ReportDocumentV1V2,
+  type ReportViewIdV1,
+} from '../../../../../packages/api-contract/report-document.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
 import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
 import {
@@ -34,7 +40,8 @@ type GenericTextReportResponse = Exclude<
   { presentationMode: 'multimodal' }
 >;
 
-type StrategyReportView = 'answers' | 'topics' | 'artifacts' | 'evidence' | 'analysis';
+type LegacyStrategyReportView = Exclude<ReportViewIdV1, 'actions'> | 'artifacts';
+type StrategyReportView = ReportViewIdV1 | 'artifacts';
 
 const STRATEGY_TOPIC_SECTION_IDS = new Set([
   'strategy-map',
@@ -71,16 +78,16 @@ const STRATEGY_ACTION_KINDS = new Set([
 const STRATEGY_REPORT_TABS: ReadonlyArray<{ id: StrategyReportView; label: string }> = [
   { id: 'answers', label: '答案概览' },
   { id: 'topics', label: '策略框架' },
-  { id: 'artifacts', label: '机会与行动' },
+  { id: 'actions', label: '机会与行动' },
   { id: 'evidence', label: '证据与局限' },
   { id: 'analysis', label: '分析底稿' },
 ];
 
-function sectionAnswerKinds(section: ReportDocument['sections'][number]): string[] {
+function sectionAnswerKinds(section: ReportDocumentV1V2['sections'][number]): string[] {
   return section.blocks.flatMap((block) => block.type === 'answer' ? [block.kind] : []);
 }
 
-function strategyReportSectionView(section: ReportDocument['sections'][number]): StrategyReportView | undefined {
+function strategyReportSectionView(section: ReportDocumentV1V2['sections'][number]): LegacyStrategyReportView | undefined {
   const kinds = sectionAnswerKinds(section);
   if (section.id === 'executive-answers' || kinds.includes('direct_answer')) return 'answers';
   if (STRATEGY_EVIDENCE_SECTION_IDS.has(section.id) || kinds.includes('risk')) return 'evidence';
@@ -99,15 +106,20 @@ function strategyReportSectionView(section: ReportDocument['sections'][number]):
   return undefined;
 }
 
-export function strategyReportSectionIds(document: ReportDocument, view: StrategyReportView): string[] {
+export function strategyReportSectionIds(document: ReadableReportDocument, view: StrategyReportView): string[] {
+  if (isReportDocumentV3(document) || isReportDocumentV4(document)) {
+    const structuredView = view === 'artifacts' ? 'actions' : view;
+    return document.sections.filter((section) => section.view === structuredView).map(({ id }) => id);
+  }
+  const legacyView = view === 'actions' ? 'artifacts' : view;
   return document.sections
-    .filter((section) => strategyReportSectionView(section) === view)
+    .filter((section) => strategyReportSectionView(section) === legacyView)
     .map(({ id }) => id);
 }
 
 export function selectCurrentStage4Renderer(report: unknown): {
   component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
-  reportDocument?: ReportDocument;
+  reportDocument?: ReadableReportDocument;
 } {
   if (
     report !== null
@@ -132,7 +144,7 @@ export function selectCurrentStage4Renderer(report: unknown): {
   ) {
     const reportDocument = (report as Record<string, unknown>).reportDocument;
     if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
-      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
+      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReadableReportDocument };
     }
   }
   return { component: 'GenericTextReport' };
@@ -217,6 +229,8 @@ function MultimodalCurrentReport({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [htmlBundleStatus, setHtmlBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [showcaseStatus, setShowcaseStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [strategyView, setStrategyView] = useState<StrategyReportView>('answers');
   const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
@@ -226,6 +240,10 @@ function MultimodalCurrentReport({
   const [zeroError, setZeroError] = useState<string | null>(null);
   const zeroPublishButtonRef = useRef<HTMLButtonElement>(null);
   const taskId = report.deliverable.taskId;
+  const standaloneHtml = report.reportPackage?.version === 'report-package-v2'
+    ? report.reportPackage.standaloneHtml
+    : undefined;
+  const editorialShowcase = report.editorialShowcase?.showcase;
   useEffect(() => {
     setStrategyView('answers');
   }, [taskId]);
@@ -390,6 +408,40 @@ function MultimodalCurrentReport({
     }
   }
 
+  async function downloadHtmlBundle() {
+    setHtmlBundleStatus('working');
+    try {
+      const { blob } = await api.controlHtmlBundle(taskId, report.deliverable.attemptId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `offline-html-report-${taskId}.zip`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setHtmlBundleStatus('idle');
+    } catch {
+      setHtmlBundleStatus('error');
+    }
+  }
+
+  async function downloadEditorialShowcase() {
+    setShowcaseStatus('working');
+    try {
+      const { blob } = await api.controlEditorialShowcase(taskId, report.deliverable.attemptId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `editorial-showcase-${taskId}.html`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setShowcaseStatus('idle');
+    } catch {
+      setShowcaseStatus('error');
+    }
+  }
+
   const isStrategyReport = report.deliverable.deliverableType === 'research_strategy_report';
   const strategyTabs = useMemo(
     () => isStrategyReport
@@ -418,6 +470,7 @@ function MultimodalCurrentReport({
       ) : null}
       <ReportDocumentView
       document={report.reportDocument}
+      sourceReportDocumentContentSha256={report.reportDocumentContentSha256}
       visibleSectionIds={visibleSectionIds}
       visualAssetManifests={report.visualAssetManifests}
       taskId={taskId}
@@ -429,6 +482,33 @@ function MultimodalCurrentReport({
           <button type="button" className="btn-ghost" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
             {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
           </button>
+          {editorialShowcase?.status === 'ready' ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void downloadEditorialShowcase()}
+              disabled={showcaseStatus === 'working'}
+            >
+              {showcaseStatus === 'working' ? '正在下载…' : '下载编辑展示版'}
+            </button>
+          ) : null}
+          {standaloneHtml?.status === 'ready' ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void downloadHtmlBundle()}
+              disabled={htmlBundleStatus === 'working'}
+            >
+              {htmlBundleStatus === 'working' ? '正在下载…' : '下载离线 HTML'}
+            </button>
+          ) : standaloneHtml?.status === 'unavailable' ? (
+            <span
+              role="status"
+              style={{ alignSelf: 'center', color: 'var(--text-dim)', fontSize: 12 }}
+            >
+              离线 HTML 暂不可用，仍可下载 Markdown ZIP
+            </span>
+          ) : null}
           <button
             ref={zeroPublishButtonRef}
             type="button"
@@ -466,7 +546,9 @@ function MultimodalCurrentReport({
               }}
             >
               <h2 id="zero-publication-confirmation-title">确认发送到 Zero</h2>
-              <p>{report.reportDocument.title}</p>
+              <p>{isReportDocumentV4(report.reportDocument)
+                ? report.reportDocument.title.text
+                : report.reportDocument.title}</p>
               <dl>
                 <dt>目标文件</dt>
                 <dd>{zeroStatus?.currentFileKey ?? '当前 Zero 文件'}</dd>
@@ -495,6 +577,8 @@ function MultimodalCurrentReport({
             </section>
           ) : null}
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
+          {htmlBundleStatus === 'error' ? <span role="alert">离线 HTML 下载失败，请重试</span> : null}
+          {showcaseStatus === 'error' ? <span role="alert">编辑展示版下载失败，请重试</span> : null}
         </>
       )}
     />

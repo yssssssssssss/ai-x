@@ -10,7 +10,7 @@ import type {
   PlanningGuidanceClarification,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress, RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import { canonicalizeExpectedDeliverables } from '../report/deliverable-registry.ts';
+import { canonicalizeGeneratedExpectedDeliverables } from '../report/deliverable-registry.ts';
 import {
   isPlanningGuidanceClarification,
   type CurrentResearchPlanningOutcome,
@@ -198,6 +198,75 @@ const REQUESTED_ARTIFACT_SIGNALS: Array<[RegExp, RequestedArtifact]> = [
   [/(?:(?:行动|落地).{0,6}(?:计划|路线)|\baction plan\b)/iu, 'action_plan'],
 ];
 
+const SPECIALIST_INTENT_SIGNALS: ReadonlyArray<{
+  taskType: ResearchTaskV2['task_type'];
+  patterns: readonly RegExp[];
+}> = [
+  {
+    taskType: 'competitive_research',
+    patterns: [
+      /(?:竞品|竞对|竞争对手|对标)/u,
+      /(?:比较|对比)[\s\S]{0,80}(?:品牌|产品|平台|商家|方案|打法)/u,
+      /(?:品牌|产品|平台|商家)[\s\S]{0,80}(?:比较|对比)/u,
+      /\b(?:competitive|competitor|benchmark(?:ing)?)\b/iu,
+    ],
+  },
+  {
+    taskType: 'voc_diagnosis',
+    patterns: [/(?:用户之声|用户反馈|评论分析|反馈诊断|\bVOC\b)/iu],
+  },
+  {
+    taskType: 'design_audit',
+    patterns: [/(?:设计走查|设计审计|界面走查|\bdesign audit\b)/iu],
+  },
+  {
+    taskType: 'a11y_audit',
+    patterns: [/(?:无障碍|可访问性|\baccessibility audit\b|\ba11y\b)/iu],
+  },
+];
+
+const STRATEGY_DELIVERABLE_SIGNAL = /(?:研究策略报告|综合策略报告|策略答案|策略地图|心智模型|设计原则|\bresearch strategy report\b|\bstrategy map\b|\bmental model\b|\bdesign principles?\b)/iu;
+
+type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report';
+
+function clarificationDeliverableIntent(clarification: unknown): DeliverableIntent | null {
+  if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
+  const value = String((clarification as Record<string, unknown>).deliverable_intent ?? '');
+  if (value === 'competitive_analysis_report' || /竞品分析/u.test(value)) return 'competitive_analysis_report';
+  if (value === 'research_strategy_report' || /(?:综合|研究)?策略报告|策略答案/u.test(value)) {
+    return 'research_strategy_report';
+  }
+  return null;
+}
+
+function isDeliverableIntentAmbiguity(
+  ambiguity: ResearchTaskV2['ambiguities'][number],
+): boolean {
+  if (/(?:^|[_-])(?:outcome[_-]?mode|deliverable[_-]?intent)(?:$|[_-])/iu.test(ambiguity.id)) {
+    return true;
+  }
+  const mentionsPlan = /(?:研究规划|研究方案|调研规划|调研方案|\bplan\b)/iu.test(ambiguity.statement);
+  const mentionsAnswer = /(?:直接研究结论|直接策略|直接答案|结论与行动|\banswer\b)/iu.test(ambiguity.statement);
+  return mentionsPlan && mentionsAnswer;
+}
+
+function resolveDeliverableIntentAmbiguities(
+  ambiguities: ResearchTaskV2['ambiguities'],
+): ResearchTaskV2['ambiguities'] {
+  return ambiguities.map((ambiguity) => (
+    ambiguity.blocking && isDeliverableIntentAmbiguity(ambiguity)
+      ? { ...ambiguity, blocking: false }
+      : ambiguity
+  ));
+}
+
+function explicitSpecialistTaskType(originalInput: string): ResearchTaskV2['task_type'] | null {
+  const matched = SPECIALIST_INTENT_SIGNALS
+    .filter(({ patterns }) => patterns.some((pattern) => pattern.test(originalInput)))
+    .map(({ taskType }) => taskType);
+  return matched.length === 1 ? matched[0]! : null;
+}
+
 function clarificationOutcomeMode(clarification: unknown): 'plan' | 'answer' | null {
   if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
   const value = (clarification as Record<string, unknown>).outcome_mode;
@@ -216,11 +285,19 @@ function actionableBlockingIssues(
   const requestsRestrictedData = /(?:平台后台数据|私域用户数据|非公开销量数据|个人身份信息|登录后数据|private data|personal data)/iu.test(originalInput);
   if (!publicOnly || requestsRestrictedData) return requirement.blocking_issues;
   const hypotheticalRisk = /(?:^(?:若|如|如果|when\b|if\b)|可能|需逐项确认|may\b|might\b|would require)/iu;
-  const restrictedAccessRisk = /(?:privacy|compliance|authorization|access|reproducibility)/iu;
-  return requirement.blocking_issues.filter((issue) => !(
-    restrictedAccessRisk.test(issue.kind)
-    && hypotheticalRisk.test(issue.reason)
-  ));
+  const restrictedAccessRisk = /(?:privacy|compliance|authorization|access|reproducibility|evidence[_-]?limit|data[_-]?availability|未授权|未提供.*内部|内部.*数据|非公开.*数据)/iu;
+  const acceptsSyntheticBoundary = /(?:simulation\s+evidence|provisional|合成模拟|虚拟用户).*(?:真实用户|验证)|(?:真实用户|验证).*(?:simulation\s+evidence|provisional|合成模拟|虚拟用户)/iu.test(originalInput);
+  const syntheticBoundaryRisk = /(?:research[_-]?validity|research[_-]?integrity|synthetic|simulation|虚拟用户|合成模拟)/iu;
+  return requirement.blocking_issues.filter((issue) => {
+    const issueText = `${issue.kind} ${issue.reason}`;
+    const publicOnlyAccessWarning = restrictedAccessRisk.test(issueText)
+      && (
+        hypotheticalRisk.test(issue.reason)
+        || /未授权.*(?:仅使用|改用|不使用).*公开资料|未提供.*内部|不得把内部|cannot access|若.*公开资料|执行环境.*无法访问|仅凭公开资料无法|只能作为.*假设/iu.test(issue.reason)
+      );
+    const acceptedSyntheticWarning = acceptsSyntheticBoundary && syntheticBoundaryRisk.test(issueText);
+    return !publicOnlyAccessWarning && !acceptedSyntheticWarning;
+  });
 }
 
 export function normalizeOutcomeRequirement(
@@ -229,26 +306,45 @@ export function normalizeOutcomeRequirement(
   clarification: unknown,
 ): ResearchTaskV2 {
   const selectedByUser = clarificationOutcomeMode(clarification);
+  const selectedDeliverable = clarificationDeliverableIntent(clarification);
   const inferred = requirement.outcome_mode ?? null;
   const planSignal = PLAN_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput));
+  const requestedFromInput = REQUESTED_ARTIFACT_SIGNALS.flatMap(([pattern, artifact]) => (
+    pattern.test(originalInput) ? [artifact] : []
+  ));
   const answerSignal = ANSWER_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput))
-    || (requirement.requested_artifacts?.some((item) => item !== 'research_report') ?? false);
+    || requestedFromInput.some((item) => item !== 'research_report');
   const explicitAnswerOverride = EXPLICIT_ANSWER_OVERRIDE_SIGNALS.some((pattern) => pattern.test(originalInput));
   const ambiguous = selectedByUser === null && planSignal && answerSignal;
   const requested = [...new Set([
     ...(requirement.requested_artifacts ?? []),
-    ...REQUESTED_ARTIFACT_SIGNALS.flatMap(([pattern, artifact]) => pattern.test(originalInput) ? [artifact] : []),
+    ...requestedFromInput,
   ])];
+  const specialistTaskType = explicitSpecialistTaskType(originalInput);
+  const strongStrategySignal = STRATEGY_DELIVERABLE_SIGNAL.test(originalInput);
   const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
     || requirement.task_type === 'research_synthesis';
-  const appliesToOutcomeMode = supportsOutcomeMode
-    || selectedByUser !== null
-    || ambiguous
-    || planSignal
-    || explicitAnswerOverride;
-  if (!appliesToOutcomeMode) return requirement;
-  if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
-    return requirement;
+
+  if (selectedDeliverable) {
+    const strategy = selectedDeliverable === 'research_strategy_report';
+    return {
+      ...requirement,
+      task_type: strategy ? 'research_synthesis' : 'competitive_research',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : strategy
+          ? ['executive_answers', 'research_report', 'prioritized_actions']
+          : requirement.requested_artifacts,
+      expected_deliverables: [selectedDeliverable],
+      blocking_issues: strategy
+        ? actionableBlockingIssues(requirement, originalInput, 'answer')
+        : requirement.blocking_issues,
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(
+        ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
+      ),
+    };
   }
   if (ambiguous) {
     const question = {
@@ -268,8 +364,57 @@ export function normalizeOutcomeRequirement(
       ],
     };
   }
+
+  if (
+    selectedByUser === null
+    && !planSignal
+    && answerSignal
+    && specialistTaskType === 'competitive_research'
+    && strongStrategySignal
+  ) {
+    const question = {
+      key: 'deliverable_intent',
+      question: '你希望结果聚焦竞品对比，还是综合研究证据形成策略建议？',
+      rationale: '两种结果会采用不同的专业能力、证据合同和报告结构。',
+    };
+    return {
+      ...requirement,
+      task_type: specialistTaskType,
+      outcome_mode: 'answer',
+      requested_artifacts: requested,
+      clarification_questions: [
+        question,
+        ...requirement.clarification_questions.filter(
+          ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
+        ),
+      ],
+    };
+  }
+
+  if (selectedByUser === null && !planSignal && specialistTaskType) {
+    return {
+      ...requirement,
+      task_type: specialistTaskType,
+      ...(answerSignal || explicitAnswerOverride ? { outcome_mode: 'answer' as const } : {}),
+      ...(requested.length > 0 ? { requested_artifacts: requested } : {}),
+    };
+  }
+
+  const appliesToOutcomeMode = supportsOutcomeMode
+    || selectedByUser !== null
+    || planSignal
+    || answerSignal
+    || explicitAnswerOverride;
+  if (!appliesToOutcomeMode) return requirement;
+  if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
+    return requirement;
+  }
   const mode = selectedByUser
-    ?? (answerSignal && !planSignal ? 'answer' : planSignal && !answerSignal ? 'plan' : inferred ?? 'plan');
+    ?? (answerSignal && !planSignal
+      ? 'answer'
+      : planSignal && !answerSignal
+        ? 'plan'
+        : inferred ?? (requirement.task_type === 'research_synthesis' ? 'answer' : 'plan'));
   return {
     ...requirement,
     task_type: mode === 'answer' ? 'research_synthesis' : 'user_research_planning',
@@ -782,7 +927,7 @@ export class RequirementRefinementService {
           input.originalInput,
           input.clarification,
         );
-        canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
+        canonicalRequirement = canonicalizeGeneratedExpectedDeliverables(requirement);
         break;
       } catch (error) {
         if (round === 1) throw error;

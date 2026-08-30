@@ -49,13 +49,15 @@ function plan(): FinalizedPlan {
     skill_invocations: [
       {
         invocation_id: 'market', skill_id: 'competitive-analysis', role: 'contributor',
+        demand_ids: ['demand-market'],
         contribution_types: ['market_landscape'], question_ids: ['q1'], requested_artifact_types: ['strategy_map'],
         depends_on_invocation_ids: [], output_contract: 'research-contribution-v1', required: true,
         failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [2],
       },
       {
         invocation_id: 'synth', skill_id: 'research-strategy-synthesis', role: 'synthesizer',
-        contribution_types: ['strategy'], question_ids: ['q1', 'q2'], requested_artifact_types: ['strategy_map'],
+        demand_ids: ['demand-virtual'],
+        contribution_types: ['strategy', 'virtual_user_hypothesis'], question_ids: ['q1', 'q2'], requested_artifact_types: ['strategy_map'],
         depends_on_invocation_ids: ['market'], output_contract: 'reviewed-synthesis-draft-v1', required: true,
         failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [3],
       },
@@ -90,10 +92,22 @@ test('Multi-Skill plan view exposes roles, coverage, budget, and synthetic warni
   assert.equal(model.contributorCount, 1);
   assert.equal(model.synthesizer.skill_id, 'research-strategy-synthesis');
   assert.equal(model.requiredDemandCount, 2);
-  assert.equal(model.coveredRequiredDemandCount, 1);
-  assert.deepEqual(model.uncoveredRequiredDemandIds, ['demand-virtual']);
+  assert.equal(model.coveredRequiredDemandCount, 2);
+  assert.deepEqual(model.uncoveredRequiredDemandIds, []);
   assert.equal(model.synthetic, true);
   assert.deepEqual(model.budget, plan().portfolio_summary?.estimated_budget);
+});
+
+test('Multi-Skill plan view keeps early Plan v3 coverage semantics without frozen demand ownership', () => {
+  const legacyPlan = plan();
+  for (const invocation of legacyPlan.skill_invocations ?? []) {
+    if ('role' in invocation) delete invocation.demand_ids;
+  }
+
+  const model = multiSkillPlanViewModel(legacyPlan);
+  assert.ok(model);
+  assert.equal(model.coveredRequiredDemandCount, 1);
+  assert.deepEqual(model.uncoveredRequiredDemandIds, ['demand-virtual']);
 });
 
 test('execution groups distinguish shared stages and invocation-owned stages', () => {

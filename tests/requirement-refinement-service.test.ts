@@ -292,9 +292,41 @@ test('answer mode removes hypothetical private-data blockers when the user expli
   assert.equal(privateRequest.blocking_issues.length, 1);
 });
 
+test('public-only synthetic research boundaries remain constraints instead of blocking execution', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    expected_deliverables: ['research_strategy_report'],
+    pii_detected: false,
+    blocking_issues: [{
+      key: 'private-data', kind: 'authorization',
+      reason: '未授权访问内部用户行为数据，因此仅使用公开资料。',
+    }, {
+      key: 'synthetic-boundary', kind: 'research_validity',
+      reason: '虚拟用户模拟不能替代真实用户研究，相关结论只能作为 provisional 假设。',
+    }, {
+      key: 'public-source-access', kind: 'evidence_access',
+      reason: '若执行环境无法访问或核验公开资料来源，则无法满足证据可追溯要求。',
+    }, {
+      key: 'data-availability', kind: 'data_availability',
+      reason: '未提供京东内部业务数据，因此不能输出经内部数据验证的定量结论。',
+    }, {
+      key: 'internal-data', kind: 'data_access',
+      reason: '仅凭公开资料无法获得内部经营数据，相关指标只能作为建议指标或假设。',
+    }],
+  });
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接基于公开可访问资料回答；虚拟用户输出按 simulation Evidence 和 provisional 假设使用，并附真实用户验证计划。',
+    null,
+  );
+  assert.deepEqual(normalized.blocking_issues, []);
+});
+
 test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
   const { RequirementRefinementService } = await loadModule();
-  const invalid = requirement({ expected_deliverables: ['unregistered_report'] });
+  const invalid = requirement({ expected_deliverables: [' '] });
   const valid = requirement();
   const llm = new FixtureLLM([invalid, valid]);
   const repository = makeRepository();
@@ -491,6 +523,85 @@ test('mixed request persists a coherent outcome gate instead of rejecting mismat
   assert.equal(repository.versions.length, 1);
   assert.equal(plannerCalls, 0);
 });
+
+for (const selection of [
+  {
+    deliverableIntent: 'competitive_analysis_report',
+    taskType: 'competitive_research',
+  },
+  {
+    deliverableIntent: 'research_strategy_report',
+    taskType: 'research_synthesis',
+  },
+] as const) {
+  test(`deliverable clarification synchronizes ${selection.deliverableIntent} before planning`, async () => {
+    const { RequirementRefinementService } = await loadModule();
+    const generated = requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广策略报告'],
+    });
+    const clarified = requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广策略报告'],
+      ambiguities: [{
+        id: 'outcome-mode',
+        statement: '未明确本任务应输出研究规划（plan）还是直接研究结论（answer）。',
+        blocking: true,
+      }],
+      clarification_questions: [{
+        key: 'outcome_mode',
+        question: '你希望获得研究方案还是直接研究结论？',
+        rationale: '模型未将交付物选择识别为结果模式选择。',
+      }],
+    });
+    const llm = new FixtureLLM([generated, clarified]);
+    const repository = makeRepository();
+    const plannedRequirements: ResearchTaskV2[] = [];
+    const service = new RequirementRefinementService({
+      llm,
+      validator: new SchemaValidator(),
+      repository,
+      conversations: makeConversations(),
+      planner: {
+        async plan(input: { requirement: ResearchTaskV2 }) {
+          plannedRequirements.push(input.requirement);
+        },
+      },
+    });
+
+    const unresolved = await service.understand({
+      taskId,
+      conversationId,
+      ownerUserId,
+      originalInput: '请对比皇家和渴望的电商推广打法，并输出策略地图。',
+    });
+
+    assert.equal(unresolved.status, 'clarification_required');
+    assert.equal(unresolved.requirement.clarification_questions[0]?.key, 'deliverable_intent');
+    assert.equal(plannedRequirements.length, 0);
+
+    const resolved = await service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers: { deliverable_intent: selection.deliverableIntent },
+    });
+
+    assert.equal(resolved.status, 'ready_to_plan');
+    assert.equal(resolved.requirement.task_type, selection.taskType);
+    assert.deepEqual(resolved.requirement.expected_deliverables, [selection.deliverableIntent]);
+    assert.equal(resolved.requirement.clarification_questions.some(({ key }) => key === 'deliverable_intent'), false);
+    assert.equal(repository.versions.at(-1)?.structuredTask.task_type, selection.taskType);
+    assert.deepEqual(
+      repository.versions.at(-1)?.structuredTask.expected_deliverables,
+      [selection.deliverableIntent],
+    );
+    assert.equal(plannedRequirements.length, 1);
+    assert.equal(plannedRequirements[0]?.task_type, selection.taskType);
+    assert.deepEqual(plannedRequirements[0]?.expected_deliverables, [selection.deliverableIntent]);
+    assert.equal(llm.calls.length, 2);
+  });
+}
 
 test('Planning Guidance direction selection is persisted and resumes planning without another requirement LLM call', async () => {
   const { InvalidScenarioSelectionError, RequirementRefinementService } = await loadModule();
@@ -933,6 +1044,72 @@ test('model drift fails closed before requirement activation', async () => {
   assert.equal(repository.activations.length, 0);
   assert.equal(recorder.calls[0]?.status, 'failed');
 });
+
+const NATURAL_LANGUAGE_DELIVERABLE_CASES: Array<{
+  name: string;
+  originalInput: string;
+  generated: ResearchTaskV2;
+  taskType: ResearchTaskV2['task_type'];
+  canonical: string;
+}> = [
+  {
+    name: 'generic promotion research screenshot request',
+    originalInput: '我想做一个关于“宠物食品在电商应该怎么做推广的调研”',
+    generated: requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物食品电商推广调研报告'],
+    }),
+    taskType: 'research_synthesis',
+    canonical: 'research_strategy_report',
+  },
+  {
+    name: 'explicit competitive request with a custom report title',
+    originalInput: '请对比皇家和渴望的电商推广打法，并给出宠物品牌推广研究报告。',
+    generated: requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广研究报告'],
+    }),
+    taskType: 'competitive_research',
+    canonical: 'competitive_analysis_report',
+  },
+];
+
+for (const refinementCase of NATURAL_LANGUAGE_DELIVERABLE_CASES) {
+  test(`canonicalizes natural-language expected deliverable without retry: ${refinementCase.name}`, async () => {
+    const { RequirementRefinementService } = await loadModule();
+    const llm = new FixtureLLM([refinementCase.generated, refinementCase.generated]);
+    const repository = makeRepository();
+    const conversations = makeConversations();
+    let plannedInput: { originalInput: string; requirement: ResearchTaskV2 } | undefined;
+    const service = new RequirementRefinementService({
+      llm,
+      validator: new SchemaValidator(),
+      repository,
+      conversations,
+      planner: {
+        async plan(input) {
+          plannedInput = input;
+        },
+      },
+    });
+
+    const result = await service.understand({
+      taskId,
+      conversationId,
+      ownerUserId,
+      originalInput: refinementCase.originalInput,
+    });
+
+    assert.equal(result.status, 'ready_to_plan');
+    assert.equal(result.requirement.task_type, refinementCase.taskType);
+    assert.deepEqual(result.requirement.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(repository.versions[0]?.structuredTask.task_type, refinementCase.taskType);
+    assert.deepEqual(repository.versions[0]?.structuredTask.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(plannedInput?.originalInput, refinementCase.originalInput);
+    assert.deepEqual(plannedInput?.requirement.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(llm.calls.length, 1);
+  });
+}
 
 const LOCALIZED_REFINEMENT_CASES: Array<{
   taskType: ResearchTaskV2['task_type'];

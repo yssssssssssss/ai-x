@@ -5,6 +5,7 @@ import {
   CurrentExecutionPlanV3ValidationError,
   validateCurrentExecutionPlanV3,
 } from '../apps/orchestrator-runtime/src/planners/current-execution-plan-v3.ts';
+import { planShareFingerprint } from '../apps/orchestrator-runtime/src/skills/portfolio-skill-plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../apps/orchestrator-runtime/src/runtime/schema-registry.ts';
 import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
@@ -95,6 +96,7 @@ function validPlan(): CurrentExecutionPlanV3 {
         invocation_id: 'invocation-market',
         skill_id: 'competitive-web-research',
         role: 'contributor',
+        demand_ids: ['demand-market'],
         contribution_types: ['market_landscape'],
         question_ids: ['question-market'],
         requested_artifact_types: ['strategy_map'],
@@ -109,6 +111,7 @@ function validPlan(): CurrentExecutionPlanV3 {
         invocation_id: 'invocation-synthesis',
         skill_id: 'research-strategy-synthesis',
         role: 'synthesizer',
+        demand_ids: [],
         contribution_types: ['strategy'],
         question_ids: ['question-market'],
         requested_artifact_types: ['strategy_map'],
@@ -177,6 +180,123 @@ function validPlan(): CurrentExecutionPlanV3 {
   };
 }
 
+function validSharedPlan(): CurrentExecutionPlanV3 {
+  const plan = validPlan();
+  const market = plan.steps[0]!;
+  const synthesis = plan.steps[1]!;
+  const shared = {
+    step_no: 1,
+    step_name: '共享公开证据',
+    actor_type: 'tool' as const,
+    actor_id: 'tavily-web-search',
+    question_ids: ['question-market'],
+    depends_on: [],
+    input: { query: 'market evidence' },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/results', description: '公开资料' }],
+    acceptance_criteria: ['来源可追溯'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+    shared_stage_key: 'shared:tool:tavily-web-search',
+    shared_by_invocation_ids: ['invocation-market', 'invocation-synthesis'],
+    share_fingerprint: '',
+  };
+  shared.share_fingerprint = planShareFingerprint(shared);
+  plan.steps = [
+    shared,
+    { ...market, step_no: 2, depends_on: [1] },
+    {
+      ...synthesis,
+      step_no: 3,
+      depends_on: [1, 2],
+      input_bindings: synthesis.input_bindings.map((binding) => ({
+        ...binding,
+        source_step_no: 2,
+      })),
+    },
+  ];
+  plan.skill_invocations[0]!.step_nos = [1, 2];
+  plan.skill_invocations[1]!.step_nos = [1, 3];
+  plan.portfolio_summary.shared_prerequisites = [{
+    capability_type: 'tool',
+    capability_id: 'tavily-web-search',
+    consumer_skill_ids: ['competitive-web-research', 'research-strategy-synthesis'],
+  }];
+  plan.portfolio_summary.estimated_budget.expanded_step_count = 3;
+  return plan;
+}
+
+function directAnswerPlan(): CurrentExecutionPlanV3 {
+  const plan = validPlan();
+  const synthesizer = plan.skill_invocations[1]!;
+  synthesizer.demand_ids = ['demand-market'];
+  synthesizer.contribution_types = ['market_landscape'];
+  synthesizer.depends_on_invocation_ids = [];
+  synthesizer.step_nos = [1];
+  plan.skill_invocations = [synthesizer];
+  plan.portfolio_summary.selected = [plan.portfolio_summary.selected[1]!];
+  plan.portfolio_summary.estimated_budget.estimated_steps = 1;
+  plan.portfolio_summary.estimated_budget.selected_contributor_count = 0;
+  plan.portfolio_summary.estimated_budget.selected_skill_count = 1;
+  plan.portfolio_summary.estimated_budget.expanded_step_count = 1;
+  plan.contribution_requirements = [];
+  const synthesisStep = plan.steps[1]!;
+  synthesisStep.step_no = 1;
+  synthesisStep.depends_on = [];
+  synthesisStep.input_bindings = [];
+  plan.steps = [synthesisStep];
+  return plan;
+}
+
+function validCompiledSharedPlan(): CurrentExecutionPlanV3 {
+  const plan = validSharedPlan();
+  const marketOutput = plan.steps[1]!;
+  const synthesis = plan.steps[2]!;
+  plan.steps = [
+    plan.steps[0]!,
+    {
+      step_no: 2,
+      step_name: '分析共享公开证据',
+      actor_type: 'llm',
+      actor_id: 'evidence-analyst',
+      question_ids: ['question-market'],
+      depends_on: [1],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/analysis', description: '证据分析' }],
+      acceptance_criteria: ['仅使用共享公开证据'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+      skill_invocation_id: 'invocation-market',
+      skill_stage_id: 'analyze',
+    },
+    { ...marketOutput, step_no: 3, depends_on: [2] },
+    {
+      ...synthesis,
+      step_no: 4,
+      depends_on: [1, 3],
+      input_bindings: synthesis.input_bindings.map((binding) => ({
+        ...binding,
+        source_step_no: 3,
+      })),
+    },
+  ];
+  plan.skill_invocations[0] = {
+    ...plan.skill_invocations[0]!,
+    execution_mode: 'compiled',
+    contract_version: 'skill-execution-contract-v1',
+    contract_hash: hash,
+    degraded_policy: 'block',
+    skill_reference_hashes: [],
+    knowledge_references: [],
+    resource_gaps: [],
+    step_nos: [1, 2, 3],
+  };
+  plan.skill_invocations[1]!.step_nos = [1, 4];
+  plan.portfolio_summary.estimated_budget.expanded_step_count = 4;
+  return plan;
+}
+
 function expectPlanError(
   plan: CurrentExecutionPlanV3,
   kind: CurrentExecutionPlanV3ValidationError['kind'],
@@ -239,6 +359,38 @@ test('CurrentExecutionPlan v3 rejects required demand without an owner', () => {
   const plan = validPlan();
   plan.contribution_requirements = [];
   expectPlanError(plan, 'required_demand_without_owner', ['demand-market']);
+});
+
+test('CurrentExecutionPlan v3 accepts a required Demand answered directly by its Synthesizer', () => {
+  assert.doesNotThrow(() => validateCurrentExecutionPlanV3(directAnswerPlan()));
+});
+
+test('CurrentExecutionPlan v3 rejects Synthesizer-owned Contribution requirements', () => {
+  const plan = directAnswerPlan();
+  plan.contribution_requirements = [{
+    id: 'demand-market',
+    demand_type: 'market_landscape',
+    question_ids: ['question-market'],
+    requested_artifact_types: ['strategy_map'],
+    owner_invocation_id: 'invocation-synthesis',
+    corroborator_invocation_ids: [],
+    required: true,
+  }];
+  expectPlanError(plan, 'contribution_owner_not_contributor', [
+    'demand-market',
+    'invocation-synthesis',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 rejects one Demand frozen onto two invocations', () => {
+  const plan = validPlan();
+  plan.skill_invocations[1]!.demand_ids = ['demand-market'];
+  plan.skill_invocations[1]!.contribution_types.push('market_landscape');
+  expectPlanError(plan, 'multiple_demand_owners', [
+    'demand-market',
+    'invocation-market',
+    'invocation-synthesis',
+  ]);
 });
 
 test('CurrentExecutionPlan v3 rejects unknown or inconsistent owners and duplicate primary ownership', () => {
@@ -313,6 +465,117 @@ test('CurrentExecutionPlan v3 rejects forged shared-stage consumers and fingerpr
   plan.steps[0]!.share_fingerprint = `sha256:${'0'.repeat(64)}`;
   plan.skill_invocations[1]!.step_nos.push(1);
   expectPlanError(plan, 'invalid_shared_stage', ['shared:tool:evidence', '1']);
+});
+
+test('CurrentExecutionPlan v3 rejects a shared stage that a legacy consumer does not directly consume', () => {
+  const plan = validSharedPlan();
+  plan.steps[1]!.depends_on = [];
+
+  expectPlanError(plan, 'invalid_shared_stage', [
+    'shared:tool:tavily-web-search',
+    'invocation-market',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 accepts a binding from a shared stage with multiple authorized consumers', () => {
+  const plan = validSharedPlan();
+  plan.steps[1]!.input = { public_evidence: null };
+  plan.steps[1]!.input_bindings = [{
+    target_pointer: '/public_evidence',
+    source_step_no: 1,
+    source_pointer: '/results',
+  }];
+
+  assert.doesNotThrow(() => validateCurrentExecutionPlanV3(plan));
+});
+
+test('CurrentExecutionPlan v3 does not treat a legacy consumer side step as shared-stage consumption', () => {
+  const plan = validSharedPlan();
+  const marketOutput = plan.steps[1]!;
+  const synthesis = plan.steps[2]!;
+  plan.steps = [
+    plan.steps[0]!,
+    {
+      step_no: 2,
+      step_name: '无效旁路',
+      actor_type: 'llm',
+      actor_id: 'decoy',
+      question_ids: ['question-market'],
+      depends_on: [1],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/analysis', description: '旁路输出' }],
+      acceptance_criteria: ['不属于 legacy 输出'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+      skill_invocation_id: 'invocation-market',
+      skill_stage_id: 'decoy',
+    },
+    { ...marketOutput, step_no: 3, depends_on: [] },
+    {
+      ...synthesis,
+      step_no: 4,
+      depends_on: [1, 3],
+      input_bindings: synthesis.input_bindings.map((binding) => ({
+        ...binding,
+        source_step_no: 3,
+      })),
+    },
+  ];
+  plan.skill_invocations[0]!.step_nos = [1, 2, 3];
+  plan.skill_invocations[1]!.step_nos = [1, 4];
+  plan.portfolio_summary.estimated_budget.expanded_step_count = 4;
+
+  expectPlanError(plan, 'invalid_shared_stage', [
+    'shared:tool:tavily-web-search',
+    'invocation-market',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 rejects a shared stage with no path to a compiled consumer output', () => {
+  const plan = validCompiledSharedPlan();
+  plan.steps[1]!.depends_on = [];
+
+  expectPlanError(plan, 'invalid_shared_stage', [
+    'shared:tool:tavily-web-search',
+    'invocation-market',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 does not accept an intermediate Skill stage as the compiled output consumer', () => {
+  const plan = validCompiledSharedPlan();
+  plan.steps[1]!.actor_type = 'skill';
+  plan.steps[1]!.actor_id = 'competitive-web-research';
+  plan.steps[2]!.depends_on = [];
+
+  expectPlanError(plan, 'invalid_shared_stage', [
+    'shared:tool:tavily-web-search',
+    'invocation-market',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 rejects a shared prerequisite summary without its matching stage', () => {
+  const plan = validSharedPlan();
+  plan.portfolio_summary.shared_prerequisites[0]!.capability_id = 'other-search';
+
+  expectPlanError(plan, 'invalid_shared_stage', ['shared:tool:other-search']);
+});
+
+test('CurrentExecutionPlan v3 rejects a shared stage omitted from the Portfolio summary', () => {
+  const plan = validSharedPlan();
+  plan.portfolio_summary.shared_prerequisites = [];
+
+  expectPlanError(plan, 'invalid_shared_stage', ['shared:tool:tavily-web-search']);
+});
+
+test('CurrentExecutionPlan v3 rejects disagreement between shared summary Skills and stage consumers', () => {
+  const plan = validSharedPlan();
+  plan.portfolio_summary.shared_prerequisites[0]!.consumer_skill_ids[1] = 'unselected-skill';
+
+  expectPlanError(plan, 'invalid_shared_stage', [
+    'shared:tool:tavily-web-search',
+    'unselected-skill',
+  ]);
 });
 
 test('CurrentExecutionPlan v3 requires blocking policy for required owners and the synthesizer', () => {

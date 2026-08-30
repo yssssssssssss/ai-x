@@ -45,9 +45,14 @@ deliverables:
         - jobs_to_be_done
         - journey
         - qualitative_insight
+        - voc
+        - satisfaction
         - metrics
         - funnel
         - feature_adoption
+        - design_audit
+        - accessibility
+        - research_method
         - prioritization
         - strategy
         - action_plan

@@ -73,7 +73,13 @@
           "expected_outputs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/expectedOutput" } },
           "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
           "failure_policy": { "enum": ["block", "gap"] },
-          "share_scope": { "const": "plan" }
+          "share_scope": { "const": "plan" },
+          "share_input_fields": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

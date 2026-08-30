@@ -16,7 +16,10 @@ import {
   CapabilityPortfolioResolutionError,
   CapabilityPortfolioResolver,
   portfolioActorValidationIssues,
+  portfolioCompilerOwnedWiringIssues,
 } from '../apps/orchestrator-runtime/src/planners/capability-portfolio-resolver.ts';
+import { resolveRoutedPortfolios } from '../apps/orchestrator-runtime/src/planners/routed-planner.ts';
+import type { ResolvedProfileSpec } from '../apps/orchestrator-runtime/src/planners/planning-guidance.ts';
 
 const task: ResearchTaskV2 = {
   version: 'research-task-v2',
@@ -101,6 +104,7 @@ const policy: DeliverableCompositionPolicy = {
     'market_landscape',
     'persona',
     'jobs_to_be_done',
+    'virtual_user_hypothesis',
     'strategy',
   ],
   contribution_schema: 'schemas/research-contribution-v1.schema.json',
@@ -307,6 +311,48 @@ test('Candidate validation consumes only the frozen Portfolio and keeps Synthesi
   );
 });
 
+test('Portfolio proposal validation rejects compiler-owned metadata and cross-Skill wiring', () => {
+  const portfolio = resolve();
+  const steps: CurrentPlanStep[] = portfolio.invocations.map((invocation, index) => ({
+    step_no: index + 1,
+    step_name: invocation.skillId,
+    actor_type: 'skill',
+    actor_id: invocation.skillId,
+    question_ids: ['question-market'],
+    depends_on: index === 0 ? [] : [index],
+    input: index === 1 ? { prior_contributions: [] } : {},
+    input_bindings: index === 2 ? [{
+      target_pointer: '/contribution_bundle',
+      source_step_no: 1,
+      source_pointer: '/payload',
+    }] : [],
+    expected_outputs: [{ pointer: '/payload', description: 'output' }],
+    acceptance_criteria: ['valid'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+    ...(index === 0 ? {
+      skill_invocation_id: 'model-owned-invocation',
+      skill_stage_id: 'model-owned-stage',
+    } : {}),
+  }));
+  Object.assign(steps[0]!, {
+    shared_stage_key: 'shared:tool:model-owned',
+    shared_by_invocation_ids: ['model-owner-a', 'model-owner-b'],
+    share_fingerprint: `sha256:${'f'.repeat(64)}`,
+  });
+
+  assert.deepEqual(portfolioCompilerOwnedWiringIssues(steps), [
+    'compiler_owned_skill_metadata=1',
+    'compiler_owned_shared_metadata=1',
+    'compiler_owned_skill_dependency=1->2',
+    'compiler_owned_contribution_input=2:/prior_contributions',
+    'compiler_owned_skill_dependency=2->3',
+    'compiler_owned_skill_binding=1->3',
+    'compiler_owned_contribution_binding=3:/contribution_bundle',
+    'compiler_owned_skill_dependency=3->4',
+  ]);
+});
+
 test('Portfolio Resolver uses semantic recall to break equal-coverage ties', () => {
   const portfolio = resolve({
     stepEstimates: {
@@ -318,6 +364,34 @@ test('Portfolio Resolver uses semantic recall to break equal-coverage ties', () 
     },
   });
   assert.equal(portfolio.demandCoverage[0]!.ownerSkillId, 'competitive-web-research');
+});
+
+test('required Virtual User evidence can corroborate a Question without replacing its Primary Owner', () => {
+  const personaDemand = structuredClone(demands.demands.find(({ type }) => type === 'persona')!);
+  const virtualDemand = {
+    ...structuredClone(personaDemand),
+    id: 'demand-virtual-user',
+    type: 'virtual_user_hypothesis' as const,
+    requiredEvidenceClasses: ['simulation' as const],
+  };
+  const persona = skill('generate-persona', ['standalone', 'contributor'], ['persona'], '用户 Persona 分型');
+  const virtual = skill('virtual-user-research', ['standalone', 'contributor'], ['virtual_user_hypothesis'], '虚拟用户模拟假设');
+  const synthesizer = skill('research-strategy-synthesis', ['standalone', 'synthesizer'], ['strategy'], '策略综合');
+  const portfolio = resolve({
+    graph: { version: 'capability-demand-graph-v1', demands: [personaDemand, virtualDemand] },
+    capabilityResolution: { eligible: [persona, virtual, synthesizer].map((entry) => decision(entry)), rejected: [] },
+    stepEstimates: {
+      'generate-persona': 1,
+      'virtual-user-research': 2,
+      'research-strategy-synthesis': 2,
+    },
+  });
+  assert.deepEqual(
+    portfolio.demandCoverage.map(({ demandId, ownerSkillId }) => ({ demandId, ownerSkillId })),
+    [{ demandId: personaDemand.id, ownerSkillId: 'generate-persona' }, {
+      demandId: 'demand-virtual-user', ownerSkillId: 'virtual-user-research',
+    }],
+  );
 });
 
 test('Portfolio Resolver permits one Synthesizer Skill to own a simple demand it natively covers', () => {
@@ -407,6 +481,147 @@ test('Portfolio Resolver fails when required coverage exceeds the exact ProfileS
       && error.kind === 'profile_budget_exceeded'
       && error.issueIds.includes('depth'),
   );
+});
+
+test('routed Portfolio planning raises only baseline budgets to the required coverage floor', () => {
+  const graph: CapabilityDemandGraphV1 = {
+    version: 'capability-demand-graph-v1',
+    demands: [
+      ...structuredClone(demands.demands),
+      {
+        id: 'demand-metrics',
+        type: 'metrics',
+        questionIds: ['question-market'],
+        requestedArtifactTypes: [],
+        requiredEvidenceClasses: ['public_source'],
+        requiredInputRoles: ['research_goal'],
+        priority: 'required',
+      },
+      {
+        id: 'demand-virtual-user',
+        type: 'virtual_user_hypothesis',
+        questionIds: ['question-persona'],
+        requestedArtifactTypes: [],
+        requiredEvidenceClasses: ['simulation'],
+        requiredInputRoles: ['research_goal'],
+        priority: 'required',
+      },
+    ],
+  };
+  const entries = [
+    skill('competitive-web-research', ['standalone', 'contributor'], ['market_landscape'], '市场竞品', ['tavily-web-search']),
+    skill('generate-persona', ['standalone', 'contributor'], ['persona'], 'Persona', ['tavily-web-search']),
+    skill('jobs-to-be-done', ['standalone', 'contributor'], ['jobs_to_be_done'], 'JTBD', ['tavily-web-search']),
+    skill('build-experience-metrics', ['standalone', 'contributor'], ['metrics'], '体验指标', ['tavily-web-search']),
+    skill('virtual-user-research', ['standalone', 'contributor'], ['virtual_user_hypothesis'], '虚拟用户', ['virtual-user-lab']),
+    skill('research-strategy-synthesis', ['standalone', 'synthesizer'], ['strategy'], '策略综合', ['tavily-web-search']),
+  ];
+  const profiles: ResolvedProfileSpec[] = [
+    ['speed', 4, 'baseline'],
+    ['depth', 8, 'baseline'],
+    ['decision', 7, 'specialty'],
+  ].map(([id, maxSteps, kind], ordinal) => ({
+    id: id as ResolvedProfileSpec['id'],
+    ordinal,
+    kind: kind as ResolvedProfileSpec['kind'],
+    display_name: String(id),
+    max_steps: Number(maxSteps),
+    dimensions: {
+      scope: String(id),
+      method: String(id),
+      evidence: String(id),
+      review: String(id),
+      output_emphasis: [String(id)],
+    },
+    required_difference_dimensions: ['scope'],
+    coverage_invariant_ids: ['all_required_questions'],
+    recommended: id === 'depth',
+  }));
+
+  const result = resolveRoutedPortfolios(profiles, {
+    task,
+    problemGraph,
+    capabilityDemandGraph: graph,
+    deliverableId: 'research_strategy_report',
+    compositionPolicy: {
+      ...policy,
+      accepted_contribution_types: [...policy.accepted_contribution_types, 'metrics'],
+    },
+    capabilityResolution: { eligible: entries.map((entry) => decision(entry)), rejected: [] },
+    availableInputRoles: ['research_goal'],
+    stepEstimates: Object.fromEntries(entries.map(({ id }) => [id, 2])),
+  });
+
+  assert.deepEqual(result.profileSpecs.map(({ id, max_steps }) => ({ id, max_steps })), [
+    { id: 'speed', max_steps: 8 },
+    { id: 'depth', max_steps: 8 },
+  ]);
+  assert.deepEqual(result.budgetFloorProfileIds, ['speed']);
+  assert.equal(result.portfolios.speed?.estimatedBudget.estimatedSteps, 8);
+  assert.equal(result.portfolios.depth?.estimatedBudget.estimatedSteps, 8);
+  assert.equal(result.portfolios.decision, undefined);
+});
+
+test('routed Portfolio budget floor uses the full demand graph selection', () => {
+  const graph: CapabilityDemandGraphV1 = {
+    version: 'capability-demand-graph-v1',
+    demands: [
+      structuredClone(demands.demands[0]!),
+      {
+        ...structuredClone(demands.demands[1]!),
+        priority: 'optional',
+      },
+    ],
+  };
+  const entries = [
+    skill('market-lean', ['standalone', 'contributor'], ['market_landscape'], '市场 竞品'),
+    skill(
+      'market-persona-deep',
+      ['standalone', 'contributor'],
+      ['market_landscape', 'persona'],
+      '市场 竞品 Persona 用户画像',
+    ),
+    skill('research-strategy-synthesis', ['standalone', 'synthesizer'], ['strategy'], '策略综合'),
+  ];
+  const profile: ResolvedProfileSpec = {
+    id: 'speed',
+    ordinal: 0,
+    kind: 'baseline',
+    display_name: 'speed',
+    max_steps: 2,
+    dimensions: {
+      scope: 'speed',
+      method: 'speed',
+      evidence: 'speed',
+      review: 'speed',
+      output_emphasis: ['speed'],
+    },
+    required_difference_dimensions: ['scope'],
+    coverage_invariant_ids: ['all_required_questions'],
+    recommended: true,
+  };
+
+  const result = resolveRoutedPortfolios([profile], {
+    task: { ...task, research_goal: '分析众筹市场与竞品' },
+    problemGraph,
+    capabilityDemandGraph: graph,
+    deliverableId: 'research_strategy_report',
+    compositionPolicy: policy,
+    capabilityResolution: { eligible: entries.map((entry) => decision(entry)), rejected: [] },
+    availableInputRoles: ['research_goal'],
+    stepEstimates: {
+      'market-lean': 1,
+      'market-persona-deep': 4,
+      'research-strategy-synthesis': 1,
+    },
+  });
+
+  assert.deepEqual(result.profileSpecs.map(({ id, max_steps }) => ({ id, max_steps })), [
+    { id: 'speed', max_steps: 5 },
+  ]);
+  assert.deepEqual(result.budgetFloorProfileIds, ['speed']);
+  assert.equal(result.portfolios.speed?.invocations[0]?.skillId, 'market-persona-deep');
+  assert.equal(result.portfolios.speed?.estimatedBudget.estimatedSteps, 5);
 });
 
 test('Portfolio Resolver discovers explicitly shareable Knowledge stages across compiled Skills', () => {

@@ -12,9 +12,9 @@
 
 1. 所有 Task Type 共用一套 1..N Skill Portfolio 编排能力。简单任务可以只有一个 Skill；复杂任务必须覆盖全部 Required Question、Requested Artifact、Evidence 和方法义务，不以“多 Skill”数量本身作为目标。
 2. 保留 ProblemGraph v1，并在规划层新增 Capability Demand Graph。Demand 表达待覆盖的问题、产物、证据和输入义务；Skill 是满足 Demand 的候选能力，两者不得混为同一概念。
-3. 每个 Required Question 恰好一个 Analysis Owner，并可有至多一个 Corroborator。每个顶层 Deliverable 恰好一个由 Deliverable Registry 指定的 Synthesizer，LLM 不得临时替换该 owner。
-4. Contributor 独立生成可封存、可追溯的 Research Contribution；Synthesizer 只消费受控 Contribution Bundle，并由跨 Skill Reviewer 处理覆盖、冲突、遗漏和证据边界。
-5. 每个 Contribution Unit 必须在 Contribution Ledger 中恰好一次标记为 included、merged、conflicted 或 omitted。静默删除、无来源新增事实和未经授权的语义改写均失败关闭。
+3. 每个 `Required Question + Contribution Type` 恰好一个 Contribution Owner，并可有至多一个同类 Corroborator；同一问题允许市场、Persona、JTBD、Metrics 等不同专业贡献并存，Virtual User 仅作为补充 simulation 假设。每个 Required Question 的最终答案和每个顶层 Deliverable 均由 Deliverable Registry 指定的唯一 Synthesizer 负责，LLM 不得临时替换这些 owner。
+4. Contributor 独立生成可封存、可追溯的 Research Contribution；Synthesizer 只消费受控 Contribution Bundle，并由跨 Skill Reviewer 处理覆盖、冲突、遗漏和证据边界。Generic Adapter 从 `/payload/...` 对象或数组生成的结构化容器仅供合成上下文和审计摘要使用，不得作为 Canonical source attribution；标量 payload 与显式原子 Unit 仍受正常 fidelity 门禁约束。
+5. 每个 Contribution Unit 必须在 Contribution Ledger 中恰好一次标记为 included、merged、conflicted 或 omitted。Required Owner 的 supported Unit 不得 omitted；provisional Unit 可以省略，但必须在 Cross-Skill Review、Ledger、Contribution Summary 和报告风险说明中显式披露。静默删除、无来源新增事实和未经授权的语义改写均失败关闭。
 6. Reviewed Canonical Deliverable 继续是唯一正式报告真相源。Step 10 仍只执行无损 Canonical 编译；Contributor Artifact 和未 Review 的内容不得直接进入正式报告或发布。
 7. Portfolio 及每个 Compiled Skill 的内部阶段共同展开为一个确认前可见的冻结 DAG，并复用现有 Scheduler、Lease、Artifact、Tool 与审批机制。不得创建隐藏嵌套 Agent、第二套调度器或执行时新增步骤。
 8. 新写入使用 CurrentExecutionPlan v3；v1/v2 Reader 与冻结语义继续保留。未声明 composition 合同或无法确定性适配 Contribution 的 Skill 保持 standalone。

@@ -1,5 +1,6 @@
 import { isCandidateProfile } from '../../../packages/api-contract/plan.ts';
 import type {
+  ControlApprovalRequirement,
   ControlExecutionStepResponse,
   ControlPlanCandidatesResponse,
   ControlWorkflowState,
@@ -49,6 +50,12 @@ export interface TaskStatePresentation {
   label: string;
   group: TaskHistoryGroup;
   tone: TaskStateTone;
+}
+
+export function approvalSubmissionAllowed(
+  requirement: Pick<ControlApprovalRequirement, 'decision' | 'canApprove'> | undefined,
+): boolean {
+  return requirement?.decision === 'pending' && requirement.canApprove;
 }
 
 const TASK_STATE_PRESENTATIONS: Record<ControlWorkflowState, TaskStatePresentation> = {

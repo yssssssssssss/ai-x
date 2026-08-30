@@ -106,6 +106,29 @@ function demandTypeForQuestion(
     ?? defaultDemandType(task);
 }
 
+const EXPLICIT_CONTRIBUTION_RULES: ReadonlyArray<{
+  type: CapabilityDemandGraphV1['demands'][number]['type'];
+  pattern: RegExp;
+  evidenceClass?: EvidenceClass;
+}> = [
+  { type: 'market_landscape', pattern: /(?:市场|赛道|market\s+landscape)/iu },
+  { type: 'competitive_analysis', pattern: /(?:竞品|竞争对手|competitive|competitor)/iu },
+  { type: 'persona', pattern: /(?:persona|用户画像|用户分型)/iu },
+  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|支持动机|用户动机)/iu },
+  { type: 'metrics', pattern: /(?:核心体验指标|体验指标|metrics?)/iu },
+  { type: 'virtual_user_hypothesis', pattern: /(?:虚拟用户|合成模拟|synthetic\s+user|virtual\s+user)/iu, evidenceClass: 'simulation' },
+];
+
+function requestedContributionTypes(task: ResearchTaskV2): typeof EXPLICIT_CONTRIBUTION_RULES {
+  const text = [
+    task.research_goal,
+    ...task.scope,
+    ...task.success_criteria.map(({ statement }) => statement),
+    ...task.constraints.map(({ statement }) => statement),
+  ].join(' ');
+  return EXPLICIT_CONTRIBUTION_RULES.filter(({ pattern }) => pattern.test(text));
+}
+
 /** Deterministic fallback used until a model-suggested graph passes the same validator. */
 export function deriveCapabilityDemandGraph(
   task: ResearchTaskV2,
@@ -131,7 +154,30 @@ export function deriveCapabilityDemandGraph(
   const firstRequired = demands.find(({ priority }) => priority === 'required') ?? demands[0];
   if (firstRequired) firstRequired.requestedArtifactTypes = [...(task.requested_artifacts ?? [])];
 
-  if (taskRequestsVirtualUsers(task)) {
+  for (const requested of requestedContributionTypes(task)) {
+    if (demands.some(({ type }) => type === requested.type)) continue;
+    const targetQuestion = problemGraph.questions.find((question) => requested.pattern.test([
+      question.statement,
+      question.rationale,
+      ...question.acceptance_criteria,
+    ].join(' ')))
+      ?? problemGraph.questions.find(({ priority }) => priority === 'required')
+      ?? problemGraph.questions[0];
+    if (!targetQuestion) continue;
+    demands.push({
+      id: `demand:${requested.type}:${targetQuestion.id}`,
+      type: requested.type,
+      questionIds: [targetQuestion.id],
+      requestedArtifactTypes: [],
+      requiredEvidenceClasses: requested.evidenceClass
+        ? [requested.evidenceClass]
+        : [...acceptedEvidenceClasses(targetQuestion)],
+      requiredInputRoles: ['research_goal'],
+      priority: 'required',
+    });
+  }
+
+  if (taskRequestsVirtualUsers(task) && !demands.some(({ type }) => type === 'virtual_user_hypothesis')) {
     const targetQuestion = problemGraph.questions.find(({ statement }) => (
       /(?:用户|动机|persona|jtbd|user|motivation)/iu.test(statement)
     )) ?? problemGraph.questions.find(({ priority }) => priority === 'required') ?? problemGraph.questions[0];

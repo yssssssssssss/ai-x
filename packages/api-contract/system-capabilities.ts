@@ -8,6 +8,11 @@ export interface SystemCapabilitiesResponse {
   };
   planContractVersions: string[];
   multiSkillPlanWriterEnabled: boolean;
+  reportV3WriterEnabled: boolean;
+  reportEditorialPlannerV1Enabled: boolean;
+  reportEditorialExperienceV1Enabled: boolean;
+  reportEditorialShowcaseV1Enabled: boolean;
+  standaloneHtmlBundleV1Enabled: boolean;
   capabilityDemandGraphVersions: string[];
   researchContributionVersions: string[];
   researchContributionArtifactVersions: string[];

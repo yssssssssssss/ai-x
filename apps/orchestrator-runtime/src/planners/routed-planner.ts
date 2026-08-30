@@ -66,6 +66,8 @@ import {
   CapabilityPortfolioResolutionError,
   CapabilityPortfolioResolver,
   portfolioActorValidationIssues,
+  portfolioCompilerOwnedWiringIssues,
+  type CapabilityPortfolioResolveInput,
   type SkillPortfolioDecision,
 } from './capability-portfolio-resolver.ts';
 import {
@@ -99,6 +101,19 @@ if (!currentExecutionPlanSchemaValue || typeof currentExecutionPlanSchemaValue !
 const currentExecutionPlanSchema = currentExecutionPlanSchemaValue as SchemaWithDefinitions;
 const legacyCandidateDefinitions = currentPlanCandidatesSchema.$defs;
 
+function currentPlanProposalStepSchema(): object {
+  const step = structuredClone(currentExecutionPlanSchema.$defs.step) as {
+    properties?: Record<string, unknown>;
+  };
+  if (!step.properties) throw new Error('current-execution-plan step definition has no properties');
+  delete step.properties.skill_invocation_id;
+  delete step.properties.skill_stage_id;
+  delete step.properties.shared_stage_key;
+  delete step.properties.shared_by_invocation_ids;
+  delete step.properties.share_fingerprint;
+  return step;
+}
+
 function currentPlanProposalSchemaFor(profileIds: readonly string[]): object {
   return {
     type: 'object',
@@ -120,6 +135,7 @@ function currentPlanProposalSchemaFor(profileIds: readonly string[]): object {
     },
     $defs: {
       ...currentExecutionPlanSchema.$defs,
+      step: currentPlanProposalStepSchema(),
       assumption: legacyCandidateDefinitions.assumption,
       candidate: {
         type: 'object',
@@ -273,6 +289,55 @@ const ROUTED_STEP_LIMITS = {
   remediation: 7,
 } as const;
 const DEFAULT_BROWSER_CAPTURE_COUNT = MAX_BROWSER_CAPTURE_COUNT;
+
+export interface RoutedPortfolioResolution {
+  portfolios: Partial<Record<string, SkillPortfolioDecision>>;
+  profileSpecs: ResolvedProfileSpec[];
+  budgetFloorProfileIds: ResolvedProfileSpec['id'][];
+}
+
+export function resolveRoutedPortfolios(
+  profiles: readonly ResolvedProfileSpec[],
+  input: Omit<CapabilityPortfolioResolveInput, 'profile'>,
+): RoutedPortfolioResolution {
+  const resolver = new CapabilityPortfolioResolver();
+  const portfolios: Partial<Record<string, SkillPortfolioDecision>> = {};
+  const profileSpecs: ResolvedProfileSpec[] = [];
+  const budgetFloorProfileIds: ResolvedProfileSpec['id'][] = [];
+
+  for (const profile of profiles) {
+    try {
+      portfolios[profile.id] = resolver.resolve({
+        ...input,
+        profile: { id: profile.id, max_steps: profile.max_steps },
+      });
+      profileSpecs.push(profile);
+    } catch (error) {
+      if (
+        error instanceof CapabilityPortfolioResolutionError
+        && error.kind === 'profile_budget_exceeded'
+      ) {
+        if (
+          profile.kind === 'baseline'
+          && error.requiredCoverageSteps !== undefined
+          && error.requiredCoverageSteps > profile.max_steps
+        ) {
+          const effectiveProfile = { ...profile, max_steps: error.requiredCoverageSteps };
+          portfolios[profile.id] = resolver.resolve({
+            ...input,
+            profile: { id: profile.id, max_steps: effectiveProfile.max_steps },
+          });
+          profileSpecs.push(effectiveProfile);
+          budgetFloorProfileIds.push(profile.id);
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return { portfolios, profileSpecs, budgetFloorProfileIds };
+}
 
 function scoringDimensions(
   input: Record<string, unknown>,
@@ -446,6 +511,8 @@ function routedCandidateValidationFeedback(input: {
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
   portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
+  capabilityDemandGraph?: CapabilityDemandGraphV1;
+  deliverableId: string;
   evidenceRequirements: EvidenceRequirement[];
   activatedNodes: string[];
 }): string[] {
@@ -470,19 +537,43 @@ function routedCandidateValidationFeedback(input: {
       if (actorIssues.length > 0) {
         issues.push(`${candidate.id}: portfolio_actor_mismatch: ${actorIssues.join(', ')}`);
       }
+      const wiringIssues = portfolioCompilerOwnedWiringIssues(candidate.steps);
+      if (wiringIssues.length > 0) {
+        issues.push(`${candidate.id}: portfolio_compiler_owned_wiring: ${wiringIssues.join(', ')}`);
+      }
     }
     try {
-      compiler.compile({
-        candidate: { ...candidate, activated_nodes: input.activatedNodes },
-        task: input.task,
-        problem_graph: input.problemGraph,
-        problem_graph_provenance: input.problemGraphProvenance,
-        capability_resolution: input.capabilityResolution,
-        evidence_requirements: input.evidenceRequirements,
-        activated_nodes: input.activatedNodes,
-        planning_provenance: input.planningProvenance,
-        requireCompetitiveWeightContract: true,
-      });
+      if (portfolio && input.capabilityDemandGraph) {
+        compiler.compilePortfolio({
+          candidate: { ...candidate, activated_nodes: input.activatedNodes },
+          task: input.task,
+          deliverable_selection: {
+            deliverableId: input.deliverableId,
+            evidenceRequirements: input.evidenceRequirements,
+          },
+          problem_graph: input.problemGraph,
+          problem_graph_provenance: input.problemGraphProvenance,
+          capability_resolution: input.capabilityResolution,
+          evidence_requirements: input.evidenceRequirements,
+          capability_demand_graph: input.capabilityDemandGraph,
+          portfolio,
+          activated_nodes: input.activatedNodes,
+          planning_provenance: input.planningProvenance,
+          requireCompetitiveWeightContract: true,
+        });
+      } else {
+        compiler.compile({
+          candidate: { ...candidate, activated_nodes: input.activatedNodes },
+          task: input.task,
+          problem_graph: input.problemGraph,
+          problem_graph_provenance: input.problemGraphProvenance,
+          capability_resolution: input.capabilityResolution,
+          evidence_requirements: input.evidenceRequirements,
+          activated_nodes: input.activatedNodes,
+          planning_provenance: input.planningProvenance,
+          requireCompetitiveWeightContract: true,
+        });
+      }
     } catch (error) {
       if (!(error instanceof PlanCompilerValidationError)) throw error;
       issues.push(`${candidate.id}: ${error.kind}: ${error.issueIds.join(', ')}`);
@@ -855,9 +946,9 @@ export class RoutedPlanner implements PlanStrategy {
       throw new Error('Planning Guidance could not establish both baseline candidates');
     }
     let portfolios: Partial<Record<string, SkillPortfolioDecision>> | undefined;
+    let portfolioProfileSpecs: ResolvedProfileSpec[] | undefined;
+    let budgetFloorProfileIds: ResolvedProfileSpec['id'][] = [];
     if (capabilityDemandGraph && compositionPolicy.mode === 'portfolio') {
-      portfolios = {};
-      const portfolioResolver = new CapabilityPortfolioResolver();
       const stepEstimates = Object.fromEntries(capabilitySkills
         .filter(({ status }) => status === 'active')
         .map((skill) => [skill.id!, 1 + skill.required_tools.length]));
@@ -872,28 +963,20 @@ export class RoutedPlanner implements PlanStrategy {
               .map(({ actor_id }) => actor_id) ?? [],
           ];
         }));
-      for (const profile of planningGuidance.profiles) {
-        try {
-          portfolios[profile.id] = portfolioResolver.resolve({
-            task: ctx.requirement,
-            problemGraph: problemGraphResult.graph,
-            capabilityDemandGraph,
-            deliverableId: deliverable.id,
-            compositionPolicy,
-            capabilityResolution,
-            profile: { id: profile.id, max_steps: profile.max_steps },
-            availableInputRoles,
-            stepEstimates,
-            shareableKnowledgeBySkill,
-          });
-        } catch (error) {
-          if (
-            error instanceof CapabilityPortfolioResolutionError
-            && error.kind === 'profile_budget_exceeded'
-          ) continue;
-          throw error;
-        }
-      }
+      const resolved = resolveRoutedPortfolios(planningGuidance.profiles, {
+        task: ctx.requirement,
+        problemGraph: problemGraphResult.graph,
+        capabilityDemandGraph,
+        deliverableId: deliverable.id,
+        compositionPolicy,
+        capabilityResolution,
+        availableInputRoles,
+        stepEstimates,
+        shareableKnowledgeBySkill,
+      });
+      portfolios = resolved.portfolios;
+      portfolioProfileSpecs = resolved.profileSpecs;
+      budgetFloorProfileIds = resolved.budgetFloorProfileIds;
       if (Object.keys(portfolios).length < 2) {
         throw new Error('Current multi-Skill planning has fewer than two budget-feasible Profiles');
       }
@@ -1149,9 +1232,7 @@ export class RoutedPlanner implements PlanStrategy {
           input_schema: loadToolInputSchema(manifest.input_schema),
         };
       });
-    const requestedProfiles = portfolios
-      ? planningGuidance.profiles.filter(({ id }) => portfolios?.[id] !== undefined)
-      : planningGuidance.profiles;
+    const requestedProfiles = portfolioProfileSpecs ?? planningGuidance.profiles;
     const requestedProfileIds = requestedProfiles.map(({ id }) => id);
     const proposalSchema = currentPlanProposalSchemaFor(requestedProfileIds);
     const candidateContext = {
@@ -1196,15 +1277,17 @@ export class RoutedPlanner implements PlanStrategy {
           }
         : candidateContext;
       const profileSummary = profiles.map(({ id, max_steps }) => `${id}(max ${max_steps})`).join(', ');
+      const depthProfile = profiles.find(({ id }) => id === 'depth');
+      const speedProfile = profiles.find(({ id }) => id === 'speed');
       return llm.generateStructured<CandidateEnvelope>({
         prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy、eligible capability shortlist 与精确 ProfileSpec 填充候选。` +
         `只能按顺序返回 [${profiles.map(({ id }) => id).join(', ')}]，不得新增、删除、重排 Profile，也不得生成 recommended；步骤预算为 ${profileSummary}。` +
         (portfolios
-          ? `每个候选必须且只能使用 context.portfolios_by_profile[候选 id].invocations 中列出的 Skill；每个 Contributor 与 Synthesizer 恰好出现一次，Synthesizer 位于全部 Contributor 之后。`
+          ? `每个候选必须且只能使用 context.portfolios_by_profile[候选 id].invocations 中列出的 Skill；每个 Contributor 与 Synthesizer 恰好出现一次，Synthesizer 位于全部 Contributor 之后。不得生成任何 Skill 到其他步骤的 depends_on 或 input_binding，不得生成 skill_invocation_id、skill_stage_id、shared_stage_key、shared_by_invocation_ids、share_fingerprint、prior_contributions、contribution_bundle 或 contribution_order；这些由 Plan v3 Compiler 注入。`
           : '') +
-        (profiles.length === 2 && profiles[0]?.id === 'depth' && profiles[1]?.id === 'speed'
-          ? `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；`
+        (profiles.length === 2 && depthProfile && speedProfile
+          ? `depth 总步数不得超过 ${depthProfile.max_steps}，speed 总步数不得超过 ${speedProfile.max_steps}；`
           : '') +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
         `ProblemGraph 中每个 question.id 必须至少出现在一个 step.question_ids 中；提交前逐项核对，禁止遗留 orphan_required_question。` +
@@ -1249,6 +1332,8 @@ export class RoutedPlanner implements PlanStrategy {
         problemGraphProvenance: problemGraphResult.provenance,
         capabilityResolution,
         ...(portfolios ? { portfolios } : {}),
+        ...(capabilityDemandGraph ? { capabilityDemandGraph } : {}),
+        deliverableId: deliverable.id,
         evidenceRequirements,
         activatedNodes: activatedNodeKeys,
       });
@@ -1340,6 +1425,12 @@ export class RoutedPlanner implements PlanStrategy {
 
     const planningProvenance: PlanningProvenance = structuredClone(planningGuidance.planning_provenance);
     planningProvenance.selected_profile_ids = candidateEnvelope.candidates.map(({ id }) => id);
+    for (const profileId of budgetFloorProfileIds) {
+      planningProvenance.degradations.push({
+        code: 'required_coverage_budget_floor',
+        profile_id: profileId,
+      });
+    }
     for (const profileId of droppedSpecialtyIds) {
       planningProvenance.degradations.push({
         code: 'specialty_candidate_validation_failed',

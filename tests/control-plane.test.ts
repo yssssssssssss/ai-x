@@ -2221,6 +2221,8 @@ test('terminal CAS recovery invalidates sealed terminal, visual, and chart data 
     'report_review',
     'report_document',
     'report_package',
+    'report_editorial_showcase_spec',
+    'editorial_showcase_html',
     'content_fidelity_diagnostic',
     'cross_skill_review',
     'contribution_ledger',

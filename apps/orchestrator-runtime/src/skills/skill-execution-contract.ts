@@ -35,6 +35,7 @@ export interface SkillExecutionStage {
   acceptance_criteria: string[];
   failure_policy: SkillFailurePolicy;
   share_scope?: 'plan';
+  share_input_fields?: string[];
 }
 
 export interface SkillExecutionResourceQuery {
@@ -108,6 +109,19 @@ function validateGraph(contract: SkillExecutionContract): void {
     if (stages.has(stage.stage_id)) throw new Error(`duplicate Skill stage ${stage.stage_id}`);
     if (stage.share_scope === 'plan' && stage.actor_type !== 'tool' && stage.actor_type !== 'knowledge') {
       throw new Error(`Skill stage ${stage.stage_id} may declare share_scope only for Tool or Knowledge`);
+    }
+    if (stage.share_input_fields !== undefined) {
+      if (stage.share_scope !== 'plan' || stage.actor_type !== 'tool') {
+        throw new Error(`Skill stage ${stage.stage_id} may declare share_input_fields only for a plan-shareable Tool`);
+      }
+      if (new Set(stage.share_input_fields).size !== stage.share_input_fields.length) {
+        throw new Error(`Skill stage ${stage.stage_id} share_input_fields must be unique`);
+      }
+      for (const field of stage.share_input_fields) {
+        if (!Object.hasOwn(stage.input, field)) {
+          throw new Error(`Skill stage ${stage.stage_id} shared input field ${field} is not declared in input`);
+        }
+      }
     }
     if ((stage.frozen_input_fields?.length ?? 0) > 0 && stage.actor_type !== 'tool') {
       throw new Error(`Skill stage ${stage.stage_id} may declare frozen_input_fields only for Tool input`);

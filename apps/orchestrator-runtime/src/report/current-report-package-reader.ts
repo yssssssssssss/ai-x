@@ -5,6 +5,15 @@ import type {
   PassedReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
+  ReadableReportDocument,
+  ReportBlockV1V2,
+  ReportBlockV3,
+  ReportBlockV4,
+  ReportDocumentV3,
+  ReportDocumentV4,
+} from '../../../../packages/api-contract/report-document.ts';
+import type { ReportPackageV2 } from '../../../../packages/api-contract/report-package.ts';
+import type {
   ContributionLedgerV1,
   ContributionSummaryV1,
   CrossSkillReviewV1,
@@ -44,8 +53,16 @@ import {
 } from './deliverable-registry.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 import {
+  assertReportDocumentV3Integrity,
+  assertReportDocumentV4Integrity,
+} from '../../../../packages/report-rendering/report-document-visitor.ts';
+import {
   type ReportPackageArtifactValue,
 } from './report-package-artifact.ts';
+import {
+  ReportPackageV2ArtifactVerifier,
+  type ReportPackageV2ArtifactReader,
+} from './report-package-v2-artifact.ts';
 import {
   assertCompetitiveWeightChartBinding,
   COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
@@ -62,12 +79,30 @@ interface ReportPackageBinding {
 }
 
 interface CurrentReportPackageReaderDependencies {
-  artifacts: Pick<ControlArtifactStore, 'readVerifiedJson'>;
+  artifacts: Pick<ControlArtifactStore, 'readVerifiedJson'> & ReportPackageV2ArtifactReader;
   repository: Pick<ControlPlaneRepository, 'findSealedArtifact'>;
   evidence?: Pick<EvidenceService, 'resolveEvidenceValue' | 'validateManifest' | 'validateFindingGraph'>;
   reportValidator?: Pick<ReportEvidenceValidator, 'validate'>;
   schemaValidator?: Pick<SchemaValidator, 'validateOrThrow'>;
   visualAssets?: Pick<VisualAssetService, 'readVerified'>;
+}
+
+export interface FrozenReportPackageRoot {
+  artifactId: string;
+  contentSha256: string;
+}
+
+interface FrozenReportPackageComponents {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  deliverableArtifactId: string;
+  evidenceManifestArtifactId: string;
+  reportReviewArtifactId?: string;
+  reportDocumentArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -118,7 +153,17 @@ function assertJsonIdentity(
   if (value.attemptId !== binding.attemptId) throw new Error(`${label} attemptId is invalid`);
 }
 
-function reportAssetReferences(document: ReportDocument): VisualAssetReference[] {
+function reportBlocks(document: ReadableReportDocument): Array<ReportBlockV1V2 | ReportBlockV3 | ReportBlockV4> {
+  if (document.version === 'report-document-v3') {
+    return document.sections.flatMap(({ blocks }) => blocks);
+  }
+  if (document.version === 'report-document-v4') {
+    return document.sections.flatMap(({ blocks }) => blocks);
+  }
+  return document.sections.flatMap(({ blocks }) => blocks);
+}
+
+function reportAssetReferences(document: ReadableReportDocument): VisualAssetReference[] {
   const references: VisualAssetReference[] = [];
   const seen = new Set<string>();
   const manifestByAsset = new Map<string, string>();
@@ -133,7 +178,7 @@ function reportAssetReferences(document: ReportDocument): VisualAssetReference[]
     seen.add(key);
     references.push(reference);
   };
-  for (const block of document.sections.flatMap(({ blocks }) => blocks)) {
+  for (const block of reportBlocks(document)) {
     if (block.type === 'image') append(block.assetRef);
     if (block.type === 'image-comparison') {
       append(block.beforeAssetRef);
@@ -168,29 +213,108 @@ function assertVerifiedVisualReference(
     throw new Error('Visual Asset Manifest does not match its ReportDocument reference');
   }
   assertJsonIdentity(asset.manifest as unknown as Record<string, unknown>, binding, 'Visual Asset Manifest');
+  if (asset.manifest.exportPolicy === 'block') {
+    throw new Error(`Visual Asset ${reference.assetId} is blocked by its export policy`);
+  }
   return asset.manifest;
+}
+
+function assertStructuredTraceReferences(input: {
+  document: ReportDocumentV3 | ReportDocumentV4;
+  requiredQuestionIds: readonly string[];
+  evidenceIds: readonly string[];
+  findingIds: readonly string[];
+  summaryIds: readonly string[];
+}): void {
+  const requiredQuestionIds = new Set(input.requiredQuestionIds);
+  const evidenceIds = new Set(input.evidenceIds);
+  const findingIds = new Set(input.findingIds);
+  const summaryIds = new Set(input.summaryIds);
+  const coveredQuestions = new Set<string>();
+  for (const [leafId, trace] of Object.entries(input.document.traceIndex)) {
+    for (const questionId of trace.questionIds) {
+      if (!requiredQuestionIds.has(questionId)) {
+        throw new Error(`${input.document.version} leaf ${leafId} references unknown required question ${questionId}`);
+      }
+      coveredQuestions.add(questionId);
+    }
+    for (const evidenceId of trace.evidenceIds) {
+      if (!evidenceIds.has(evidenceId)) {
+        throw new Error(`${input.document.version} leaf ${leafId} references dangling Evidence ${evidenceId}`);
+      }
+    }
+    for (const findingId of trace.findingIds) {
+      if (!findingIds.has(findingId)) {
+        throw new Error(`${input.document.version} leaf ${leafId} references dangling Finding ${findingId}`);
+      }
+    }
+    for (const summaryId of trace.summaryIds) {
+      if (!summaryIds.has(summaryId)) {
+        throw new Error(`${input.document.version} leaf ${leafId} references dangling Summary ${summaryId}`);
+      }
+    }
+  }
+  for (const questionId of input.requiredQuestionIds) {
+    if (!coveredQuestions.has(questionId)) {
+      throw new Error(`${input.document.version} does not cover required question ${questionId}`);
+    }
+  }
 }
 
 export class CurrentReportPackageReader {
   private readonly evidence: Pick<EvidenceService, 'resolveEvidenceValue' | 'validateManifest' | 'validateFindingGraph'>;
   private readonly reportValidator: Pick<ReportEvidenceValidator, 'validate'>;
   private readonly schemaValidator: Pick<SchemaValidator, 'validateOrThrow'>;
+  private readonly reportPackageV2: ReportPackageV2ArtifactVerifier;
 
   constructor(private readonly dependencies: CurrentReportPackageReaderDependencies) {
     const evidence = dependencies.evidence ?? new EvidenceService();
     this.evidence = evidence;
     this.reportValidator = dependencies.reportValidator ?? new ReportEvidenceValidator(evidence);
     this.schemaValidator = dependencies.schemaValidator ?? new SchemaValidator();
+    this.reportPackageV2 = new ReportPackageV2ArtifactVerifier(dependencies.artifacts);
   }
 
   async read(
     binding: ReportPackageBinding,
-    frozen?: ReportPackageArtifactValue,
+    frozen?: ReportPackageArtifactValue | FrozenReportPackageRoot,
   ): Promise<CurrentReportPackageResponse | null> {
-    if (frozen && (
-      frozen.taskId !== binding.taskId
-      || frozen.planVersionId !== binding.planVersionId
-      || frozen.attemptId !== binding.attemptId
+    let reportPackageV2: ReportPackageV2 | undefined;
+    let frozenComponents: FrozenReportPackageComponents | undefined;
+    if (frozen && 'artifactId' in frozen) {
+      const verified = await this.reportPackageV2.verify({
+        artifactId: frozen.artifactId,
+        ...binding,
+      });
+      if (verified.artifact.contentSha256 !== frozen.contentSha256) {
+        throw new Error('frozen Report Package root hash is invalid');
+      }
+      reportPackageV2 = verified.value;
+      frozenComponents = {
+        taskId: reportPackageV2.taskId,
+        planVersionId: reportPackageV2.planVersionId,
+        attemptId: reportPackageV2.attemptId,
+        deliverableArtifactId: reportPackageV2.deliverableArtifactId,
+        evidenceManifestArtifactId: reportPackageV2.evidenceManifestArtifactId,
+        reportReviewArtifactId: reportPackageV2.reportReviewArtifactId,
+        reportDocumentArtifactId: reportPackageV2.sourceReportDocumentArtifactId,
+        ...(reportPackageV2.crossSkillReviewArtifactId === undefined
+          ? {}
+          : { crossSkillReviewArtifactId: reportPackageV2.crossSkillReviewArtifactId }),
+        ...(reportPackageV2.contributionLedgerArtifactId === undefined
+          ? {}
+          : { contributionLedgerArtifactId: reportPackageV2.contributionLedgerArtifactId }),
+        ...(reportPackageV2.contributionSummaryArtifactId === undefined
+          ? {}
+          : { contributionSummaryArtifactId: reportPackageV2.contributionSummaryArtifactId }),
+      };
+    } else {
+      frozenComponents = frozen;
+    }
+    if (frozenComponents && (
+      frozenComponents.taskId !== binding.taskId
+      || frozenComponents.planVersionId !== binding.planVersionId
+      || frozenComponents.attemptId !== binding.attemptId
     )) {
       throw new Error('frozen Report Package binding is invalid');
     }
@@ -199,47 +323,47 @@ export class CurrentReportPackageReader {
       contributionLedger?: ContributionLedgerV1;
       contributionSummary?: ContributionSummaryV1;
     } = {};
-    if (frozen?.crossSkillReviewArtifactId) {
+    if (frozenComponents?.crossSkillReviewArtifactId) {
       const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-        frozen.crossSkillReviewArtifactId,
+        frozenComponents.crossSkillReviewArtifactId,
       );
-      assertArtifactBinding(verified.artifact, frozen.crossSkillReviewArtifactId, 'cross_skill_review', binding, 'Cross-Skill Review');
+      assertArtifactBinding(verified.artifact, frozenComponents.crossSkillReviewArtifactId, 'cross_skill_review', binding, 'Cross-Skill Review');
       this.schemaValidator.validateOrThrow('cross-skill-review-v1', verified.value);
       const reviewRecord = record(verified.value);
       if (!reviewRecord) throw new Error('Cross-Skill Review JSON is invalid');
       assertJsonIdentity(reviewRecord, binding, 'Cross-Skill Review');
       contributionSidecars.crossSkillReview = verified.value as CrossSkillReviewV1;
     }
-    if (frozen?.contributionLedgerArtifactId) {
+    if (frozenComponents?.contributionLedgerArtifactId) {
       const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-        frozen.contributionLedgerArtifactId,
+        frozenComponents.contributionLedgerArtifactId,
       );
-      assertArtifactBinding(verified.artifact, frozen.contributionLedgerArtifactId, 'contribution_ledger', binding, 'Contribution Ledger');
+      assertArtifactBinding(verified.artifact, frozenComponents.contributionLedgerArtifactId, 'contribution_ledger', binding, 'Contribution Ledger');
       this.schemaValidator.validateOrThrow('contribution-ledger-v1', verified.value);
       const ledgerRecord = record(verified.value);
       if (!ledgerRecord) throw new Error('Contribution Ledger JSON is invalid');
       assertJsonIdentity(ledgerRecord, binding, 'Contribution Ledger');
       contributionSidecars.contributionLedger = verified.value as ContributionLedgerV1;
     }
-    if (frozen?.contributionSummaryArtifactId) {
+    if (frozenComponents?.contributionSummaryArtifactId) {
       const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-        frozen.contributionSummaryArtifactId,
+        frozenComponents.contributionSummaryArtifactId,
       );
-      assertArtifactBinding(verified.artifact, frozen.contributionSummaryArtifactId, 'contribution_summary', binding, 'Contribution Summary');
+      assertArtifactBinding(verified.artifact, frozenComponents.contributionSummaryArtifactId, 'contribution_summary', binding, 'Contribution Summary');
       this.schemaValidator.validateOrThrow('contribution-summary-v1', verified.value);
       const summaryRecord = record(verified.value);
       if (!summaryRecord) throw new Error('Contribution Summary JSON is invalid');
       assertJsonIdentity(summaryRecord, binding, 'Contribution Summary');
       contributionSidecars.contributionSummary = verified.value as ContributionSummaryV1;
     }
-    const repositoryReview = frozen
+    const repositoryReview = frozenComponents
       ? null
       : await this.dependencies.repository.findSealedArtifact({
           taskId: binding.taskId,
           attemptId: binding.attemptId,
           kind: 'report_review',
         });
-    const selectedReviewId = frozen?.reportReviewArtifactId ?? repositoryReview?.id ?? null;
+    const selectedReviewId = frozenComponents?.reportReviewArtifactId ?? repositoryReview?.id ?? null;
     let review: PassedReportReviewArtifact | null = null;
     let deliverableArtifactId: string;
     if (selectedReviewId) {
@@ -274,11 +398,11 @@ export class CurrentReportPackageReader {
         throw new Error('Review revision round does not match the final Review Artifact');
       }
       deliverableArtifactId = review.deliverableArtifactId;
-      if (frozen && deliverableArtifactId !== frozen.deliverableArtifactId) {
+      if (frozenComponents && deliverableArtifactId !== frozenComponents.deliverableArtifactId) {
         throw new Error('frozen Report Package deliverable reference is invalid');
       }
-    } else if (frozen) {
-      deliverableArtifactId = frozen.deliverableArtifactId;
+    } else if (frozenComponents) {
+      deliverableArtifactId = frozenComponents.deliverableArtifactId;
     } else {
       const selectedDeliverable = await this.dependencies.repository.findSealedArtifact({
         taskId: binding.taskId,
@@ -318,7 +442,7 @@ export class CurrentReportPackageReader {
     }
 
     const manifestId = deliverable.evidenceManifestArtifactId;
-    if (frozen && manifestId !== frozen.evidenceManifestArtifactId) {
+    if (frozenComponents && manifestId !== frozenComponents.evidenceManifestArtifactId) {
       throw new Error('frozen Report Package Evidence Manifest reference is invalid');
     }
     const verifiedManifest = await this.dependencies.artifacts.readVerifiedJson<unknown>(manifestId);
@@ -414,14 +538,14 @@ export class CurrentReportPackageReader {
       if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
         throw new Error(`Review-bound deliverable Artifact schema marker ${schemaVersion} is unsupported`);
       }
-      const repositoryDocument = frozen
+      const repositoryDocument = frozenComponents
         ? null
         : await this.dependencies.repository.findSealedArtifact({
             taskId: binding.taskId,
             attemptId: binding.attemptId,
             kind: 'report_document',
           });
-      const selectedDocumentId = frozen?.reportDocumentArtifactId ?? repositoryDocument?.id ?? null;
+      const selectedDocumentId = frozenComponents?.reportDocumentArtifactId ?? repositoryDocument?.id ?? null;
       if (!selectedDocumentId) {
         return {
           presentationMode: 'current_text',
@@ -444,22 +568,38 @@ export class CurrentReportPackageReader {
       if (
         verifiedDocument.artifact.schemaVersion !== 'report-document-v1'
         && verifiedDocument.artifact.schemaVersion !== 'report-document-v2'
+        && verifiedDocument.artifact.schemaVersion !== 'report-document-v3'
+        && verifiedDocument.artifact.schemaVersion !== 'report-document-v4'
       ) {
         throw new Error('ReportDocument Artifact schema version is invalid');
       }
       this.schemaValidator.validateOrThrow('report-document', verifiedDocument.value);
-      const reportDocument = verifiedDocument.value as ReportDocument;
-      assertReportProjectionIntegrity({
-        document: reportDocument,
-        deliverableArtifactId,
-        payload: deliverable.payload,
-        requiredPointers: requiredPayloadPointers(
-          selectReadablePayloadSchema(
-            resolveDeliverableContractById(String(deliverable.deliverableType)),
-            deliverable.payload,
-          ).schema,
-        ),
-      });
+      const reportDocument = verifiedDocument.value as ReadableReportDocument;
+      if (verifiedDocument.artifact.schemaVersion !== reportDocument.version) {
+        throw new Error('ReportDocument Artifact schema version does not match its value');
+      }
+      if (reportDocument.version === 'report-document-v3' || reportDocument.version === 'report-document-v4') {
+        if (reportDocument.version === 'report-document-v4') assertReportDocumentV4Integrity(reportDocument);
+        else assertReportDocumentV3Integrity(reportDocument);
+        if (
+          reportDocument.sourceDeliverableArtifactId !== deliverableArtifactId
+          || reportDocument.sourceDeliverableContentSha256 !== verifiedDeliverable.artifact.contentSha256
+        ) {
+          throw new Error(`${reportDocument.version} source Deliverable identity is invalid`);
+        }
+      } else {
+        assertReportProjectionIntegrity({
+          document: reportDocument,
+          deliverableArtifactId,
+          payload: deliverable.payload,
+          requiredPointers: requiredPayloadPointers(
+            selectReadablePayloadSchema(
+              resolveDeliverableContractById(String(deliverable.deliverableType)),
+              deliverable.payload,
+            ).schema,
+          ),
+        });
+      }
       const references = reportAssetReferences(reportDocument);
       if (references.length > 0 && !this.dependencies.visualAssets) {
         throw new Error('multimodal ReportDocument requires a verified visual Asset reader');
@@ -478,7 +618,7 @@ export class CurrentReportPackageReader {
       };
       const visualReferences = new Map<string, VisualAssetReference>();
       const chartReferences: Array<VisualAssetReference & { chartId: string; specHash: string }> = [];
-      for (const block of reportDocument.sections.flatMap(({ blocks }) => blocks)) {
+      for (const block of reportBlocks(reportDocument)) {
         if (block.type === 'image') {
           visualReferences.set(visualReferenceKey(block.assetRef), block.assetRef);
           continue;
@@ -556,21 +696,42 @@ export class CurrentReportPackageReader {
         chartReferences.push({ ...block.chartRef, specHash: derivation.specHash });
       }
       const currentDeliverable = deliverable as unknown as ResearchDeliverableEnvelope<unknown>;
-      assertValidReportDocument(reportDocument, {
-        requiredQuestionIds: currentDeliverable.coverage.questionBindings.map(({ questionId }) => questionId),
-        evidenceIds: evidenceManifest.entries.map(({ id }) => id),
-        findingIds: currentDeliverable.findingGraph.findings.map(({ id }) => id),
-        summaryIds: currentDeliverable.findingGraph.subQuestionSummaries.map(({ id }) => id),
-        visualAssets: [...visualReferences.values()],
-        charts: chartReferences,
-      });
+      if (reportDocument.version === 'report-document-v3' || reportDocument.version === 'report-document-v4') {
+        assertStructuredTraceReferences({
+          document: reportDocument,
+          requiredQuestionIds: currentDeliverable.coverage.questionBindings.map(({ questionId }) => questionId),
+          evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+          findingIds: currentDeliverable.findingGraph.findings.map(({ id }) => id),
+          summaryIds: currentDeliverable.findingGraph.subQuestionSummaries.map(({ id }) => id),
+        });
+      } else {
+        assertValidReportDocument(reportDocument, {
+          requiredQuestionIds: currentDeliverable.coverage.questionBindings.map(({ questionId }) => questionId),
+          evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+          findingIds: currentDeliverable.findingGraph.findings.map(({ id }) => id),
+          summaryIds: currentDeliverable.findingGraph.subQuestionSummaries.map(({ id }) => id),
+          visualAssets: [...visualReferences.values()],
+          charts: chartReferences,
+        });
+      }
       return {
         presentationMode: 'multimodal',
         deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
         evidenceManifest,
         reportReview: review,
         reportDocument,
+        reportDocumentContentSha256: verifiedDocument.artifact.contentSha256,
         visualAssetManifests,
+        ...(reportPackageV2 === undefined ? {} : {
+          reportPackage: {
+            version: reportPackageV2.version,
+            reportPublicationId: reportPackageV2.reportPublicationId,
+            layout: reportPackageV2.layout,
+            assetSnapshot: reportPackageV2.assetSnapshot,
+            standaloneHtml: reportPackageV2.standaloneHtml,
+            notices: reportPackageV2.notices,
+          },
+        }),
         ...contributionSidecars,
       };
     }

@@ -231,6 +231,45 @@ test('repository creates and replays one publication per idempotency key', async
   );
 });
 
+test('repository accepts a sealed Report Package v2 as a Zero publication root', async () => {
+  const v2ArtifactId = randomUUID();
+  const v2Hash = `sha256:${'9'.repeat(64)}`;
+  await query(
+    `INSERT INTO control_artifacts
+       (id, task_id, plan_version_id, attempt_id, kind, contract_version,
+        schema_version, state, storage_uri, content_sha256, byte_size,
+        sensitivity, redaction_policy_version, redaction_status, sealed_at)
+     VALUES ($1, $2, $3, $4, 'report_package', 'trusted-p0-v1',
+             'report-package-v2', 'SEALED', $5, $6, 2,
+             'internal', 'v1', 'sealed', now())`,
+    [
+      v2ArtifactId,
+      taskId,
+      planVersionId,
+      attemptId,
+      `/tmp/${taskId}-report-package-v2.json`,
+      v2Hash,
+    ],
+  );
+
+  const publication = await repository.createZeroPublication({
+    taskId,
+    ownerUserId: ownerId,
+    planVersionId,
+    attemptId,
+    reportPackageArtifactId: v2ArtifactId,
+    reportPackageHash: v2Hash,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${'8'.repeat(64)}`,
+    templateVersion: 'zero-report-v1',
+    zeroFileKey: 'file-zero-v2',
+    zeroPageId: '30:2',
+    zeroPageName: '[p]demo-v2',
+  });
+
+  assert.equal(publication.reportPackageArtifactId, v2ArtifactId);
+});
+
 test('repository claims, updates, heartbeats, and completes a publication', async () => {
   const publication = await repository.createZeroPublication({
     taskId,

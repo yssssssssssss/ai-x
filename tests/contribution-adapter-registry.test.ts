@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EvidenceManifest } from '../packages/api-contract/research-deliverable.ts';
 import {
+  contextOnlyContributionUnitKeys,
   ContributionAdapterError,
   ContributionAdapterRegistry,
 } from '../apps/orchestrator-runtime/src/skills/contribution-adapter-registry.ts';
@@ -74,7 +75,7 @@ test('generic Skill envelope adapter preserves every semantic field as provision
     '/assumptions/0',
     '/recommendations/0',
   ]);
-  assert.deepEqual(artifact.source.diagnosticFields, ['/summary', '/payload', '/status']);
+  assert.deepEqual(artifact.source.diagnosticFields, ['/summary', '/status']);
   assert.match(artifact.source.adapterHash, /^sha256:[a-f0-9]{64}$/u);
 });
 
@@ -88,6 +89,39 @@ test('generic adapter deterministically binds every unit to all frozen scoped Qu
     (error: unknown) => error instanceof ContributionAdapterError
       && error.code === 'ambiguous_question_scope',
   );
+});
+
+test('generic adapter preserves a non-empty structured payload as typed Contribution units', () => {
+  const payload = {
+    personas: [{ name: '谨慎型支持者', needs: ['可信项目说明', '风险透明'] }],
+    segmentation_basis: '按决策行为与风险偏好划分',
+    serialized_note: '{"kind":"plain text"}',
+  };
+  const artifact = adapt({
+    source: {
+      ...sourceEnvelope,
+      findings: [],
+      assumptions: [],
+      recommendations: [],
+      payload,
+    },
+  });
+
+  assert.deepEqual(artifact.contribution.units.map(({ kind, title }) => ({ kind, title })), [
+    { kind: 'persona', title: 'personas' },
+    { kind: 'persona', title: 'segmentation_basis' },
+    { kind: 'persona', title: 'serialized_note' },
+  ]);
+  assert.deepEqual(artifact.source.unitMappings.map(({ sourceJsonPointer }) => sourceJsonPointer), [
+    '/payload/personas',
+    '/payload/segmentation_basis',
+    '/payload/serialized_note',
+  ]);
+  assert.ok(artifact.contribution.units[0]!.statement.includes('谨慎型支持者'));
+  assert.equal(artifact.contribution.units[1]!.statement, payload.segmentation_basis);
+  assert.equal(artifact.contribution.units[2]!.statement, payload.serialized_note);
+  assert.deepEqual(contextOnlyContributionUnitKeys(artifact), ['payload-001']);
+  assert.deepEqual(artifact.source.diagnosticFields, ['/summary', '/status']);
 });
 
 test('adapter binds every frozen identity and rejects unsupported adapters', () => {
