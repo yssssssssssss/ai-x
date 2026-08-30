@@ -2510,7 +2510,11 @@ test('failed clarification releases its pending command so a retry can complete'
   } as unknown as ControlTasksRuntime;
   const first = await listenLocalApp(controlTasksApp(runtime));
   const second = await listenLocalApp(controlTasksApp(runtime));
-  const requestBody = { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} };
+  const requestBody = {
+    expectedVersion: created.stateVersion,
+    clarificationAnswers: { audience: '产品团队' },
+    assumptionEdits: {},
+  };
   const key = `release-${randomUUID()}`;
   try {
     const failed = await postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);

@@ -52,6 +52,11 @@ type ArtifactStorePort = Pick<
   | 'invalidateArtifactPublication'
 >;
 
+export type VerifiedVisualAssetReaderArtifacts = Pick<
+  ControlArtifactStore,
+  'readVerifiedBinary' | 'readVerifiedJson'
+>;
+
 type FetchPort = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 interface PinnedRequestInput {
@@ -574,10 +579,118 @@ function chartManifestDraft(input: ChartRenderSealInput & {
   };
 }
 
+export class VerifiedVisualAssetReader {
+  constructor(private readonly artifacts: VerifiedVisualAssetReaderArtifacts) {}
+
+  async readVerified(reference: VisualAssetReference): Promise<VerifiedVisualAsset> {
+    const [binary, manifestResult] = await Promise.all([
+      this.artifacts.readVerifiedBinary(reference.assetId),
+      this.artifacts.readVerifiedJson<unknown>(reference.manifestArtifactId),
+    ]);
+    const manifest = manifestResult.value;
+    assertManifest(manifest);
+    if (manifestResult.artifact.schemaVersion !== manifest.version) {
+      throw new Error('visual Asset manifest Artifact schemaVersion does not match its body version');
+    }
+    if (
+      binary.artifact.id !== reference.assetId
+      || manifestResult.artifact.id !== reference.manifestArtifactId
+      || binary.artifact.kind !== 'visual_asset'
+      || manifestResult.artifact.kind !== 'visual_asset_manifest'
+      || manifest.assetId !== binary.artifact.id
+      || manifest.contentSha256 !== binary.artifact.contentSha256
+      || manifest.mediaType !== binary.metadata.contentType
+      || manifest.byteSize !== binary.metadata.byteSize
+      || manifest.width !== binary.metadata.width
+      || manifest.height !== binary.metadata.height
+    ) {
+      throw new Error('visual Asset identity or manifest integrity does not match verified bytes');
+    }
+    const binding = {
+      taskId: manifest.taskId,
+      planVersionId: manifest.planVersionId,
+      attemptId: manifest.attemptId,
+    };
+    assertBinding(binary.artifact, binding, 'visual Asset');
+    assertBinding(manifestResult.artifact, binding, 'visual Asset manifest');
+    if (manifest.version === 'visual-asset-manifest-v2') {
+      await this.assertV2Provenance(manifest, binary.artifact);
+    }
+    return {
+      artifact: binary.artifact,
+      bytes: Buffer.from(binary.bytes),
+      metadata: binary.metadata,
+      manifest: structuredClone(manifest),
+      manifestArtifact: manifestResult.artifact,
+    };
+  }
+
+  private async assertV2Provenance(
+    manifest: VisualAssetManifestV2,
+    binaryArtifact: ControlArtifact,
+  ): Promise<void> {
+    if (binaryArtifact.schemaVersion !== 'visual-asset-v1') {
+      throw new Error('V2 visual Asset Binary Artifact schemaVersion is invalid');
+    }
+    const source = manifest.source;
+    if (source.kind === 'browser_capture') {
+      const tool = await this.artifacts.readVerifiedJson<unknown>(source.artifactId);
+      if (
+        tool.artifact.id !== source.artifactId
+        || tool.artifact.kind !== 'tool_output'
+        || tool.artifact.state !== 'SEALED'
+        || tool.artifact.schemaVersion !== 'tool-output-v1'
+        || tool.artifact.contentSha256 !== source.artifactContentSha256
+      ) {
+        throw new Error('browser capture Manifest Tool Artifact provenance is invalid');
+      }
+      assertBinding(tool.artifact, manifest, 'browser capture Manifest Tool Artifact');
+      const metadata = resolveJsonPointer(tool.value, source.jsonPointer);
+      if (!isRecord(metadata) || !isRecord(metadata.viewport)) {
+        throw new Error('browser capture Manifest pointer does not resolve to capture metadata');
+      }
+      const requestedUrl = requireHttpsUrl(metadata.requested_url, 'browser capture requested_url');
+      const finalUrl = requireHttpsUrl(metadata.final_url, 'browser capture final_url');
+      if (
+        metadata.attachment_id !== source.attachmentId
+        || requestedUrl !== source.sourcePageUrl
+        || finalUrl !== source.finalUrl
+        || metadata.page_title !== source.pageTitle
+        || metadata.captured_at !== source.capturedAt
+        || metadata.capture_mode !== source.captureMode
+        || metadata.selector !== source.selector
+        || metadata.viewport.width !== source.viewport.width
+        || metadata.viewport.height !== source.viewport.height
+        || metadata.media_type !== manifest.mediaType
+        || metadata.width !== manifest.width
+        || metadata.height !== manifest.height
+        || metadata.byte_size !== manifest.byteSize
+        || metadata.content_sha256 !== manifest.contentSha256
+      ) {
+        throw new Error('browser capture Manifest provenance does not match its Tool metadata');
+      }
+      return;
+    }
+    if (source.kind === 'chart_render') {
+      const data = await this.artifacts.readVerifiedJson<unknown>(source.dataArtifactId);
+      if (
+        data.artifact.id !== source.dataArtifactId
+        || data.artifact.kind !== 'chart_data'
+        || data.artifact.state !== 'SEALED'
+        || data.artifact.contentSha256 !== source.dataArtifactContentSha256
+      ) {
+        throw new Error('chart render Manifest data Artifact provenance is invalid');
+      }
+      assertBinding(data.artifact, manifest, 'chart render Manifest data Artifact');
+    }
+  }
+}
+
 export class VisualAssetService {
   private readonly artifacts: ArtifactStorePort;
   private readonly resolveHost: ResolveHost;
   private readonly transport: VisualAssetTransport;
+  private readonly verifiedReader: VerifiedVisualAssetReader;
 
   constructor(dependencies: {
     artifacts: ArtifactStorePort;
@@ -586,6 +699,7 @@ export class VisualAssetService {
     fetch?: FetchPort;
   }) {
     this.artifacts = dependencies.artifacts;
+    this.verifiedReader = new VerifiedVisualAssetReader(dependencies.artifacts);
     this.resolveHost = dependencies.resolveHost ?? defaultResolveHost;
     this.transport = dependencies.transport
       ?? (dependencies.fetch ? transportFromFetch(dependencies.fetch) : NODE_PINNED_TRANSPORT);
@@ -741,106 +855,7 @@ export class VisualAssetService {
   }
 
   async readVerified(reference: VisualAssetReference): Promise<VerifiedVisualAsset> {
-    const [binary, manifestResult] = await Promise.all([
-      this.artifacts.readVerifiedBinary(reference.assetId),
-      this.artifacts.readVerifiedJson<unknown>(reference.manifestArtifactId),
-    ]);
-    const manifest = manifestResult.value;
-    assertManifest(manifest);
-    if (manifestResult.artifact.schemaVersion !== manifest.version) {
-      throw new Error('visual Asset manifest Artifact schemaVersion does not match its body version');
-    }
-    if (
-      binary.artifact.id !== reference.assetId
-      || manifestResult.artifact.id !== reference.manifestArtifactId
-      || binary.artifact.kind !== 'visual_asset'
-      || manifestResult.artifact.kind !== 'visual_asset_manifest'
-      || manifest.assetId !== binary.artifact.id
-      || manifest.contentSha256 !== binary.artifact.contentSha256
-      || manifest.mediaType !== binary.metadata.contentType
-      || manifest.byteSize !== binary.metadata.byteSize
-      || manifest.width !== binary.metadata.width
-      || manifest.height !== binary.metadata.height
-    ) {
-      throw new Error('visual Asset identity or manifest integrity does not match verified bytes');
-    }
-    const binding = {
-      taskId: manifest.taskId,
-      planVersionId: manifest.planVersionId,
-      attemptId: manifest.attemptId,
-    };
-    assertBinding(binary.artifact, binding, 'visual Asset');
-    assertBinding(manifestResult.artifact, binding, 'visual Asset manifest');
-    if (manifest.version === 'visual-asset-manifest-v2') {
-      await this.assertV2Provenance(manifest, binary.artifact);
-    }
-    return {
-      artifact: binary.artifact,
-      bytes: Buffer.from(binary.bytes),
-      metadata: binary.metadata,
-      manifest: structuredClone(manifest),
-      manifestArtifact: manifestResult.artifact,
-    };
-  }
-
-  private async assertV2Provenance(
-    manifest: VisualAssetManifestV2,
-    binaryArtifact: ControlArtifact,
-  ): Promise<void> {
-    if (binaryArtifact.schemaVersion !== 'visual-asset-v1') {
-      throw new Error('V2 visual Asset Binary Artifact schemaVersion is invalid');
-    }
-    const source = manifest.source;
-    if (source.kind === 'browser_capture') {
-      const tool = await this.artifacts.readVerifiedJson<unknown>(source.artifactId);
-      if (
-        tool.artifact.id !== source.artifactId
-        || tool.artifact.kind !== 'tool_output'
-        || tool.artifact.state !== 'SEALED'
-        || tool.artifact.schemaVersion !== 'tool-output-v1'
-        || tool.artifact.contentSha256 !== source.artifactContentSha256
-      ) {
-        throw new Error('browser capture Manifest Tool Artifact provenance is invalid');
-      }
-      assertBinding(tool.artifact, manifest, 'browser capture Manifest Tool Artifact');
-      const metadata = resolveJsonPointer(tool.value, source.jsonPointer);
-      if (!isRecord(metadata) || !isRecord(metadata.viewport)) {
-        throw new Error('browser capture Manifest pointer does not resolve to capture metadata');
-      }
-      const requestedUrl = requireHttpsUrl(metadata.requested_url, 'browser capture requested_url');
-      const finalUrl = requireHttpsUrl(metadata.final_url, 'browser capture final_url');
-      if (
-        metadata.attachment_id !== source.attachmentId
-        || requestedUrl !== source.sourcePageUrl
-        || finalUrl !== source.finalUrl
-        || metadata.page_title !== source.pageTitle
-        || metadata.captured_at !== source.capturedAt
-        || metadata.capture_mode !== source.captureMode
-        || metadata.selector !== source.selector
-        || metadata.viewport.width !== source.viewport.width
-        || metadata.viewport.height !== source.viewport.height
-        || metadata.media_type !== manifest.mediaType
-        || metadata.width !== manifest.width
-        || metadata.height !== manifest.height
-        || metadata.byte_size !== manifest.byteSize
-        || metadata.content_sha256 !== manifest.contentSha256
-      ) {
-        throw new Error('browser capture Manifest provenance does not match its Tool metadata');
-      }
-      return;
-    }
-    if (source.kind === 'chart_render') {
-      const data = await this.artifacts.readVerifiedJson<unknown>(source.dataArtifactId);
-      if (
-        data.artifact.id !== source.dataArtifactId
-        || data.artifact.kind !== 'chart_data'
-        || data.artifact.state !== 'SEALED'
-        || data.artifact.contentSha256 !== source.dataArtifactContentSha256
-      ) {
-        throw new Error('chart render Manifest data Artifact provenance is invalid');
-      }
-      assertBinding(data.artifact, manifest, 'chart render Manifest data Artifact');
-    }
+    return this.verifiedReader.readVerified(reference);
   }
 
   async invalidate(result: VisualAssetResult, reason: string): Promise<void> {

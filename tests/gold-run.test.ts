@@ -85,7 +85,7 @@ test('Gold CLI separates collection, asynchronous review, and final decision', (
   assert.throws(() => parseGoldCommand(['review', 'batch-1', 'attempt-1', 'pass']), /usage/u);
 });
 
-test('Gold selects competitive-digital-human-gold by exact ID regardless of fixture order', () => {
+test('Gold selects the JD crowdfunding channel scenario by exact ID regardless of fixture order', () => {
   const fixture = semanticFixture();
   const selected = selectGoldScenario(fixture);
   const reversed = selectGoldScenario({ ...fixture, scenarios: [...fixture.scenarios].reverse() });
@@ -104,7 +104,7 @@ test('Gold selects competitive-digital-human-gold by exact ID regardless of fixt
   assert.equal(targetLast.input, selected.input);
 });
 
-test('Gold keeps the ambiguous digital-human regression scenario separate', () => {
+test('Gold keeps the ambiguous digital-human regression scenario separate from the crowdfunding target', () => {
   const fixture = semanticFixture();
   const ambiguous = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human') as
     | (typeof fixture.scenarios)[number] & { clarificationKeys?: string[] }
@@ -118,6 +118,9 @@ test('Gold keeps the ambiguous digital-human regression scenario separate', () =
   assert.equal(ambiguous.piiDetected, false);
   assert.deepEqual(ambiguous.clarificationKeys, ['scope', 'audience']);
   assert.equal(gold.variant, 'clear');
+  assert.equal(gold.businessDomain, 'jd_crowdfunding');
+  assert.match(gold.input, /京东众筹/u);
+  assert.match(gold.input, /五个问题/u);
   assert.equal(gold.piiDetected, false);
   assert.deepEqual(gold.clarificationKeys, []);
 });
@@ -128,11 +131,11 @@ test('Gold exact target selection fails closed on identity and safety drift', ()
   const withoutTarget = fixture.scenarios.filter(({ id }) => id !== GOLD_SCENARIO_ID);
   assert.throws(
     () => selectGoldScenario({ ...fixture, scenarios: withoutTarget }),
-    /exactly one.*competitive-digital-human-gold/u,
+    /exactly one.*competitive-jd-crowdfunding-channel-gold/u,
   );
   assert.throws(
     () => selectGoldScenario({ ...fixture, scenarios: [...fixture.scenarios, target] }),
-    /exactly one.*competitive-digital-human-gold/u,
+    /exactly one.*competitive-jd-crowdfunding-channel-gold/u,
   );
   for (const mutation of [
     { profile: 'voc_diagnosis' },

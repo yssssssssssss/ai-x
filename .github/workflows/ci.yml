@@ -25,8 +25,8 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Run about-blank in-memory Chromium contract
-        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts
+      - name: Run in-memory Chromium contracts
+        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts tests/editorial-report-renderer.test.ts
 
   quality:
     runs-on: ubuntu-latest
@@ -93,7 +93,6 @@ jobs:
       LLM_PROVIDER: gateway
       TOOL_ADAPTER: real
       CURRENT_DESIGN_SMOKE_IMAGE_PATH: ${{ github.workspace }}/knowledge-base/assets/playbooks/images/jingxi-img-01.png
-      RUN_WORKSPACE_ROOT: ${{ runner.temp }}/current-real-smoke
     steps:
       - name: Check real smoke secrets
         id: secret_gate
@@ -145,6 +144,8 @@ jobs:
       - name: Run five profiles sequentially
         if: steps.secret_gate.outputs.enabled == 'true'
         shell: bash
+        env:
+          RUN_WORKSPACE_ROOT: ${{ runner.temp }}/current-real-smoke
         run: |
           set -euo pipefail
           lab_pids=()

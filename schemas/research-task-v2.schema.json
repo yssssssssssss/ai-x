@@ -132,7 +132,16 @@
       "properties": {
         "key": { "type": "string", "minLength": 1 },
         "question": { "type": "string", "minLength": 1 },
-        "rationale": { "type": "string", "minLength": 1 }
+        "rationale": { "type": "string", "minLength": 1 },
+        "ambiguity_id": { "type": "string", "minLength": 1 },
+        "suggestion": { "type": "string", "pattern": "\\S" },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "\\S" }
+        }
       }
     },
     "blocking_issue": {
