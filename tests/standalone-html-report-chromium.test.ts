@@ -51,6 +51,9 @@ function smokeDocument(): ReportDocumentV3 {
 
 test('standalone HTML passes required offline Chromium interaction, responsive, and print smoke', {
   timeout: 30_000,
+  skip: process.env.PLAYWRIGHT_CONTRACT !== '1'
+    ? 'set PLAYWRIGHT_CONTRACT=1 in the isolated CI job'
+    : false,
 }, async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-report-chromium-'));
   const reportPath = join(temporaryRoot, 'report.html');

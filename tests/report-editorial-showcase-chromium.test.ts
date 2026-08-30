@@ -26,6 +26,9 @@ async function launchRequiredChromium(): Promise<Browser> {
 
 test('Editorial Showcase passes offline 1440px and print validation without its source example', {
   timeout: 30_000,
+  skip: process.env.PLAYWRIGHT_CONTRACT !== '1'
+    ? 'set PLAYWRIGHT_CONTRACT=1 in the isolated CI job'
+    : false,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'editorial-showcase-chromium-'));
   const htmlPath = join(root, 'editorial-showcase.html');
