@@ -20,7 +20,11 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
-import type { ControlPlanCandidatesResponse, CurrentPlanCandidate } from '../packages/api-contract/control-workflow.ts';
+import type {
+  ControlPlanCandidatesResponse,
+  CurrentPlanCandidate,
+  OrchestrationModeV1,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   runMigrations,
@@ -35,6 +39,7 @@ type CandidatePersistenceRepository = ControlPlaneRepository & {
     originalInput: string;
     taskType: string | null;
     structuredTask: unknown;
+    orchestrationMode?: OrchestrationModeV1;
     candidates: Array<{
       candidateId: string;
       plan: unknown;
@@ -76,6 +81,7 @@ interface AtomicClarificationInput {
   expectedStateVersion: number;
   taskType: string;
   structuredTask: ResearchTaskV2;
+  orchestrationMode?: OrchestrationModeV1;
   activatedNodes: string[];
   candidates: Array<{
     candidateId: 'depth' | 'speed';
@@ -554,6 +560,7 @@ test('persists a Current task and its depth/speed candidates without activating 
     originalInput: 'Current planning persistence',
     taskType: 'competitive_research',
     structuredTask: { research_goal: 'persist server candidates' },
+    orchestrationMode: 'single_skill',
     candidates: [
       {
         candidateId: 'depth',
@@ -570,6 +577,7 @@ test('persists a Current task and its depth/speed candidates without activating 
 
   assert.equal(created.task.state, 'awaiting_selection');
   assert.equal(created.task.activePlanVersionId, null);
+  assert.equal((await repository.getTaskDetail(created.task.id))?.orchestrationMode, 'single_skill');
   assert.deepEqual(
     created.candidates.map((candidate) => ({
       taskId: candidate.taskId,

@@ -37,6 +37,7 @@ const COMPOSITION_KIND_ORDER: EditorialCompositionKind[] = [
 
 const TITLES: Record<EditorialMaterial['deliverableType'], string> = {
   research_plan: '研究计划',
+  research_strategy_report: '研究策略报告',
   competitive_analysis_report: '竞品分析报告',
   voc_diagnosis_report: 'VOC 诊断报告',
   design_audit_report: '设计审计报告',

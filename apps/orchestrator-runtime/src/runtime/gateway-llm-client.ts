@@ -141,7 +141,12 @@ export class GatewayLLMClient implements LLMClient {
     };
   }
 
-  private async call(messages: object[], jsonMode: boolean, signal?: AbortSignal): Promise<{
+  private async call(
+    messages: object[],
+    jsonMode: boolean,
+    signal?: AbortSignal,
+    maxOutputTokens?: number,
+  ): Promise<{
     content: string;
     resp: ChatResponse;
     route: GatewayModelRoute;
@@ -154,7 +159,7 @@ export class GatewayLLMClient implements LLMClient {
       const route = routes[(startIndex + offset) % routes.length];
       try {
         if (signal?.aborted) throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
-        const response = await this.callRoute(route, messages, jsonMode, signal);
+        const response = await this.callRoute(route, messages, jsonMode, signal, maxOutputTokens);
         return { ...response, route };
       } catch (error) {
         lastError = error;
@@ -171,13 +176,14 @@ export class GatewayLLMClient implements LLMClient {
     messages: object[],
     jsonMode: boolean,
     signal?: AbortSignal,
+    maxOutputTokens?: number,
   ): Promise<{ content: string; resp: ChatResponse }> {
     const maxAttempts = this.cfg.modelRoutes.length === 1 ? 3 : 1;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         if (signal?.aborted) throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
-        return await this.callOnce(route.requestedModel, messages, jsonMode, signal);
+        return await this.callOnce(route.requestedModel, messages, jsonMode, signal, maxOutputTokens);
       } catch (error) {
         lastError = error;
         if (error instanceof RateLimitError && attempt < maxAttempts) {
@@ -196,7 +202,14 @@ export class GatewayLLMClient implements LLMClient {
     messages: object[],
     jsonMode: boolean,
     signal?: AbortSignal,
+    maxOutputTokens?: number,
   ): Promise<{ content: string; resp: ChatResponse }> {
+    if (
+      maxOutputTokens !== undefined
+      && (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 64_000)
+    ) {
+      throw new LLMInvocationError('configuration', false, null, 'gateway max output tokens is invalid');
+    }
     const ac = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -218,6 +231,7 @@ export class GatewayLLMClient implements LLMClient {
           messages,
           stream: false,
           ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          ...(maxOutputTokens === undefined ? {} : { max_tokens: maxOutputTokens }),
         }),
         signal: ac.signal,
       });
@@ -311,15 +325,19 @@ export class GatewayLLMClient implements LLMClient {
 
   async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
     const messages = [
+      ...(opts.systemPrompt ? [{ role: 'system', content: opts.systemPrompt }] : []),
       {
         role: 'user',
         content: opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt,
       },
     ];
-    const { content, resp, route } = await this.call(messages, false, opts.signal);
+    const { content, resp, route } = await this.call(messages, false, opts.signal, opts.maxOutputTokens);
     return {
       text: content,
-      promptHash: hashPrompt(opts.prompt, opts.context),
+      promptHash: hashPrompt(
+        opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
+        opts.context,
+      ),
       modelName: resp.model ?? 'unknown',
       modelVersion: resp.model ?? 'unknown',
       traceId: resp.id ?? 'gateway-no-id',

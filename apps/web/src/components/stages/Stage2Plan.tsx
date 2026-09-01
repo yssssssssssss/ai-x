@@ -35,6 +35,9 @@ export function Stage2Plan({
       : []
   )) ?? [];
   const portfolio = multiSkillPlanViewModel(plan.plan);
+  const orchestrationLabel = plan.plan.execution_contract_version === 'current-execution-plan-v3'
+    ? '多 Skill 协作'
+    : '单 Skill';
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -89,6 +92,9 @@ export function Stage2Plan({
   return (
     <section className="stage-card">
       <Header n="2" title="待执行计划" note={locked ? '计划内容已锁定' : '确认前不执行'} />
+      <p style={{ margin: '-2px 0 12px', color: 'var(--text-faint)', fontSize: 12 }}>
+        运行模式：{orchestrationLabel}
+      </p>
 
       <MultiSkillPlanSummary plan={plan.plan} />
 

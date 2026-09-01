@@ -1,0 +1,76 @@
+{
+  "version": "universal-editorial-showcase-golden-contract-v1",
+  "profile": {
+    "id": "universal-editorial-showcase-v1",
+    "contentSha256": "sha256:28459da496b3651aee7304b4960a71cfb13b61d99dbeecaeb78278a22d8be964"
+  },
+  "approvedBaseline": {
+    "label": "phase1-r5",
+    "approval": "human_approved",
+    "approvedAt": "2026-08-30",
+    "htmlSha256": "sha256:583a7ea175c2fd6dcb922708d13db8ceaf118f5f6f008b8432f923d60d7aad08",
+    "specSha256": "sha256:8a01d585152a50e24479c291587867c6c42ab3dece263ccf601304e3d7308ed4",
+    "validationSha256": "sha256:68f4c3202eb402ac1e566e8ccba6adb98168b71dc353825f49fbdb31ccf2163b"
+  },
+  "references": [
+    {
+      "role": "primary-demo",
+      "contentSha256": "sha256:51cc4bc81d31ae3b47b0180d706b3e9471c7818691d0a3a79be76c7dfe58637b"
+    },
+    {
+      "role": "secondary-showcase",
+      "contentSha256": "sha256:06ec4abbfeca7696c8c36d99a125a4e6813dc0b4c414eca7760d6a6f4f73083c"
+    }
+  ],
+  "requirements": {
+    "desktopViewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "minimumSectionCountForRichMaterial": 10,
+    "minimumTableCountForRichMaterial": 3,
+    "requiredComponentKinds": [
+      "editorial-hero",
+      "evidence-boundary",
+      "answer-chain",
+      "metric-cards",
+      "record-table",
+      "deliverable-map",
+      "dimension-table",
+      "method-board",
+      "stage-flow",
+      "record-grid",
+      "validation-list",
+      "analysis-appendix",
+      "source-register"
+    ],
+    "requiredSelectors": [
+      ".showcase-hero",
+      ".showcase-evidence-grid",
+      ".showcase-answer-main",
+      ".showcase-scope-table",
+      ".showcase-deliverable-map",
+      ".showcase-dimension-table",
+      ".showcase-method-board",
+      ".showcase-stage-track",
+      ".showcase-validation-list",
+      ".showcase-source-table"
+    ],
+    "forbiddenPatterns": [
+      "<script",
+      "<img",
+      "<svg",
+      "<canvas",
+      "@import",
+      "url("
+    ],
+    "principles": [
+      "canonical-grounded",
+      "topic-agnostic",
+      "no-card-wall",
+      "distinct-component-dom",
+      "supporting-units-may-be-promoted",
+      "no-invented-metrics"
+    ]
+  }
+}

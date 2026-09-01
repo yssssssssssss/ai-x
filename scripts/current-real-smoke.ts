@@ -874,6 +874,7 @@ const CONTROLLED_SMOKE_DECISION = [
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
   const answers: Record<string, string> = {
     outcome_mode: 'answer',
+    deliverable_intent: 'research_strategy_report',
     app_definition: '包含品牌自有 App、垂直宠物 App 和综合电商平台 App，分别给出策略。',
     product_scope: '覆盖干粮、湿粮、鲜粮、冻干和烘焙主粮，并明确共同点与差异。',
     brand_price_segment: '覆盖国产与进口、中端与高端价格带，优先新手与精养宠物主人。',
@@ -1067,6 +1068,9 @@ async function executeRealSmoke(
     ownerUserId: seedUser.id,
     title: `Current real smoke: ${scenario.profile}`,
   });
+  const orchestrationMode = process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true'
+    ? 'multi_skill'
+    : 'single_skill';
   const created = await runtime.repository.createTask({
     conversationId: conversation.id,
     ownerUserId: seedUser.id,
@@ -1076,6 +1080,7 @@ async function executeRealSmoke(
     state: 'awaiting_clarification',
     sensitivity: scenario.sensitivity,
     piiDetected: scenario.piiDetected,
+    orchestrationMode,
   });
   reportProgress({ stage: 'requirement', message: 'task created; refining requirement', taskId: created.id });
   const refined = await runtime.requirementRefinement.understand({
@@ -1083,6 +1088,7 @@ async function executeRealSmoke(
     conversationId: conversation.id,
     ownerUserId: seedUser.id,
     originalInput: scenario.input,
+    orchestrationMode,
   });
   const finalized = await resolveSmokeRequirement(refined, (answers, selectedScenarioId) => (
     runtime.requirementRefinement.clarify({
@@ -1630,6 +1636,22 @@ async function executeRealSmoke(
   const expectedTaskState = verifiedEvidence.gapCount > 0 ? 'completed_with_gaps' : 'completed';
   if (rereadTask.state !== expectedTaskState) {
     throw new Error('historical task state does not match its gapCount');
+  }
+  const editorialSummaryHtml = await runtime.readEditorialSummaryHtml({
+    taskId,
+    attemptId,
+    ownerUserId: seedUser.id,
+  });
+  if (
+    !editorialSummaryHtml
+    || !/^<!doctype html>/iu.test(editorialSummaryHtml.trim())
+    || !/<html\b[^>]*\blang=["'](?:zh-CN|en)["']/iu.test(editorialSummaryHtml)
+    || !/data-summary-section-id=/u.test(editorialSummaryHtml)
+    || !/data-source-ids=/u.test(editorialSummaryHtml)
+    || /<(?:iframe|object|embed|form)\b/iu.test(editorialSummaryHtml)
+    || /<(?:script|img|video|audio|source)\b[^>]*\bsrc\s*=\s*["']https?:\/\//iu.test(editorialSummaryHtml)
+  ) {
+    throw new Error('Editorial Summary did not satisfy its binding, language, or offline contract');
   }
   const provenance = realToolStep.toolProvenance;
   reportProgress({

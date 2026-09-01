@@ -109,6 +109,102 @@ test('patch schema accepts a bounded structural support repair', () => {
   assert.equal(result.fidelity.changedSemanticUnitKeys.length, 0);
 });
 
+test('structural support repair downgrades non-factual content items instead of rejecting the patch', () => {
+  const knowledgeManifest: EvidenceManifest = {
+    ...manifest,
+    entries: [...manifest.entries, {
+      id: 'K1',
+      kind: 'knowledge_excerpt',
+      evidenceClass: 'knowledge',
+      artifactId: 'knowledge-1',
+      artifactContentSha256: `sha256:${'4'.repeat(64)}`,
+      jsonPointer: '/entries/0',
+      stepNo: 2,
+      sensitivity: 'internal',
+      redaction: 'masked',
+    }],
+  };
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_support',
+      target: {
+        entity: 'content_item',
+        blockKey: 'content-block-002',
+        key: 'content-block-002-item-001',
+      },
+      support: {
+        questionIds: ['Q1'],
+        evidenceIds: ['K1'],
+        confidence: 0.8,
+        status: 'supported',
+        validationNeeded: '',
+      },
+    }],
+  };
+
+  const result = apply(patch, undefined, { evidenceManifest: knowledgeManifest });
+  const block = result.draft.contentBlocks.find(({ key }) => key === 'content-block-002');
+  assert.ok(block && block.kind === 'prioritized_actions');
+  assert.equal(block.items[0]?.support.status, 'provisional');
+  assert.match(block.items[0]?.support.validationNeeded ?? '', /factual validation/u);
+});
+
+test('structural append downgrades non-factual support instead of rejecting a required block', () => {
+  const knowledgeManifest: EvidenceManifest = {
+    ...manifest,
+    entries: [...manifest.entries, {
+      id: 'K1',
+      kind: 'knowledge_excerpt',
+      evidenceClass: 'knowledge',
+      artifactId: 'knowledge-1',
+      artifactContentSha256: `sha256:${'4'.repeat(64)}`,
+      jsonPointer: '/entries/0',
+      stepNo: 2,
+      sensitivity: 'internal',
+      redaction: 'masked',
+    }],
+  };
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'append_content_block',
+      block: {
+        key: 'action-plan',
+        kind: 'action_plan',
+        title: 'Validation plan',
+        items: [{
+          key: 'action-plan-item',
+          priority: 'P0',
+          action: 'Validate the strategy.',
+          ownerType: 'research',
+          rationale: 'Method evidence defines the validation approach.',
+          validationMethod: 'Run a moderated study.',
+          support: {
+            questionIds: ['Q1'],
+            evidenceIds: ['K1'],
+            confidence: 0.8,
+            status: 'supported',
+            validationNeeded: '',
+          },
+        }],
+      },
+    }],
+  };
+
+  const result = apply(
+    patch,
+    ['executive_answers', 'strategy_map', 'prioritized_actions', 'action_plan'],
+    { evidenceManifest: knowledgeManifest },
+  );
+  const block = result.draft.contentBlocks.find(({ key }) => key === 'action-plan');
+  assert.ok(block && block.kind === 'action_plan');
+  assert.equal(block.items[0]?.support.status, 'provisional');
+  assert.match(block.items[0]?.support.validationNeeded ?? '', /factual validation/u);
+});
+
 test('structural patch cannot rewrite semantic text or increase confidence', () => {
   const semanticOperation: ResearchStrategyContentPatchV1 = {
     version: 'research-strategy-content-patch-v1',

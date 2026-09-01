@@ -7,6 +7,7 @@ import type {
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type {
   ControlRequirementVersion,
+  OrchestrationModeV1,
   PlanningGuidanceClarification,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress, RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -91,6 +92,7 @@ export interface ConversationAdapter {
 export interface RequirementPlanner {
   plan(input: {
     originalInput: string;
+    orchestrationMode: OrchestrationModeV1;
     requirement: ResearchTaskV2;
     selectedScenarioId?: ScenarioId;
   }, onProgress?: (event: PlanProgress) => void): Promise<CurrentResearchPlanningOutcome | void>;
@@ -101,6 +103,7 @@ export interface UnderstandInput {
   conversationId: string;
   ownerUserId: string;
   originalInput: string;
+  orchestrationMode?: OrchestrationModeV1;
   expectedVersion?: number;
   expectedStateVersion?: number;
 }
@@ -341,9 +344,14 @@ export function normalizeOutcomeRequirement(
         ? actionableBlockingIssues(requirement, originalInput, 'answer')
         : requirement.blocking_issues,
       ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
-      clarification_questions: requirement.clarification_questions.filter(
-        ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
-      ),
+      clarification_questions: requirement.clarification_questions.filter(({ key, ambiguity_id }) => (
+        key !== 'deliverable_intent'
+        && key !== 'outcome_mode'
+        && (
+          ambiguity_id === undefined
+          || requirement.ambiguities.some(({ id, blocking }) => id === ambiguity_id && blocking)
+        )
+      )),
     };
   }
   if (ambiguous) {
@@ -648,6 +656,7 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
+      orchestrationMode: input.orchestrationMode ?? 'single_skill',
       clarification: null,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
@@ -664,6 +673,7 @@ export class RequirementRefinementService {
     });
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     if (!task) throw new Error(`task ${input.taskId} does not exist`);
+    const orchestrationMode = task.orchestrationMode ?? 'single_skill';
     const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
     if (!active) throw new Error(`task ${input.taskId} has no active requirement version to clarify`);
     const expectedVersion = input.expectedVersion ?? input.expectedStateVersion;
@@ -710,6 +720,7 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: active.id,
           stateVersion: task.stateVersion,
@@ -740,6 +751,7 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: active.id,
           stateVersion: task.stateVersion,
@@ -762,6 +774,7 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: activated.version.id,
           stateVersion: activated.task.stateVersion,
@@ -774,6 +787,7 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         clarification: { ...input.answers, selectedScenarioId },
         persistedClarification: storedSelection,
         selectedScenarioId,
@@ -784,6 +798,17 @@ export class RequirementRefinementService {
     if (input.selectedScenarioId !== undefined) {
       throw new InvalidScenarioSelectionError('当前任务不接受研究方向选择');
     }
+    const priorRecord = active.clarification
+      && typeof active.clarification === 'object'
+      && !Array.isArray(active.clarification)
+      ? active.clarification as Record<string, unknown>
+      : {};
+    const priorAnswers = Object.fromEntries(
+      ['deliverable_intent', 'outcome_mode']
+        .filter((key) => Object.hasOwn(priorRecord, key))
+        .map((key) => [key, priorRecord[key]]),
+    );
+    const clarificationAnswers = { ...priorAnswers, ...input.answers };
     const unchangedClarification = hasNoClarificationChanges(
       input.answers,
       active.structuredTask,
@@ -800,6 +825,7 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
         stateVersion: task.stateVersion,
@@ -813,7 +839,7 @@ export class RequirementRefinementService {
     if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
       const resumesActivatedRequirement = matchesActiveRequirement
         && task.stateVersion === expectedVersion + 1
-        && sameStoredValue(active.clarification, input.answers);
+        && sameStoredValue(active.clarification, clarificationAnswers);
       if (!resumesActivatedRequirement) {
         throw new ControlPlaneConflictError(
           `task ${input.taskId} has no matching activated clarification at version ${expectedVersion + 1}`,
@@ -824,6 +850,7 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
         stateVersion: task.stateVersion,
@@ -835,7 +862,9 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: task.originalInput,
-      clarification: input.answers,
+      orchestrationMode,
+      clarification: clarificationAnswers,
+      persistedClarification: clarificationAnswers,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
     }, onProgress);
@@ -849,6 +878,7 @@ export class RequirementRefinementService {
     requirement: ResearchTaskV2;
     requirementVersionId: string;
     stateVersion: number;
+    orchestrationMode: OrchestrationModeV1;
     rawInputHash: string;
     selectedScenarioId?: ScenarioId;
     clarificationRecovery?: ClarificationRecoveryContext;
@@ -869,6 +899,7 @@ export class RequirementRefinementService {
       ? await this.dependencies.planner.plan({
           originalInput: input.originalInput,
           requirement: input.requirement,
+          orchestrationMode: input.orchestrationMode,
           ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
         }, onProgress)
       : undefined;
@@ -922,6 +953,7 @@ export class RequirementRefinementService {
     conversationId: string;
     ownerUserId: string;
     originalInput: string;
+    orchestrationMode: OrchestrationModeV1;
     clarification: unknown;
     persistedClarification?: unknown;
     selectedScenarioId?: ScenarioId;
@@ -1015,6 +1047,7 @@ export class RequirementRefinementService {
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
       requirement: canonicalRequirement,
+      orchestrationMode: input.orchestrationMode,
       requirementVersionId: activated.version.id,
       stateVersion: activated.task.stateVersion,
       rawInputHash: activated.version.rawInputHash,

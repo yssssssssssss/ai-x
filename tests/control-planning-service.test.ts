@@ -417,6 +417,7 @@ test('announces a newly created conversation before planning begins', async () =
       {
         originalInput: '先返回新 conversation，再启动 planning',
         ownerUserId: '00000000-0000-0000-0000-000000000105',
+        orchestrationMode: 'single_skill',
       },
       undefined,
       (createdConversationId) => events.push(`conversation:${createdConversationId}`),
@@ -493,14 +494,14 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   };
   const service = new ControlPlanningService(dependencies);
 
-  const response = await service.plan({ originalInput, ownerUserId });
+  const response = await service.plan({ originalInput, ownerUserId, orchestrationMode: 'single_skill' });
 
   assert.deepEqual(createdConversations, [{
     ownerUserId,
     title: originalInput.slice(0, 40),
   }]);
   assert.deepEqual(requiredConversations, []);
-  assert.deepEqual(planningInputs, [{ originalInput }]);
+  assert.deepEqual(planningInputs, [{ originalInput, orchestrationMode: 'single_skill' }]);
   assert.equal(repositoryInputs.length, 1);
   const persisted = repositoryInputs[0];
   assert.equal(persisted.conversationId, conversationId);
@@ -542,6 +543,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     stateVersion: 0,
     activePlanVersionId: null,
     currentAttemptId: null,
+    orchestrationMode: 'single_skill',
   });
   assert.deepEqual(response.structuredTask, planningResult.structuredTask);
   assert.deepEqual(response.activatedNodes, planningResult.activatedNodes);
@@ -625,6 +627,7 @@ test('persists a three-profile compatibility fixture with one recommendation in 
   const response = await service.plan({
     originalInput: '三方案兼容 fixture',
     ownerUserId: '00000000-0000-0000-0000-000000000131',
+    orchestrationMode: 'single_skill',
   });
 
   assert.deepEqual(
@@ -664,6 +667,7 @@ test('rejects duplicate controlled candidate IDs even when their display content
     () => service.plan({
       originalInput: '重复 Profile',
       ownerUserId: '00000000-0000-0000-0000-000000000132',
+      orchestrationMode: 'single_skill',
     }),
     /2-4 unique controlled candidates/,
   );
@@ -698,6 +702,7 @@ test('rejects generated Current step drift before repository persistence', async
     () => service.plan({
       originalInput,
       ownerUserId: '00000000-0000-0000-0000-000000000103',
+      orchestrationMode: 'single_skill',
     }),
     /candidate_schema_invalid.*purpose.*schema_escape/,
   );
@@ -763,6 +768,7 @@ test('rejects empty steps and unknown actor types before calling the repository'
     await assert.rejects(() => service.plan({
       originalInput: invalid.label,
       ownerUserId: '00000000-0000-0000-0000-000000000104',
+      orchestrationMode: 'single_skill',
     }));
     assert.equal(repositoryCalls, 0, invalid.label);
   }
@@ -808,6 +814,7 @@ test('rejects a foreign conversation before planning or candidate persistence', 
       originalInput,
       ownerUserId,
       conversationId: foreignConversationId,
+      orchestrationMode: 'single_skill',
     }),
     /conversation not found for owner/,
   );

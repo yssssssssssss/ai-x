@@ -84,6 +84,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     selectedCandidateId,
     plan,
     originalInput,
+    orchestrationMode,
     exec,
     executionSteps,
     executionPlanSteps,
@@ -278,6 +279,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                       <CurrentStage4Report
                         report={deliverable}
                         taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
+                        orchestrationMode={orchestrationMode ?? undefined}
                       />
                     )}
                   </>
@@ -310,6 +312,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
         </div>
         <Composer
           disabled={phase === 'loading-task' || phase === 'planning' || phase === 'clarifying' || phase === 'selecting' || phase === 'executing' || phase === 'reviewing' || phase === 'composing-report' || phase === 'awaiting-approval'}
+          multiSkillEnabled={capabilities?.multiSkillPlanWriterEnabled === true}
           onSubmit={flow.submitInput}
         />
       </main>

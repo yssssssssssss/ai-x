@@ -74,8 +74,10 @@ export interface StructuredLLMCallOptions {
 
 export interface TextLLMCallOptions {
   prompt: string;
+  systemPrompt?: string;
   context?: object;
   signal?: AbortSignal;
+  maxOutputTokens?: number;
   receipt: LLMReceiptContext;
 }
 
@@ -243,7 +245,10 @@ export class MockLLMClient implements LLMClient {
   async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
     return {
       text: (this.fixtures['__text__'] as string) ?? '（mock 文本输出）',
-      promptHash: hashPrompt(opts.prompt, opts.context),
+      promptHash: hashPrompt(
+        opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
+        opts.context,
+      ),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, 'text'),

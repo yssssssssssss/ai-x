@@ -201,6 +201,7 @@ async function createSelectedTask(options: {
     originalInput: `original ${suffix}`,
     taskType: 'user_research_planning',
     structuredTask: options.structuredTask ?? finalizedTask(),
+    orchestrationMode: 'single_skill',
     candidates: candidateProfiles.map((candidateId) => ({
       candidateId,
       plan: {

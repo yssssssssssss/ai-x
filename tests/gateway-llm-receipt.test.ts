@@ -34,6 +34,36 @@ function client(recorder: MemoryRecorder): ReceiptLLMClient {
   return new ReceiptLLMClient(new GatewayLLMClient({ timeoutMs: 50 }), recorder);
 }
 
+test('Gateway forwards the caller output-token budget for long-form text generation', async () => {
+  let maxTokens: unknown;
+  let messages: unknown;
+  globalThis.fetch = async (_input, init) => {
+    const requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    maxTokens = requestBody.max_tokens;
+    messages = requestBody.messages;
+    return new Response(JSON.stringify({
+      id: 'trace-long-form',
+      model: 'pinned-model',
+      choices: [{ message: { content: '<!doctype html>' } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const recorder = new MemoryRecorder();
+  const llm = client(recorder);
+
+  await llm.generateText({
+    prompt: 'generate a complete report',
+    systemPrompt: 'trusted summary contract',
+    maxOutputTokens: 24_000,
+    receipt: { stage: 'editorial_summary_html', expectedModel: 'pinned-model' },
+  });
+
+  assert.equal(maxTokens, 24_000);
+  assert.deepEqual(messages, [
+    { role: 'system', content: 'trusted summary contract' },
+    { role: 'user', content: 'generate a complete report' },
+  ]);
+});
+
 test('Gateway cancellation aborts an in-flight provider request', async () => {
   globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;

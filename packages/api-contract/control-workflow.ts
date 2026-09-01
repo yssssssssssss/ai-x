@@ -33,6 +33,14 @@ export type ControlWorkflowState =
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
 
+export const ORCHESTRATION_MODES = ['single_skill', 'multi_skill'] as const;
+export type OrchestrationModeV1 = typeof ORCHESTRATION_MODES[number];
+
+export function isOrchestrationModeV1(value: unknown): value is OrchestrationModeV1 {
+  return typeof value === 'string'
+    && (ORCHESTRATION_MODES as readonly string[]).includes(value);
+}
+
 export interface PlanningGuidanceClarification {
   reasonCode: 'scenario_selection_required';
   options: Array<{ id: string; label: string }>;
@@ -67,6 +75,7 @@ export interface ActivateRequirementVersionRequest {
 export interface PlanControlTaskRequest {
   originalInput: string;
   conversationId?: string;
+  orchestrationMode: OrchestrationModeV1;
 }
 
 
@@ -76,6 +85,7 @@ export interface ControlTaskResponse {
   stateVersion: number;
   activePlanVersionId: string | null;
   currentAttemptId: string | null;
+  orchestrationMode?: OrchestrationModeV1 | null;
 }
 
 export interface CreateControlTaskRequest {

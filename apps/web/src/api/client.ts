@@ -39,8 +39,12 @@ async function reqBlob(path: string): Promise<Response> {
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`/api${path}`, { headers });
   if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string };
-    throw new ApiError(response.status, data.error ?? `HTTP ${response.status}`);
+    const data = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new ApiError(
+      response.status,
+      data.error ?? `HTTP ${response.status}`,
+      typeof data.code === 'string' ? data.code : undefined,
+    );
   }
   return response;
 }
@@ -108,6 +112,7 @@ export type {
   CurrentTaskReadResponse,
   CurrentPlanCandidate,
   ExecutionControlPlanRequest,
+  OrchestrationModeV1,
   PlanControlTaskRequest,
   ResumeControlPlanRequest,
   ReviseControlPlanRequest,
@@ -379,16 +384,16 @@ export const api = {
     }
     return { blob: await response.blob() };
   },
-  controlEditorialShowcase: async (
+  controlEditorialSummary: async (
     taskId: string,
     attemptId: string,
   ): Promise<ControlHtmlBundleResponse> => {
     const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-showcase.html`,
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-summary.html`,
     );
     const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (mediaType !== 'text/html') {
-      throw new ApiError(502, 'Editorial Showcase 媒体类型无效');
+      throw new ApiError(502, '编辑摘要媒体类型无效');
     }
     return { blob: await response.blob() };
   },

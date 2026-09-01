@@ -1253,20 +1253,23 @@ test('production control runtime returns the revised final deliverable ID for pa
   const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
     originalInput,
     conversationId,
+    orchestrationMode: 'single_skill',
   });
   assert.equal(planResponse.status, 200, await planResponse.clone().text());
   const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
+  assert.equal(planned.task.orchestrationMode, 'single_skill');
   const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
     headers: { authorization: `Bearer ${ownerToken}` },
   });
   assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
   const refreshed = await refreshedResponse.json() as {
-    task: { originalInput: string; structuredTask: unknown };
+    task: { originalInput: string; structuredTask: unknown; orchestrationMode?: string };
     activatedNodes: string[];
     candidates: ControlPlanCandidatesResponse['candidates'];
   };
   assert.equal(refreshed.task.originalInput, originalInput);
+  assert.equal(refreshed.task.orchestrationMode, 'single_skill');
   assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
   assert.deepEqual(refreshed.activatedNodes, planned.activatedNodes);
   assert.deepEqual(
@@ -1696,6 +1699,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
     originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
     conversationId,
+    orchestrationMode: 'single_skill',
   });
   assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
   const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
@@ -1797,7 +1801,11 @@ test('production plan stream stops at the explicit direction gate before plannin
       app.baseUrl,
       '/api/control-tasks/plan/stream',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput: `progress-stream-${randomUUID()}`, conversationId },
+      {
+        originalInput: `progress-stream-${randomUUID()}`,
+        conversationId,
+        orchestrationMode: 'single_skill',
+      },
     );
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
@@ -1856,6 +1864,7 @@ test('production API persists Scenario selection guidance and resumes planning a
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -1977,7 +1986,7 @@ test('production Current planning rejects model drift before candidate persisten
       app.baseUrl,
       '/api/control-tasks/plan',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 502);
     assert.match(await response.text(), /model drift/i);
@@ -2055,7 +2064,7 @@ test('production Current planning persists candidates only when every receipt ma
       app.baseUrl,
       '/api/control-tasks/plan',
       token,
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 200, await response.clone().text());
     const direction = await response.json() as CurrentPlanningResponse;
@@ -2180,8 +2189,8 @@ test('supplied foreign and missing planning conversations return 404 before crea
   );
   const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const cases = [
-    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}` },
-    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}` },
+    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
+    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
   ];
   try {
     for (const target of cases) {
@@ -2392,6 +2401,38 @@ test('migration 012 fails only incomplete clarification shells and is idempotent
     await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
   }
 });
+
+test('migration 015 adds task orchestration mode idempotently', async () => {
+  const compatibilitySchema = `task_orchestration_mode_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_tasks (
+        id UUID PRIMARY KEY,
+        state TEXT NOT NULL
+      )
+    `);
+    const migration = readFileSync(
+      join(process.cwd(), 'database', 'migrations', '015_add_task_orchestration_mode.sql'),
+      'utf8',
+    );
+    await client.query(migration);
+    await client.query(migration);
+    const columns = await client.query(
+      `SELECT column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'control_tasks' AND column_name = 'orchestration_mode'`,
+      [compatibilitySchema],
+    );
+    assert.deepEqual(columns.rows, [{ column_name: 'orchestration_mode', data_type: 'text' }]);
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
 test('clarification idempotency is durable across concurrent and newly created routers', async () => {
 
   const created = await repository.createTask({
@@ -2561,6 +2602,7 @@ test('post-activation clarification failure reclaims the same command without an
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2681,6 +2723,7 @@ test('latest-version fresh-key clarification recovers hydrated unchanged assumpt
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2820,6 +2863,7 @@ test('response delivery failure after atomic clarification commit replays the pe
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput: `response-delivery-replay-${randomUUID()}`,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;

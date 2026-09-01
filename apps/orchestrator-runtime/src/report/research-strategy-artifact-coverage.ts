@@ -27,3 +27,13 @@ export function requestedArtifactHasContentBlock(
 ): boolean {
   return blocks.some(({ kind }) => contentBlockMatchesRequestedArtifact(artifact, kind));
 }
+
+export function hasMissingRequestedContentBlock(
+  artifacts: readonly RequestedArtifact[],
+  blocks: readonly { kind: ResearchStrategyContentBlockKind }[],
+): boolean {
+  return artifacts.some((artifact) => (
+    artifact !== 'executive_answers'
+    && !requestedArtifactHasContentBlock(artifact, blocks)
+  ));
+}

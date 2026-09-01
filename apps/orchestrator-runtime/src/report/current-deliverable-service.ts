@@ -20,11 +20,12 @@ import type {
   ResearchStrategySupportPatchTarget,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import type {
-  EvidenceArtifactResolver,
-  EvidenceManifest,
-  EvidenceService,
+import type { RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import {
+  isFactualEvidenceClass,
+  type EvidenceArtifactResolver,
+  type EvidenceManifest,
+  type EvidenceService,
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import {
@@ -73,11 +74,16 @@ import {
   ResearchStrategyContentFidelityError,
   type ResearchStrategyContentFidelityResult,
 } from './research-strategy-content-fidelity.ts';
+import {
+  hasMissingRequestedContentBlock,
+} from './research-strategy-artifact-coverage.ts';
 import { applyResearchStrategyContentPatch } from './research-strategy-content-patch.ts';
 import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
 } from './answer-quality-validator.ts';
+
+const USER_LANGUAGE_INSTRUCTION = 'Write every user-facing field in the same primary language as context.researchGoal. When the research goal is Chinese, use Simplified Chinese except for proper nouns, standard abbreviations, identifiers, and quoted source text.';
 
 function researchStrategySupportPatchTargets(
   draft: ResearchStrategyContentDraftV2,
@@ -134,16 +140,47 @@ function supportTargetSchema(target: ResearchStrategySupportPatchTarget): object
   };
 }
 
-function researchStrategyPatchSchema(draft?: ResearchStrategyContentDraftV2): object {
+function researchStrategyPatchSchema(
+  draft?: ResearchStrategyContentDraftV2,
+  requestedArtifacts?: readonly RequestedArtifact[],
+  factualEvidenceIds: readonly string[] = [],
+): object {
   const schema = JSON.parse(readFileSync(
     join(getConfigRoot(), 'schemas/skills/research-strategy-content-patch-v1.schema.json'),
     'utf8',
-  )) as { $defs?: Record<string, unknown> };
+  )) as {
+    $defs?: Record<string, unknown>;
+    properties?: { operations?: { items?: { oneOf?: Array<{ $ref?: string }> } } };
+  };
   if (draft && schema.$defs) {
     const targets = researchStrategySupportPatchTargets(draft);
     schema.$defs.supportTarget = targets.length > 0
       ? { oneOf: targets.map(supportTargetSchema) }
       : { not: {} };
+  }
+  const missingContentBlock = Boolean(
+    draft
+    && requestedArtifacts
+    && hasMissingRequestedContentBlock(requestedArtifacts, draft.contentBlocks)
+  );
+  const operationChoices = schema.properties?.operations?.items?.oneOf;
+  if (draft && requestedArtifacts && operationChoices && !missingContentBlock) {
+    schema.properties!.operations!.items!.oneOf = operationChoices.filter(
+      (choice) => choice.$ref !== '#/$defs/appendContentBlock',
+    );
+  }
+  if (missingContentBlock && factualEvidenceIds.length > 0 && schema.$defs) {
+    const support = schema.$defs.support as {
+      properties?: { evidenceIds?: unknown };
+    } | undefined;
+    if (support?.properties) {
+      support.properties.evidenceIds = {
+        allOf: [
+          { $ref: '#/$defs/ids' },
+          { contains: { enum: [...factualEvidenceIds] } },
+        ],
+      };
+    }
   }
   return schema;
 }
@@ -1672,10 +1709,17 @@ export class CurrentDeliverableService {
             await persistAssemblyDiagnostic(assemblyRound, error, true);
             const originalDraft = sourceDraft;
             const allowedSupportTargets = researchStrategySupportPatchTargets(originalDraft);
-            const patchSchema = researchStrategyPatchSchema(originalDraft);
+            const patchSchema = researchStrategyPatchSchema(
+              originalDraft,
+              strategyRequirement.requested_artifacts ?? [],
+              evidenceManifest.entries
+                .filter(({ evidenceClass }) => isFactualEvidenceClass(evidenceClass))
+                .map(({ id }) => id),
+            );
             const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
               prompt: [
                 'Return one research-strategy-content-patch-v1 in structural_repair mode.',
+                USER_LANGUAGE_INSTRUCTION,
                 'Repair the reviewed Content Draft without rewriting, deleting, or reordering existing semantic content.',
                 'Use replace_direct_answer_binding or replace_support for binding corrections. Use append operations only for genuinely missing required content.',
                 'Use replace_support only with an exact context.allowedSupportTargets entry. content_block is valid only for narrative Blocks; matrix cells, mind-model nodes, principles, opportunities, actions, and channels must use content_item with the exact blockKey and item key.',
@@ -1953,6 +1997,7 @@ export class CurrentDeliverableService {
         capabilityProvenance?: unknown;
       }>({
         prompt: contract.synthesisPrompt
+          + `\n${USER_LANGUAGE_INSTRUCTION}`
           + '\nCoverage bindings are exhaustive. Include every context.coverageRequirements.requiredQuestionIds item exactly once in coverage.questionBindings and every context.coverageRequirements.successCriterionIds item exactly once in coverage.successCriterionBindings. Bind an explicit gap conclusion and recommendation when a requirement is not yet satisfied; never omit its id.'
           + '\nEvery evidenceIds entry must reference only context.verifiedEvidence[].evidenceId. Never place a Visual Asset id in evidenceIds; Visual Asset ids are allowed only in typed visual fields such as screenshotComparisons.assetIds.'
           + '\nFor findingGraph findings with kind "fact", every evidenceIds entry must have evidenceClass public_source, screenshot, or dataset. user_input, knowledge, simulation, and derived evidence cannot root a fact.'
@@ -2221,6 +2266,7 @@ export class CurrentDeliverableService {
       const patch = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
         prompt: [
           'Return one research-strategy-content-patch-v1 in semantic_revision mode.',
+          USER_LANGUAGE_INSTRUCTION,
           'Resolve only the final review issues through explicit patch operations; never return or rewrite the whole Draft.',
           'Use replace_semantic_text only for the exact semantic units that need weaker or more accurate wording.',
           'Use replace_direct_answer_binding or replace_support for Evidence, status, confidence, and validation changes.',

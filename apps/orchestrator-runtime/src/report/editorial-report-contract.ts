@@ -4,6 +4,7 @@ import type {
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
 import type { CurrentReportPackageResponse } from '../../../../packages/api-contract/control-workflow.ts';
+import type { ReportPackageV2 } from '../../../../packages/api-contract/report-package.ts';
 import type { LLMResult } from '../runtime/llm-client.ts';
 import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import type { EvidenceEntry } from '../evidence/evidence-service.ts';
@@ -130,11 +131,25 @@ export interface EditorialSourceBinding {
   reportPackageContentSha256: Sha256;
 }
 
+export interface EditorialTaskContext {
+  originalRequest: string;
+  researchGoal: string;
+  targetAudience: string[];
+  scope: string[];
+  constraints: string[];
+  successCriteria: string[];
+  expectedDeliverables: string[];
+  requestedArtifacts: unknown[];
+  sensitivity: 'public' | 'internal' | 'confidential';
+  piiDetected: boolean;
+}
+
 export interface FrozenEditorialSource {
   binding: EditorialSourceBinding;
+  taskContext?: EditorialTaskContext;
   reportPackage: {
     artifact: ControlArtifact & { state: 'SEALED'; contentSha256: string };
-    value: ReportPackageArtifactValue;
+    value: ReportPackageArtifactValue | ReportPackageV2;
   };
   current: Exclude<CurrentReportPackageResponse, { presentationMode: 'legacy_text' }>;
   sourceArtifacts: SourceArtifactRef[];
@@ -155,7 +170,7 @@ export type EditorialTaskReader = Pick<
 export type EditorialArtifactReader = Pick<
   ControlArtifactStore,
   'readVerifiedJson' | 'readVerifiedBoundJson' | 'readVerifiedBinary'
->;
+> & Partial<Pick<ControlArtifactStore, 'readVerifiedBoundText'>>;
 
 export interface EditorialMaterialUnitBase {
   id: string;
@@ -197,6 +212,7 @@ export interface EditorialMaterialAsset {
 
 export type EditorialDeliverableType =
   | 'research_plan'
+  | 'research_strategy_report'
   | 'competitive_analysis_report'
   | 'voc_diagnosis_report'
   | 'design_audit_report'
@@ -710,6 +726,7 @@ const JSON_POINTER_PATTERN = /^(?:\/(?:[^~/]|~[01])*)*$/u;
 const ALLOWED_UNITS = new Set(['/5', 'ratio', '个', '条']);
 const DELIVERABLE_TYPES = new Set<EditorialDeliverableType>([
   'research_plan',
+  'research_strategy_report',
   'competitive_analysis_report',
   'voc_diagnosis_report',
   'design_audit_report',
@@ -2907,6 +2924,7 @@ function isProjectorMetricUnit(
         || (/^\/payload\/frequencies\/\d+\/share$/u.test(pointer) && unit.unit === 'ratio')
         || (/^\/payload\/sentiments\/\d+\/score$/u.test(pointer) && unit.unit === undefined)
       );
+    case 'research_strategy_report':
     case 'design_audit_report':
     case 'accessibility_audit_report':
       return false;

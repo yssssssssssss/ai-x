@@ -1317,6 +1317,7 @@ function fixedTestPlanningPolicy() {
 function routedPlanningHarness(
   candidateFixtureMode: CurrentCandidateFixtureMode,
   planningPolicy: unknown = fixedTestPlanningPolicy(),
+  multiSkillPortfolioMode?: 'inactive' | 'active',
 ) {
   const llm = new CurrentPlanningLLM(candidateFixtureMode);
   const tools = new ToolRouter();
@@ -1334,6 +1335,7 @@ function routedPlanningHarness(
     tools,
     approvalAuthorities: ['owner'],
     planningPolicy,
+    ...(multiSkillPortfolioMode ? { multiSkillPortfolioMode } : {}),
   } as never);
   return { llm, planning };
 }
@@ -1518,7 +1520,10 @@ test('Current routed planning requires a direction choice even when Scenario wor
     requirement,
     rawInput,
     undefined,
-    { requireExplicitScenarioSelection: true },
+    {
+      orchestrationMode: 'single_skill',
+      requireExplicitScenarioSelection: true,
+    },
   );
 
   assert.ok('kind' in result && result.kind === 'planning_guidance_clarification');
@@ -1554,7 +1559,10 @@ test('Current routed planning generates candidates after an explicit direction s
     requirement,
     rawInput,
     undefined,
-    { selectedScenarioId: 'competitor-benchmark-research' },
+    {
+      orchestrationMode: 'single_skill',
+      selectedScenarioId: 'competitor-benchmark-research',
+    },
   );
 
   assert.equal('kind' in result, false);
@@ -1565,6 +1573,35 @@ test('Current routed planning generates candidates after an explicit direction s
   assert.equal(result.planningProvenance.classifier_call_count, 0);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 0);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates').length, 1);
+});
+
+test('explicit single_skill mode keeps Plan v2 routing when the multi-Skill writer is active', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { planning } = routedPlanningHarness('dynamic', dynamicPolicy, 'active');
+  const rawInput = '梳理宠物心智的设计表达策略全景';
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    research_goal: rawInput,
+  };
+
+  const result = await planning.planCurrentFromRequirementOutcome(
+    requirement,
+    rawInput,
+    undefined,
+    {
+      selectedScenarioId: 'competitor-benchmark-research',
+      orchestrationMode: 'single_skill',
+    },
+  );
+
+  assert.equal('kind' in result, false);
+  if ('kind' in result) return;
+  assert.equal(result.orchestrationMode, 'single_skill');
+  assert.equal(result.capabilityDemandGraph, undefined);
+  assert.equal(result.portfolios, undefined);
 });
 
 test('dynamic repair preserves passing baselines and drops a specialty after the single merged correction', async () => {

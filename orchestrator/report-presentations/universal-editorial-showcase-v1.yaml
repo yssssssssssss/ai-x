@@ -1,0 +1,26 @@
+version: universal-editorial-showcase-profile-v1
+id: universal-editorial-showcase-v1
+viewport:
+  width: 1440
+  height: 900
+layout:
+  max_width: 1480
+  rail_width: 220
+colors:
+  paper: "#f2eee6"
+  surface: "#fffdf8"
+  ink: "#1d1b18"
+  muted: "#6f6962"
+  accent: "#d92d20"
+  fact: "#237a57"
+  inference: "#a55f05"
+  unknown: "#b42318"
+  method: "#315f82"
+typography:
+  display: "ui-serif, Georgia, 'Times New Roman', serif"
+  body: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+principles:
+  card_wall_forbidden: true
+  external_resources_allowed: false
+  mobile_required: false
+  print_required: false

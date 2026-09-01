@@ -590,6 +590,10 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
     llm.structuredCalls[0]?.prompt ?? '',
     /findingGraph.*fact.*public_source.*screenshot.*dataset.*user_input.*cannot/is,
   );
+  assert.match(
+    llm.structuredCalls[0]?.prompt ?? '',
+    /same primary language as context\.researchGoal/u,
+  );
   assert.equal(validator.schemaCalls.length, 1);
   assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');
 
@@ -1796,6 +1800,10 @@ test('repair schema permits support only on exact leaf-owning targets', async ()
 
   const call = llm.structuredCalls[0]!;
   const context = call.context as { allowedSupportTargets?: unknown[] };
+  const operationRefs = (
+    call.schema as { properties?: { operations?: { items?: { oneOf?: Array<{ $ref?: string }> } } } }
+  ).properties?.operations?.items?.oneOf?.map(({ $ref }) => $ref) ?? [];
+  assert.equal(operationRefs.includes('#/$defs/appendContentBlock'), false);
   assert.deepEqual(context.allowedSupportTargets, [{ entity: 'evidence_finding', key: 'fact' }, {
     entity: 'content_block', key: 'narrative',
   }, {
@@ -1829,6 +1837,24 @@ test('repair schema permits support only on exact leaf-owning targets', async ()
     },
     'research-strategy-content-patch-v1',
   ));
+});
+
+test('repair schema requires factual Evidence when appending a missing requested block', async () => {
+  const content = openStrategyDraft();
+  content.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(structuralEvidencePatch(), materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  (strategyInput.finalizedRequirement as { requested_artifacts?: string[] }).requested_artifacts?.push('action_plan');
+
+  await assert.rejects(() => service.generate(strategyInput));
+
+  const supportEvidence = (
+    llm.structuredCalls[0]?.schema as {
+      $defs?: { support?: { properties?: { evidenceIds?: { allOf?: Array<{ contains?: { enum?: string[] } }> } } } };
+    }
+  ).$defs?.support?.properties?.evidenceIds;
+  assert.deepEqual(supportEvidence?.allOf?.[1]?.contains?.enum, ['E1']);
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {

@@ -55,6 +55,7 @@ function refinementResponse(
       stateVersion: task.stateVersion,
       activePlanVersionId: task.activePlanVersionId,
       currentAttemptId: task.currentAttemptId,
+      orchestrationMode: task.orchestrationMode ?? null,
     },
     structuredTask: result.requirement,
     activatedNodes: result.activatedNodes ?? [],
@@ -98,6 +99,7 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
         taskType: null,
         structuredTask: {},
         state: 'awaiting_clarification',
+        orchestrationMode: input.orchestrationMode,
       });
       try {
         const result = await runtime.requirementRefinement.understand({
@@ -105,6 +107,7 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
           conversationId: conversation.id,
           ownerUserId: input.ownerUserId,
           originalInput: input.originalInput,
+          orchestrationMode: input.orchestrationMode,
           expectedVersion: created.stateVersion,
         }, onProgress);
         if (result.status === 'clarification_required') {
@@ -119,6 +122,7 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
           ownerUserId: input.ownerUserId,
           expectedStateVersion: readyTask.stateVersion,
           originalInput: input.originalInput,
+          orchestrationMode: readyTask.orchestrationMode ?? 'single_skill',
         }, result.planningResult);
       } catch (error) {
         await failIncompletePlanningTask(runtime, created.id);
@@ -152,6 +156,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         ownerUserId: input.ownerUserId,
         expectedStateVersion: clarifiedTask.stateVersion,
         originalInput: clarifiedTask.originalInput,
+        orchestrationMode: clarifiedTask.orchestrationMode ?? 'single_skill',
         commandReservation: input.commandReservation,
         clarificationRecovery: result.clarificationRecovery,
       }, result.planningResult);

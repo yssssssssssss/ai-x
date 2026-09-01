@@ -18,6 +18,8 @@ import {
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { EditorialSummaryPipelineError } from '../../../orchestrator-runtime/src/report/editorial-summary-pipeline.ts';
+import { EditorialSummaryStoreError } from '../../../orchestrator-runtime/src/report/editorial-summary-store.ts';
 import {
   HtmlBundleIntegrityError,
   HtmlBundleUnavailableError,
@@ -72,7 +74,7 @@ export interface ControlTasksRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<Uint8Array | null>;
-  readEditorialShowcaseHtml?(input: {
+  readEditorialSummaryHtml?(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
@@ -599,16 +601,16 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
-  router.get('/:id/reports/:attemptId/editorial-showcase.html', async (req, res) => {
+  router.get('/:id/reports/:attemptId/editorial-summary.html', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
     if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
-    if (!runtime.readEditorialShowcaseHtml) {
-      res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+    if (!runtime.readEditorialSummaryHtml) {
+      res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
       return;
     }
     try {
-      const html = await runtime.readEditorialShowcaseHtml({
+      const html = await runtime.readEditorialSummaryHtml({
         taskId: req.params.id,
         attemptId: req.params.attemptId,
         ownerUserId: actor.userId,
@@ -619,19 +621,27 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       }
       res.set({
         'Cache-Control': 'private, no-store',
-        'Content-Disposition': 'inline; filename="editorial-showcase.html"',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Disposition': 'inline; filename="editorial-summary.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         'Content-Type': 'text/html; charset=utf-8',
         'X-Content-Type-Options': 'nosniff',
       });
       res.send(html);
     } catch (error) {
-      if (error instanceof HtmlBundleUnavailableError) {
-        res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+      if (error instanceof EditorialSummaryPipelineError) {
+        const unavailable = error.code === 'SUMMARY_MODEL_UNAVAILABLE';
+        res.status(409).json({
+          error: unavailable ? '编辑摘要模型不可用' : '编辑摘要生成失败',
+          code: unavailable ? 'editorial_summary_unavailable' : 'editorial_summary_generation_failed',
+        });
         return;
       }
-      if (error instanceof HtmlBundleIntegrityError) {
-        res.status(409).json({ error: 'Editorial Showcase 完整性校验失败', code: 'editorial_showcase_integrity' });
+      if (error instanceof EditorialSummaryStoreError) {
+        res.status(409).json({ error: '编辑摘要完整性校验失败', code: 'editorial_summary_integrity' });
+        return;
+      }
+      if (error instanceof HtmlBundleUnavailableError) {
+        res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
         return;
       }
       responseError(res, error);

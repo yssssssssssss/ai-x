@@ -10,12 +10,19 @@ import type { VerifiedVisualAsset } from '../apps/orchestrator-runtime/src/repor
 import {
   materializeEditorialReport,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-materializer.ts';
+import { buildEditorialHtmlSourcePacket } from '../apps/orchestrator-runtime/src/report/editorial-html-source-packet.ts';
+import { loadEditorialPresentationBrief } from '../apps/orchestrator-runtime/src/report/editorial-presentation-brief.ts';
+import { compileEditorialShowcase } from '../apps/orchestrator-runtime/src/report/editorial-showcase-compiler.ts';
+import { projectEditorialShowcaseSource } from '../apps/orchestrator-runtime/src/report/editorial-showcase-source-adapter.ts';
+import { renderEditorialShowcase } from '../apps/orchestrator-runtime/src/report/editorial-showcase-renderer.ts';
+import { validateEditorialShowcase } from '../apps/orchestrator-runtime/src/report/editorial-showcase-validator.ts';
 import type {
   EditorialDeliverableType,
   FrozenEditorialSource,
   Sha256,
   SourceArtifactRef,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-contract.ts';
+import { researchStrategyPayloadV2 } from './fixtures/research-strategy-v2.ts';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const PLAN_ID = '22222222-2222-4222-8222-222222222222';
@@ -243,6 +250,9 @@ const payloads: Record<EditorialDeliverableType, unknown> = {
     collectionTemplate: [{ field: '阻力', description: '记录原话', evidenceRequired: true }],
     analysisMethods: ['主题分析'], deliverables: ['研究报告'], qualityChecks: ['交叉核验'],
   },
+  research_strategy_report: JSON.parse(
+    JSON.stringify(researchStrategyPayloadV2()).replaceAll('"E1"', '"evidence-1"'),
+  ) as unknown,
   competitive_analysis_report: {
     competitorSamples: [{ id: 's1', name: '样本 A', rationale: '代表同类路径', evidenceIds: ['evidence-1'] }],
     dimensionMatrix: [{ dimension: '信任', weight: 0.5, values: [{ sampleId: 's1', value: '信息完整', score: 4, evidenceIds: ['evidence-1'] }] }],
@@ -299,9 +309,10 @@ test('materialization is deterministic, preserves scalar types and emits a minim
   assert.equal(context.includes('/payload/'), false);
 });
 
-test('all five registered deliverables use explicit projectors', () => {
+test('all six registered deliverables use explicit projectors', () => {
   const expectedPointers: Record<EditorialDeliverableType, string> = {
     research_plan: '/payload/competitorSampling/targetCount',
+    research_strategy_report: '/payload/directAnswers/0/answer',
     competitive_analysis_report: '/payload/dimensionMatrix/0/values/0/score',
     voc_diagnosis_report: '/payload/frequencies/0/share',
     design_audit_report: '/payload/remediations/0/acceptanceCriteria/0',
@@ -311,6 +322,53 @@ test('all five registered deliverables use explicit projectors', () => {
     const result = materializeEditorialReport(source(deliverableType, payloads[deliverableType]));
     assert.ok(result.material.units.some(({ sourceRefs }) => sourceRefs[0].jsonPointer === expectedPointers[deliverableType]), deliverableType);
     assert.ok(result.material.units.some(({ role }) => role === 'risk'), deliverableType);
+    const sourcePacket = buildEditorialHtmlSourcePacket({
+      material: result.material,
+      presentationBrief: loadEditorialPresentationBrief().brief,
+    });
+    const sourceProjection = projectEditorialShowcaseSource({
+      material: result.material,
+      sourcePacket: sourcePacket.packet,
+    });
+    if (deliverableType === 'research_strategy_report') {
+      assert.deepEqual(sourceProjection.questionAnchors[0], { questionId: 'Q1', groupId: 'strategy-answer:Q1' });
+    }
+    let compiled: ReturnType<typeof compileEditorialShowcase>;
+    try {
+      compiled = compileEditorialShowcase({
+        material: result.material,
+        sourcePacket: sourcePacket.packet,
+        intent: null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const implicated = result.material.units
+        .filter(({ id }) => message.includes(id))
+        .map(({ sourceRefs }) => sourceRefs[0].jsonPointer);
+      throw new Error(`${deliverableType}: ${message}; pointers=${implicated.join(',')}`);
+    }
+    assert.equal(compiled.spec.requiredBodyUnitIds.length, result.material.units.filter(({ requiredInBody }) => requiredInBody).length, deliverableType);
+    if (deliverableType === 'research_strategy_report') {
+      const kinds = compiled.spec.sections.flatMap(({ components }) => components.map(({ kind }) => kind));
+      assert.ok(kinds.includes('answer-chain'));
+      assert.ok(kinds.includes('matrix'));
+      assert.ok(kinds.includes('priority-lanes'));
+    }
+    const rendered = renderEditorialShowcase({ spec: compiled.spec });
+    let validation: ReturnType<typeof validateEditorialShowcase>;
+    try {
+      validation = validateEditorialShowcase({
+        material: result.material,
+        sourcePacket: sourcePacket.packet,
+        spec: compiled.spec,
+        intent: null,
+        renderResult: rendered,
+      });
+    } catch (error) {
+      throw new Error(`${deliverableType}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    assert.equal(validation.verdict, 'pass', deliverableType);
+    assert.ok(rendered.htmlBytes.byteLength > 0, deliverableType);
   }
 });
 
@@ -379,6 +437,9 @@ test('typed projectors preserve every required direct basis edge', () => {
 test('comparison Assets share one caption/alt pair and retain exact frozen lineage', () => {
   const input = source('design_audit_report', structuredClone(payloads.design_audit_report));
   const result = materializeEditorialReport(input);
+  const title = result.material.units.find(({ id }) => id === result.material.titleUnitId);
+  assert.equal(title?.value, '设计审计');
+  assert.equal(title?.sourceRefs[0].artifactId, '99999999-9999-4999-8999-999999999999');
   const before = result.material.assets.find(({ visualRole }) => visualRole === 'comparison-before');
   const after = result.material.assets.find(({ visualRole }) => visualRole === 'comparison-after');
 

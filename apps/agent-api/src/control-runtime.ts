@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { pool } from '../../../database/db.ts';
@@ -24,6 +25,7 @@ import {
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
   isPlanningGuidanceClarification,
+  OrchestrationModePlanningError,
   ResearchPlanningService,
   resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningOutcome,
@@ -37,7 +39,10 @@ import {
   type PlanProgress,
   type ResearchTaskV2,
 } from '../../../packages/api-contract/plan.ts';
-import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
+import type {
+  CurrentReportPackageResponse,
+  OrchestrationModeV1,
+} from '../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceClass,
@@ -72,6 +77,7 @@ import {
   VisualAssetService,
   type VerifiedVisualAsset,
 } from '../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { createEditorialSummaryPipeline } from '../../orchestrator-runtime/src/editorial-summary-runtime.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { VisualInputMaterializer } from '../../orchestrator-runtime/src/report/visual-input-materializer.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
@@ -314,7 +320,7 @@ type RuntimeConversationAdapter = {
 
 interface PlanningAdapter {
   plan(
-    input: ResearchPlanningInput,
+    input: ResearchPlanningInput & { orchestrationMode: OrchestrationModeV1 },
     onProgress?: (event: PlanProgress) => void,
   ): Promise<CurrentResearchPlanningOutcome>;
 }
@@ -357,7 +363,7 @@ export interface ControlRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<Uint8Array | null>;
-  readEditorialShowcaseHtml(input: {
+  readEditorialSummaryHtml(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
@@ -429,6 +435,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     root: join(process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces', 'current-control'),
     registry: repository,
   });
+  const workspaceRoot = process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces';
   const visualAssets = new VisualAssetService({ artifacts });
   const imageAnnotations = new ImageAnnotationService({ assets: visualAssets, artifacts });
   const expectedActualModel = overrides.expectedActualModel
@@ -438,10 +445,23 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   if (!expectedActualModel) {
     throw new Error('LLM_EXPECTED_ACTUAL_MODEL is required for the production control runtime');
   }
+  const receiptLlm = new ReceiptLLMClient(llm, repository);
+  const gatewayBaseUrl = process.env.LLM_GATEWAY_BASE_URL?.trim();
+  const endpointUrl = gatewayBaseUrl
+    ? `${gatewayBaseUrl.replace(/\/$/u, '')}/chat/completions`
+    : undefined;
+  const editorialSummary = createEditorialSummaryPipeline({
+    repository,
+    artifacts,
+    workspaceRoot,
+    llm: receiptLlm,
+    expectedActualModel,
+    ...(typeof endpointUrl === 'string' ? { endpointUrl } : {}),
+  });
   // planning 与 deliverable 的 LLM 都经 ReceiptLLMClient 包装:逐次记录模型调用回执,
   // actual≠expected(drift)或回执写库失败时 fail-closed。planning receipt 锚定 actual model pin。
   const planningService = overrides.planning ? null : new ResearchPlanningService({
-    llm: new ReceiptLLMClient(llm, repository),
+    llm: receiptLlm,
     validator,
     skillLoader,
     tools,
@@ -456,11 +476,15 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!input.requirement) {
         throw new Error('Current planning requires finalized ResearchTaskV2');
       }
+      if (!input.orchestrationMode) {
+        throw new OrchestrationModePlanningError('missing');
+      }
       return planningService!.planCurrentFromRequirementOutcome(
         input.requirement,
         input.originalInput,
         onProgress,
         {
+          orchestrationMode: input.orchestrationMode,
           ...(input.selectedScenarioId
             ? { selectedScenarioId: input.selectedScenarioId }
             : {}),
@@ -473,7 +497,10 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     },
   };
   const planning = {
-    async plan(input: ResearchPlanningInput, onProgress?: (event: PlanProgress) => void) {
+    async plan(
+      input: ResearchPlanningInput & { orchestrationMode: OrchestrationModeV1 },
+      onProgress?: (event: PlanProgress) => void,
+    ) {
       const result = await planningSource.plan(input, onProgress);
       if (isPlanningGuidanceClarification(result)) {
         throw new Error(`Planning Guidance requires clarification: ${result.planningGuidance.reasonCode}`);
@@ -585,6 +612,22 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     artifacts,
     reportPackages: reportPackageV2Artifacts,
   });
+  const fixedReportPackageV1Root = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<ControlArtifact | null> => {
+    const candidates = (await repository.listArtifactsForAttempt({
+      ...binding,
+      kinds: ['report_package'],
+    })).filter((artifact) => (
+      artifact.state === 'SEALED'
+      && artifact.schemaVersion === 'report-package-v1'
+      && artifact.storageUri.endsWith('/reports/report-package.json')
+    ));
+    if (candidates.length > 1) throw new HtmlBundleIntegrityError();
+    return candidates[0] ?? null;
+  };
   const fixedReportPackageV2Root = async (binding: {
     taskId: string;
     planVersionId: string;
@@ -617,7 +660,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       && artifact.storageUri.endsWith('/reports/report-package-v3.json')
     ));
     if (candidates.length > 1) throw new HtmlBundleIntegrityError();
-    return candidates[0] ?? fixedReportPackageV2Root(binding);
+    return candidates[0]
+      ?? await fixedReportPackageV2Root(binding)
+      ?? await fixedReportPackageV1Root(binding);
   };
   const readFrozenReportPackage = async (input: {
     artifact: ControlArtifact;
@@ -706,6 +751,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!task || task.activePlanVersionId !== input.activePlanVersionId) {
         throw new Error(`task ${input.taskId} has no matching active plan`);
       }
+      if (!task.orchestrationMode) {
+        throw new OrchestrationModePlanningError('missing');
+      }
       validator.validateOrThrow('research-task-v2', task.structuredTask);
       const structuredTask = task.structuredTask as ResearchTaskV2;
       const researchGoal = structuredTask.research_goal.trim();
@@ -741,6 +789,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const planningResult = await planning.plan({
         originalInput: `${input.instruction.trim()}\n\nOriginal research goal: ${researchGoal}`,
         requirement: structuredTask,
+        orchestrationMode: task.orchestrationMode,
         ...(activeScenarioId ? { selectedScenarioId: activeScenarioId } : {}),
         requiredProfileId: activePlan.candidateId,
       });
@@ -886,7 +935,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         reportPackageArtifactId: packageArtifact.id,
       });
     },
-    async readEditorialShowcaseHtml(input) {
+    async readEditorialSummaryHtml(input) {
       const task = await repository.getTaskDetail(input.taskId);
       if (
         !task
@@ -898,36 +947,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ) {
         return null;
       }
-      const binding = {
-        taskId: task.id,
-        planVersionId: task.activePlanVersionId,
-        attemptId: input.attemptId,
-      };
-      const packageArtifact = await fixedReportPackageRoot(binding);
-      if (!packageArtifact || packageArtifact.schemaVersion !== 'report-package-v3') {
-        throw new HtmlBundleUnavailableError();
-      }
-      const verified = await reportPackageV3Artifacts.verify({
-        artifactId: packageArtifact.id,
-        ...binding,
-      });
-      if (verified.value.showcase.status !== 'ready') {
-        throw new HtmlBundleUnavailableError();
-      }
-      const html = await artifacts.readVerifiedBoundText(
-        verified.value.showcase.htmlArtifactId,
-      );
-      if (
-        html.artifact.kind !== 'editorial_showcase_html'
-        || html.artifact.schemaVersion !== 'editorial-showcase-html-v1'
-        || html.artifact.mediaType !== 'text/html; charset=utf-8'
-        || html.artifact.taskId !== binding.taskId
-        || html.artifact.planVersionId !== binding.planVersionId
-        || html.artifact.attemptId !== binding.attemptId
-      ) {
-        throw new HtmlBundleIntegrityError();
-      }
-      return html.content;
+      const publication = await editorialSummary.generate({ taskId: task.id });
+      return readFile(publication.reportPath, 'utf8');
     },
     async readVisualAsset(input) {
       const task = await repository.getTaskDetail(input.taskId);

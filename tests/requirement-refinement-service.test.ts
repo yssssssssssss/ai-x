@@ -218,7 +218,11 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
     expectedActualModel: 'pinned-model',
     planner: {
       async plan(
-        input: { originalInput: string; requirement: ResearchTaskV2 },
+        input: {
+          originalInput: string;
+          requirement: ResearchTaskV2;
+          orchestrationMode: 'single_skill' | 'multi_skill';
+        },
         onProgress?: (event: PlanProgress) => void,
       ) {
         planned = input;
@@ -236,7 +240,11 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
 
   assert.equal(result.status, 'ready_to_plan');
   assert.deepEqual(result.requirement, finalized);
-  assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: finalized });
+  assert.deepEqual(planned, {
+    originalInput: 'compare live-commerce competitors',
+    requirement: finalized,
+    orchestrationMode: 'single_skill',
+  });
   assert.match(llm.calls[0]?.prompt ?? '', /原顺序.*comparison_dimensions/u);
   assert.ok(Object.keys(llm.calls[0]?.schema ?? {}).length > 0, 'Gateway call must receive the current local ResearchTaskV2 schema');
   assert.deepEqual(progress, [planningProgress]);
@@ -593,6 +601,35 @@ test('mixed request persists a coherent outcome gate instead of rejecting mismat
   assert.equal(result.requirement.clarification_questions[0]?.key, 'outcome_mode');
   assert.equal(repository.versions.length, 1);
   assert.equal(plannerCalls, 0);
+});
+
+test('strategy deliverable selection drops only non-blocking linked clarification questions', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+    ambiguities: [{
+      id: 'scope-detail',
+      statement: 'The exact scope can be refined later.',
+      blocking: false,
+    }],
+    clarification_questions: [{
+      key: 'scope_detail',
+      ambiguity_id: 'scope-detail',
+      question: 'Which additional scope should be used?',
+      rationale: 'Optional output depth.',
+    }],
+  });
+
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接给出综合策略地图和优先行动。',
+    { deliverable_intent: 'research_strategy_report' },
+  );
+
+  assert.equal(normalized.task_type, 'research_synthesis');
+  assert.deepEqual(normalized.expected_deliverables, ['research_strategy_report']);
+  assert.deepEqual(normalized.clarification_questions, []);
 });
 
 for (const selection of [

@@ -12,6 +12,7 @@ import {
   type CurrentTaskReadResponse,
   type CurrentPlanCandidate,
   type ExecLogRow,
+  type OrchestrationModeV1,
   type PlanProgress,
   type PlanResponse,
   type Upload,
@@ -139,6 +140,7 @@ export function useTaskFlow() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [stateVersion, setStateVersion] = useState<number | null>(null);
   const [originalInput, setOriginalInput] = useState('');
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationModeV1 | null>(null);
   const [exec, setExec] = useState<ControlExecutionResult | null>(null);
   const [executionSteps, setExecutionSteps] = useState<ExecLogRow[]>([]);
   const [executionPlanSteps, setExecutionPlanSteps] = useState<ExecutionPlanStepView[]>([]);
@@ -186,6 +188,12 @@ export function useTaskFlow() {
     const restoredSteps = executionStepsToExecLog(current.executionSteps);
     const selected = hydrated.selectedCandidate;
     setOriginalInput(hydrated.originalInput);
+    setOrchestrationMode(
+      current.task.orchestrationMode
+      ?? (selected && 'capability_demand_graph' in selected.plan
+        ? 'multi_skill'
+        : 'single_skill'),
+    );
     setStateVersion(hydrated.stateVersion);
     setClarification(hydrated.clarification as ClarificationRequiredResponse | null);
     setCandidatesResp(hydrated.candidatesResp);
@@ -308,6 +316,7 @@ export function useTaskFlow() {
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput('');
+    setOrchestrationMode(null);
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
@@ -322,7 +331,10 @@ export function useTaskFlow() {
     setCancelSubmitting(false);
   }
 
-  async function submitInput(text: string) {
+  async function submitInput(
+    text: string,
+    orchestrationMode: OrchestrationModeV1 = 'single_skill',
+  ) {
     restoreGeneration.current += 1;
     clarificationSubmission.current = createClarificationSubmissionState();
     setClarificationSubmitting(false);
@@ -335,6 +347,7 @@ export function useTaskFlow() {
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput(text);
+    setOrchestrationMode(orchestrationMode);
     setCancelSubmitting(false);
     setExec(null);
     setExecutionSteps([]);
@@ -348,7 +361,7 @@ export function useTaskFlow() {
     setPlanRecovery(null);
     try {
       const response = await api.planControlStream(
-        { originalInput: text },
+        { originalInput: text, orchestrationMode },
         {
           onProgress: (event) => {
             setProgress((previous) => upsertPlanningProgress(previous, event));
@@ -671,6 +684,7 @@ export function useTaskFlow() {
     stateVersion,
     planVersionId: selectedCandidate?.planVersionId ?? null,
     originalInput,
+    orchestrationMode,
     exec,
     executionSteps,
     executionPlanSteps,

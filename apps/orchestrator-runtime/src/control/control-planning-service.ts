@@ -1,6 +1,7 @@
 import type {
   ControlPlanCandidatesResponse,
   ControlTaskResponse,
+  OrchestrationModeV1,
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
@@ -38,7 +39,7 @@ interface PersistedPlanVersion {
 export interface ControlPlanningDependencies {
   planning: {
     plan(
-      input: { originalInput: string },
+      input: { originalInput: string; orchestrationMode: OrchestrationModeV1 },
       onProgress?: (event: PlanProgress) => void,
     ): Promise<CurrentResearchPlanningResult>;
   };
@@ -49,6 +50,7 @@ export interface ControlPlanningDependencies {
       originalInput: string;
       taskType: string | null;
       structuredTask: unknown;
+      orchestrationMode?: OrchestrationModeV1;
       candidates: Array<{
         candidateId: PlanCandidate['id'];
         plan: ProvisionalExecutionPlan;
@@ -81,6 +83,7 @@ export interface ControlPlanningDependencies {
       expectedStateVersion: number;
       taskType: string;
       structuredTask: CurrentResearchPlanningResult['structuredTask'];
+      orchestrationMode: OrchestrationModeV1;
       activatedNodes: string[];
       clarificationRecovery?: ClarificationRecoveryContext;
       candidates: Array<{
@@ -212,7 +215,10 @@ export class ControlPlanningService {
     return {
       kind: 'current',
       conversationId,
-      task: persisted.task,
+      task: {
+        ...persisted.task,
+        orchestrationMode: planningResult.orchestrationMode ?? persisted.task.orchestrationMode ?? null,
+      },
       structuredTask: planningResult.structuredTask ?? planningResult.task,
       activatedNodes: planningResult.activatedNodes,
       candidates,
@@ -236,18 +242,23 @@ export class ControlPlanningService {
     if (!input.conversationId) onConversation?.(conversation.id);
 
     const planningResult = await this.dependencies.planning.plan(
-      { originalInput: input.originalInput },
+      { originalInput: input.originalInput, orchestrationMode: input.orchestrationMode },
       onProgress,
     );
+    const boundPlanningResult: CurrentResearchPlanningResult = {
+      ...planningResult,
+      orchestrationMode: input.orchestrationMode,
+    };
     const persisted = await this.dependencies.repository.createTaskWithCandidates({
       conversationId: conversation.id,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
-      taskType: planningResult.task.task_type,
-      structuredTask: planningResult.structuredTask ?? planningResult.task,
-      candidates: this.prepareCandidates(planningResult),
+      taskType: boundPlanningResult.task.task_type,
+      structuredTask: boundPlanningResult.structuredTask ?? boundPlanningResult.task,
+      orchestrationMode: input.orchestrationMode,
+      candidates: this.prepareCandidates(boundPlanningResult),
     });
-    return this.responseFromPersisted(conversation.id, planningResult, persisted);
+    return this.responseFromPersisted(conversation.id, boundPlanningResult, persisted);
   }
 
   async planExistingTask(
@@ -257,11 +268,22 @@ export class ControlPlanningService {
       ownerUserId: string;
       expectedStateVersion: number;
       originalInput: string;
+      orchestrationMode?: OrchestrationModeV1;
       commandReservation?: ClarificationCommandReservation;
       clarificationRecovery?: ClarificationRecoveryContext;
     },
     planningResult: CurrentResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse> {
+    const orchestrationMode = planningResult.orchestrationMode
+      ?? input.orchestrationMode
+      ?? 'single_skill';
+    if (
+      input.orchestrationMode !== undefined
+      && planningResult.orchestrationMode !== undefined
+      && input.orchestrationMode !== planningResult.orchestrationMode
+    ) {
+      throw new Error('Task orchestration mode does not match the planned execution contract');
+    }
     const conversation = await this.dependencies.conversations.requireOwned({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
@@ -281,6 +303,7 @@ export class ControlPlanningService {
         expectedStateVersion: input.expectedStateVersion,
         taskType: planningResult.task.task_type,
         structuredTask,
+        orchestrationMode,
         activatedNodes: planningResult.activatedNodes,
         clarificationRecovery: input.clarificationRecovery,
         candidates: planningResult.candidates.map((candidate) => {
@@ -310,6 +333,10 @@ export class ControlPlanningService {
       structuredTask: planningResult.structuredTask ?? planningResult.task,
       candidates: preparedCandidates,
     });
-    return this.responseFromPersisted(conversation.id, planningResult, persisted);
+    return this.responseFromPersisted(
+      conversation.id,
+      { ...planningResult, orchestrationMode },
+      persisted,
+    );
   }
 }

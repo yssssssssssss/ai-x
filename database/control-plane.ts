@@ -7,6 +7,7 @@ import {
   type ControlPlanCandidatesResponse,
   type CurrentPlanCandidate,
   type ControlRequirementVersion,
+  type OrchestrationModeV1,
 } from '../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
@@ -614,7 +615,15 @@ function zeroPublicationFromRow(row: Record<string, unknown>): ControlZeroPublic
   };
 }
 
-export interface ControlTaskDetail extends ControlTask { conversationId: string; originalInput: string; ownerUserId: string; conversationOwnerUserId: string; structuredTask: unknown; activeRequirementVersionId: string | null; }
+export interface ControlTaskDetail extends ControlTask {
+  conversationId: string;
+  originalInput: string;
+  ownerUserId: string;
+  conversationOwnerUserId: string;
+  structuredTask: unknown;
+  activeRequirementVersionId: string | null;
+  orchestrationMode?: OrchestrationModeV1 | null;
+}
 export interface ControlTaskSummary {
   id: string;
   originalInput: string;
@@ -657,6 +666,9 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
     activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
     currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
     activeRequirementVersionId: typeof row.active_requirement_version_id === 'string' ? row.active_requirement_version_id : null,
+    orchestrationMode: row.orchestration_mode === 'single_skill' || row.orchestration_mode === 'multi_skill'
+      ? row.orchestration_mode
+      : null,
   };
 }
 
@@ -720,6 +732,7 @@ export interface PersistClarificationCandidatesInput {
   expectedStateVersion: number;
   taskType: string;
   structuredTask: ResearchTaskV2;
+  orchestrationMode: OrchestrationModeV1;
   activatedNodes: string[];
   clarificationRecovery?: {
     mode: 'latest_finalized_requirement';
@@ -882,12 +895,13 @@ export class ControlPlaneRepository {
     state: ControlTaskState;
     sensitivity?: string;
     piiDetected?: boolean;
+    orchestrationMode?: OrchestrationModeV1;
   }): Promise<ControlTask> {
     return this.transaction(async (connection) => {
       const result = await connection.query(
         `INSERT INTO control_tasks
-           (conversation_id, owner_user_id, original_input, task_type, structured_task, state, sensitivity, pii_detected)
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'internal'), COALESCE($8, false))
+           (conversation_id, owner_user_id, original_input, task_type, structured_task, state, sensitivity, pii_detected, orchestration_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'internal'), COALESCE($8, false), $9)
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
         [
           input.conversationId,
@@ -898,6 +912,7 @@ export class ControlPlaneRepository {
           input.state,
           input.sensitivity ?? null,
           input.piiDetected ?? null,
+          input.orchestrationMode ?? null,
         ],
       );
       const row = result.rows[0] ?? {};
@@ -960,7 +975,7 @@ export class ControlPlaneRepository {
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
-                task.active_requirement_version_id
+                task.active_requirement_version_id, task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1
@@ -1010,7 +1025,7 @@ export class ControlPlaneRepository {
                    (SELECT owner_user_id FROM conversations WHERE id = control_tasks.conversation_id)
                      AS conversation_owner_user_id,
                    structured_task, state, state_version, active_plan_version_id,
-                   current_attempt_id, active_requirement_version_id`,
+                   current_attempt_id, active_requirement_version_id, orchestration_mode`,
         [input.taskId, versionRow.id, JSON.stringify(input.structuredTask), input.expectedVersion],
       );
       const row = updated.rows[0];
@@ -1053,7 +1068,7 @@ export class ControlPlaneRepository {
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
-                task.active_requirement_version_id
+                task.active_requirement_version_id, task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1
@@ -1100,7 +1115,7 @@ export class ControlPlaneRepository {
                      AS conversation_owner_user_id,
                    structured_task, state, state_version,
                    active_plan_version_id, current_attempt_id,
-                   active_requirement_version_id`,
+                   active_requirement_version_id, orchestration_mode`,
         [input.taskId, input.requirementVersionId, input.expectedVersion],
       );
       const row = updated.rows[0];
@@ -1115,6 +1130,7 @@ export class ControlPlaneRepository {
     originalInput: string;
     taskType: string | null;
     structuredTask: unknown;
+    orchestrationMode?: OrchestrationModeV1;
     candidates: Array<{
       candidateId: ControlCandidateId;
       plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
@@ -1135,8 +1151,8 @@ export class ControlPlaneRepository {
       const taskId = randomUUID();
       const taskResult = await connection.query(
         `INSERT INTO control_tasks
-           (id, conversation_id, owner_user_id, original_input, task_type, structured_task, state)
-         VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_selection')
+           (id, conversation_id, owner_user_id, original_input, task_type, structured_task, state, orchestration_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_selection', $7)
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
         [
           taskId,
@@ -1145,6 +1161,7 @@ export class ControlPlaneRepository {
           input.originalInput,
           input.taskType,
           JSON.stringify(input.structuredTask),
+          input.orchestrationMode ?? null,
         ],
       );
       const taskRow = taskResult.rows[0] ?? {};
@@ -1511,6 +1528,7 @@ export class ControlPlaneRepository {
           currentAttemptId: typeof updatedRow.current_attempt_id === 'string'
             ? updatedRow.current_attempt_id
             : null,
+          ...(input.orchestrationMode ? { orchestrationMode: input.orchestrationMode } : {}),
         },
         structuredTask: input.structuredTask,
         activatedNodes: input.activatedNodes,
@@ -2608,7 +2626,8 @@ export class ControlPlaneRepository {
       const result = await connection.query(
         `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version, task.active_plan_version_id,
-                task.current_attempt_id, task.active_requirement_version_id
+                task.current_attempt_id, task.active_requirement_version_id,
+                task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1`,

@@ -15,7 +15,7 @@ export type {
   ReportReviewVerdict,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ArtifactWriteInput } from '../control/artifact-store.ts';
-import { redactSensitiveValue } from '../runtime/redaction.ts';
+import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
@@ -510,7 +510,9 @@ export class ReportReviewService {
         'A best-available answer may pass with evidence gaps when it is explicitly provisional, states validationNeeded, and discloses the limitation; do not fail it merely for lacking future primary research.',
         'Do not require unrequested visuals, budgets, statistical-power calculations, owners for open questions, or other enhancements absent from the Requirement success criteria.',
         'Report only concrete must-fix contract or decision-safety failures as issues; optional improvements must not fail a dimension.',
-        'When verdict is revise or block, every failed semantic dimension must include revisionIssues. Each revision issue requires a stable id, a message, and its own targetNodeIds selected only from context.revisionTargetIndex.',,
+        'Set verdict to pass when every dimension passes. Use revise only when at least one dimension fails and supplies actionable revisionIssues; never return revise with every dimension passed.',
+        'When context.researchGoal is present, require all user-facing semantic content to use the same primary language. A Chinese research goal requires Simplified Chinese except for proper nouns, standard abbreviations, identifiers, and source quotations.',
+        'When verdict is revise or block, every failed semantic dimension must include revisionIssues. Each revision issue requires a stable id, a message, and its own targetNodeIds selected only from context.revisionTargetIndex.',
         revisionRound === 1 ? 'This is the single bounded final revision. Return revise only when a concrete must-fix violation still remains.' : '',
       ].filter(Boolean).join('\n'),
       // An empty override makes the gateway load the canonical registry schema.
@@ -518,6 +520,7 @@ export class ReportReviewService {
       schemaName: 'report-review',
       context: {
         taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+        ...(input.requirement ? { researchGoal: redactString(input.requirement.research_goal) } : {}),
         deliverable: redactSensitiveValue(input.deliverable), deterministicDimensions: dimensions,
         deliverableContractId: contract.entry.id,
         reviewRubric: contract.reviewRubric,
@@ -588,7 +591,7 @@ export class ReportReviewService {
       && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
     const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
       ? 'revise'
-      : value.verdict === 'revise' && revisionRound === 1 && allDimensionsPass
+      : value.verdict === 'revise' && allDimensionsPass
         ? 'pass'
         : value.verdict;
     const revisionIssueIds = projectedDimensions.flatMap((dimension) => (

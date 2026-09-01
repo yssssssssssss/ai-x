@@ -1,6 +1,7 @@
 import type {
   EvidenceEntry,
   ResearchDeliverableEnvelope,
+  ResearchStrategyReportPayloadV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   ReadableReportDocument,
@@ -422,6 +423,343 @@ function projectResearchPlan(builder: MaterialBuilder, payloadValue: unknown): v
   list(payload.analysisMethods, 'analysisMethods').forEach((value, index) => builder.addUnit({ pointer: `/payload/analysisMethods/${index}`, value: scalar(value, 'analysis method'), role: 'audit', groupId: `research-method:${index}` }));
   list(payload.deliverables, 'deliverables').forEach((value, index) => builder.addUnit({ pointer: `/payload/deliverables/${index}`, value: scalar(value, 'deliverable'), role: 'context', groupId: `research-deliverable:${index}`, requiredInBody: true }));
   list(payload.qualityChecks, 'qualityChecks').forEach((value, index) => builder.addUnit({ pointer: `/payload/qualityChecks/${index}`, value: scalar(value, 'quality check'), role: 'validation', groupId: `research-quality:${index}` }));
+}
+
+function projectResearchStrategy(builder: MaterialBuilder, payloadValue: unknown): void {
+  const payload = payloadValue as ResearchStrategyReportPayloadV2;
+  if (payload?.schemaVersion !== 'research-strategy-content-v2') {
+    fail('EDITORIAL_PAYLOAD_INVALID', 'research_strategy_report requires research-strategy-content-v2');
+  }
+  const support = (binding: {
+    questionIds: string[];
+    evidenceIds: string[];
+    status: 'supported' | 'provisional';
+  }) => ({
+    questionIds: binding.questionIds,
+    evidenceIds: binding.evidenceIds,
+    epistemicStatus: binding.status === 'supported' ? 'fact' as const : 'inference' as const,
+  });
+
+  const title = builder.addUnit({
+    pointer: '/payload/title',
+    value: payload.title,
+    role: 'context',
+    groupId: 'strategy-report',
+    requiredInBody: true,
+  });
+  builder.titleUnitId = title.id;
+  const decisionContext = builder.addUnit({
+    pointer: '/payload/decisionContext',
+    value: payload.decisionContext,
+    role: 'context',
+    groupId: 'strategy-report',
+    requiredInBody: true,
+  });
+  builder.addUnit({
+    pointer: '/payload/executiveAnswer',
+    value: payload.executiveAnswer,
+    role: 'claim',
+    epistemicStatus: 'inference',
+    groupId: 'strategy-report',
+    basisUnitIds: [decisionContext.id],
+    requiredInBody: true,
+  });
+
+  payload.directAnswers.forEach((answer, index) => {
+    const groupId = `strategy-answer:${identifier(answer.questionId, `directAnswers/${index}/questionId`)}`;
+    const question = builder.addUnit({
+      pointer: `/payload/directAnswers/${index}/question`,
+      value: answer.question,
+      role: 'context',
+      groupId,
+      questionIds: [answer.questionId],
+      requiredInBody: true,
+    });
+    const answerUnit = builder.addUnit({
+      pointer: `/payload/directAnswers/${index}/answer`,
+      value: answer.answer,
+      role: 'claim',
+      epistemicStatus: answer.answerStatus === 'unanswered' ? 'unknown' : 'inference',
+      groupId,
+      basisUnitIds: [question.id],
+      evidenceIds: answer.evidenceIds,
+      questionIds: [answer.questionId],
+      requiredInBody: true,
+    });
+    builder.addUnit({
+      pointer: `/payload/directAnswers/${index}/businessImplication`,
+      value: answer.businessImplication,
+      role: 'claim',
+      epistemicStatus: answer.answerStatus === 'unanswered' ? 'unknown' : 'inference',
+      groupId,
+      basisUnitIds: [answerUnit.id],
+      evidenceIds: answer.evidenceIds,
+      questionIds: [answer.questionId],
+      requiredInBody: true,
+    });
+    builder.addUnit({
+      pointer: `/payload/directAnswers/${index}/recommendedAction`,
+      value: answer.recommendedAction,
+      role: 'recommendation',
+      groupId,
+      basisUnitIds: [answerUnit.id],
+      evidenceIds: answer.evidenceIds,
+      questionIds: [answer.questionId],
+      requiredInBody: true,
+    });
+    if (answer.validationNeeded.trim()) {
+      builder.addUnit({
+        pointer: `/payload/directAnswers/${index}/validationNeeded`,
+        value: answer.validationNeeded,
+        role: 'validation',
+        groupId,
+        basisUnitIds: [answerUnit.id],
+        questionIds: [answer.questionId],
+        requiredInBody: true,
+      });
+    }
+  });
+
+  payload.evidenceFindings.forEach((finding, index) => {
+    builder.addUnit({
+      pointer: `/payload/evidenceFindings/${index}/statement`,
+      value: finding.statement,
+      role: 'claim',
+      ...support(finding.support),
+      groupId: `strategy-finding:${identifier(finding.id, `evidenceFindings/${index}/id`)}`,
+      requiredInBody: true,
+    });
+  });
+
+  payload.contentBlocks.forEach((block, blockIndex) => {
+    const groupId = `strategy-content:${block.kind}:${identifier(block.id, `contentBlocks/${blockIndex}/id`)}`;
+    const titleUnit = builder.addUnit({
+      pointer: `/payload/contentBlocks/${blockIndex}/title`,
+      value: block.title,
+      role: 'context',
+      groupId,
+      requiredInBody: true,
+    });
+    if (block.kind === 'narrative') {
+      builder.addUnit({
+        pointer: `/payload/contentBlocks/${blockIndex}/content`,
+        value: block.content,
+        role: 'claim',
+        ...support(block.support),
+        groupId,
+        basisUnitIds: [titleUnit.id],
+      });
+      return;
+    }
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      const rowUnits = new Map(block.rows.map((row, rowIndex) => {
+        const unit = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/rows/${rowIndex}`,
+          value: row,
+          role: 'context',
+          groupId,
+          basisUnitIds: [titleUnit.id],
+          requiredInBody: true,
+        });
+        return [row, unit.id] as const;
+      }));
+      const columnUnits = new Map(block.columns.map((column, columnIndex) => {
+        const unit = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/columns/${columnIndex}`,
+          value: column,
+          role: 'context',
+          groupId,
+          basisUnitIds: [titleUnit.id],
+          requiredInBody: true,
+        });
+        return [column, unit.id] as const;
+      }));
+      block.cells.forEach((cell, cellIndex) => builder.addUnit({
+        pointer: `/payload/contentBlocks/${blockIndex}/cells/${cellIndex}/statement`,
+        value: cell.statement,
+        role: 'claim',
+        ...support(cell.support),
+        groupId,
+        basisUnitIds: [
+          titleUnit.id,
+          rowUnits.get(cell.row),
+          columnUnits.get(cell.column),
+        ].filter((id): id is string => id !== undefined),
+      }));
+      return;
+    }
+    if (block.kind === 'mind_model') {
+      const nodeIds = new Map<string, string>();
+      block.nodes.forEach((node, nodeIndex) => {
+        const nodeUnit = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/nodes/${nodeIndex}/description`,
+          value: `${node.label}：${node.description}`,
+          role: 'claim',
+          ...support(node.support),
+          groupId,
+          basisUnitIds: [titleUnit.id],
+        });
+        nodeIds.set(node.id, nodeUnit.id);
+      });
+      block.edges.forEach((edge, edgeIndex) => builder.addUnit({
+        pointer: `/payload/contentBlocks/${blockIndex}/edges/${edgeIndex}/relationship`,
+        value: edge.relationship,
+        role: 'context',
+        groupId,
+        basisUnitIds: [
+          nodeIds.get(edge.from),
+          nodeIds.get(edge.to),
+        ].filter((id): id is string => id !== undefined),
+        requiredInBody: true,
+      }));
+      return;
+    }
+    if (block.kind === 'design_principles') {
+      block.items.forEach((item, itemIndex) => {
+        const itemTitle = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/title`,
+          value: item.title,
+          role: 'context',
+          groupId,
+          basisUnitIds: [titleUnit.id],
+          requiredInBody: true,
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/statement`,
+          value: item.statement,
+          role: 'claim',
+          ...support(item.support),
+          groupId,
+          basisUnitIds: [itemTitle.id],
+        });
+      });
+      return;
+    }
+    if (block.kind === 'opportunity_backlog') {
+      block.items.forEach((item, itemIndex) => {
+        const opportunity = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/statement`,
+          value: `${item.title}：${item.statement}`,
+          role: 'claim',
+          ...support(item.support),
+          groupId,
+          basisUnitIds: [titleUnit.id],
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/impact`,
+          value: item.impact,
+          role: 'claim',
+          ...support(item.support),
+          groupId,
+          basisUnitIds: [opportunity.id],
+        });
+      });
+      return;
+    }
+    if (block.kind === 'prioritized_actions' || block.kind === 'action_plan') {
+      block.items.forEach((item, itemIndex) => {
+        const action = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/action`,
+          value: item.action,
+          role: 'recommendation',
+          groupId,
+          basisUnitIds: [titleUnit.id],
+          evidenceIds: item.support.evidenceIds,
+          questionIds: item.support.questionIds,
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/priority`,
+          value: item.priority,
+          role: 'context',
+          groupId,
+          basisUnitIds: [action.id],
+          requiredInBody: true,
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/rationale`,
+          value: item.rationale,
+          role: 'claim',
+          ...support(item.support),
+          groupId,
+          basisUnitIds: [action.id],
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/validationMethod`,
+          value: item.validationMethod,
+          role: 'validation',
+          groupId,
+          basisUnitIds: [action.id],
+          questionIds: item.support.questionIds,
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/ownerType`,
+          value: item.ownerType,
+          role: 'audit',
+          groupId,
+          basisUnitIds: [action.id],
+        });
+      });
+      return;
+    }
+    if (block.kind === 'channel_strategies') {
+      block.items.forEach((item, itemIndex) => {
+        const channel = builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/channel`,
+          value: item.channel,
+          role: 'context',
+          groupId,
+          basisUnitIds: [titleUnit.id],
+          requiredInBody: true,
+        });
+        builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/role`,
+          value: item.role,
+          role: 'claim',
+          ...support(item.support),
+          groupId,
+          basisUnitIds: [channel.id],
+        });
+        item.strategies.forEach((strategy, strategyIndex) => builder.addUnit({
+          pointer: `/payload/contentBlocks/${blockIndex}/items/${itemIndex}/strategies/${strategyIndex}`,
+          value: strategy,
+          role: 'recommendation',
+          groupId,
+          basisUnitIds: [channel.id],
+          evidenceIds: item.support.evidenceIds,
+          questionIds: item.support.questionIds,
+        }));
+      });
+      return;
+    }
+    fail('EDITORIAL_PAYLOAD_INVALID', `unsupported research strategy block ${String((block as { kind?: unknown }).kind)}`);
+  });
+
+  payload.limitations.forEach((value, index) => builder.addUnit({
+    pointer: `/payload/limitations/${index}`,
+    value,
+    role: 'risk',
+    groupId: `strategy-limitation:${index}`,
+  }));
+  payload.openQuestions.forEach((value, index) => builder.addUnit({
+    pointer: `/payload/openQuestions/${index}`,
+    value,
+    role: 'risk',
+    groupId: `strategy-open-question:${index}`,
+  }));
+  payload.riskDisclosures.forEach((risk, index) => builder.addUnit({
+    pointer: `/payload/riskDisclosures/${index}/statement`,
+    value: risk.statement,
+    role: 'risk',
+    groupId: `strategy-risk:${identifier(risk.id, `riskDisclosures/${index}/id`)}`,
+  }));
+  payload.requestedArtifactBindings.forEach((binding, index) => builder.addUnit({
+    pointer: `/payload/requestedArtifactBindings/${index}/artifactType`,
+    value: binding.artifactType,
+    role: 'audit',
+    groupId: `strategy-requested-artifact:${index}`,
+    evidenceIds: binding.evidenceIds,
+    questionIds: binding.questionIds,
+  }));
 }
 
 function evidenceIds(value: unknown, label: string): string[] {
@@ -961,9 +1299,16 @@ function materializeVisualAssets(builder: MaterialBuilder, document: ReadableRep
   }
 }
 
+function reportDocumentTitle(document: ReadableReportDocument): string | undefined {
+  return typeof document.title === 'string'
+    ? document.title
+    : document.title.text;
+}
+
 function projectPayload(builder: MaterialBuilder, deliverable: ResearchDeliverableEnvelope<unknown>): void {
   switch (deliverable.deliverableType) {
     case 'research_plan': return projectResearchPlan(builder, deliverable.payload);
+    case 'research_strategy_report': return projectResearchStrategy(builder, deliverable.payload);
     case 'competitive_analysis_report': return projectCompetitive(builder, deliverable.payload);
     case 'voc_diagnosis_report': return projectVoc(builder, deliverable.payload);
     case 'design_audit_report': return projectDesignAudit(builder, deliverable.payload);
@@ -973,15 +1318,36 @@ function projectPayload(builder: MaterialBuilder, deliverable: ResearchDeliverab
 }
 
 export function materializeEditorialReport(source: FrozenEditorialSource): EditorialMaterializationResult {
-  const deliverableArtifact = findArtifact(source, source.reportPackage.value.deliverableArtifactId, 'Deliverable');
-  const evidenceManifestArtifact = findArtifact(source, source.reportPackage.value.evidenceManifestArtifactId, 'Evidence Manifest');
-  const reportDocumentArtifact = source.reportPackage.value.reportDocumentArtifactId === undefined
+  const reportPackage = source.reportPackage.value;
+  const reportDocumentArtifactId = reportPackage.version === 'report-package-v2'
+    ? reportPackage.sourceReportDocumentArtifactId
+    : reportPackage.reportDocumentArtifactId;
+  const deliverableArtifact = findArtifact(source, reportPackage.deliverableArtifactId, 'Deliverable');
+  const evidenceManifestArtifact = findArtifact(source, reportPackage.evidenceManifestArtifactId, 'Evidence Manifest');
+  const reportDocumentArtifact = reportDocumentArtifactId === undefined
     ? null
-    : findArtifact(source, source.reportPackage.value.reportDocumentArtifactId, 'ReportDocument');
+    : findArtifact(source, reportDocumentArtifactId, 'ReportDocument');
   const builder = new MaterialBuilder(source, deliverableArtifact, evidenceManifestArtifact, reportDocumentArtifact);
   const deliverable = source.current.deliverable;
   const methodSummaryUnitId = projectFindingGraph(builder, deliverable);
   projectPayload(builder, deliverable);
+  if (
+    builder.titleUnitId === undefined
+    && reportDocumentArtifact !== null
+    && source.current.presentationMode === 'multimodal'
+  ) {
+    const title = reportDocumentTitle(source.current.reportDocument)?.trim();
+    if (title) {
+      builder.titleUnitId = builder.addUnit({
+        pointer: '/title',
+        value: title,
+        role: 'context',
+        groupId: 'report-title',
+        requiredInBody: true,
+        artifact: reportDocumentArtifact,
+      }).id;
+    }
+  }
   if (source.current.presentationMode === 'multimodal') {
     materializeVisualAssets(builder, source.current.reportDocument);
   }

@@ -817,7 +817,8 @@ export class RoutedPlanner implements PlanStrategy {
       ctx.requirement.expected_deliverables,
     );
     const compositionPolicy = resolveDeliverableCompositionPolicy(deliverable.id);
-    const portfolioEnabled = this.deps.multiSkillPortfolioMode === 'active'
+    const portfolioEnabled = ctx.orchestrationMode === 'multi_skill'
+      && this.deps.multiSkillPortfolioMode === 'active'
       && !ctx.direct
       && compositionPolicy.mode === 'portfolio';
     const capabilityDemandGraph = portfolioEnabled

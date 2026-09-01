@@ -1,0 +1,35 @@
+version: editorial-presentation-brief-v1
+id: rich-editorial-v1
+objective:
+  - structure_clear
+  - content_detailed
+  - hierarchy_explicit
+  - presentation_varied
+  - reading_efficient
+reading_order:
+  - decision
+  - evidence
+  - analysis
+  - strategy
+  - actions
+  - validation
+  - risks
+  - audit
+preferred_presentations:
+  - decision-cover
+  - metric-cards
+  - truth-triad
+  - card-grid
+  - journey-flow
+  - strategy-matrix
+  - mind-model
+  - roadmap
+  - validation-gates
+  - risk-register
+constraints:
+  max_main_sections: 12
+  max_consecutive_narrative_blocks: 2
+  require_risk_section_when_eligible: true
+  require_audit_appendix: true
+  decorative_numbering: css_counter_only
+  interactive_forms: false

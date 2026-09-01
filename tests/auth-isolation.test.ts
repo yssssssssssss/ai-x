@@ -23,6 +23,8 @@ import type {
   writeMessage as WriteMessage,
 } from '../database/repository.ts';
 import type { CurrentExecutionPlan } from '../packages/api-contract/research-deliverable.ts';
+import { EditorialSummaryPipelineError } from '../apps/orchestrator-runtime/src/report/editorial-summary-pipeline.ts';
+import { EditorialSummaryStoreError } from '../apps/orchestrator-runtime/src/report/editorial-summary-store.ts';
 import {
   HtmlBundleIntegrityError,
   HtmlBundleUnavailableError,
@@ -908,6 +910,7 @@ test('foreign and missing planning conversations return 404 without SSE existenc
         body: JSON.stringify({
           originalInput: '不得探测 conversation 是否存在',
           conversationId: target.conversationId,
+          orchestrationMode: 'single_skill',
         }),
       });
       const body = await response.json() as Record<string, unknown>;
@@ -928,6 +931,7 @@ test('foreign and missing planning conversations return 404 without SSE existenc
       body: JSON.stringify({
         originalInput: 'SSE 不得泄露 foreign conversation',
         conversationId: leakedConversationId,
+        orchestrationMode: 'single_skill',
       }),
     });
     const streamBody = await streamResponse.text();
@@ -942,26 +946,27 @@ test('foreign and missing planning conversations return 404 without SSE existenc
   }
 });
 
-test('Editorial Showcase route is owner-bound and returns offline HTML', async () => {
+test('Editorial Summary route is owner-bound and returns offline HTML', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
   const reads: Array<{ taskId: string; attemptId: string; ownerUserId: string }> = [];
-  const readEditorialShowcaseHtml = async (input: {
+  const readEditorialSummaryHtml = async (input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null> => {
     reads.push(input);
     if (input.attemptId === 'attempt-unavailable') throw new HtmlBundleUnavailableError();
-    if (input.attemptId === 'attempt-integrity') throw new HtmlBundleIntegrityError();
+    if (input.attemptId === 'attempt-integrity') throw new EditorialSummaryStoreError('SUMMARY_STORE_INVALID');
+    if (input.attemptId === 'attempt-generation') throw new EditorialSummaryPipelineError('SUMMARY_GENERATION_FAILED');
     if (input.attemptId !== 'attempt-ready') return null;
-    return '<!doctype html><title>Showcase</title>';
+    return '<!doctype html><title>Editorial Summary</title>';
   };
   const controlRuntime = {
     repository: controlRepository,
     workflow: {},
     getDeliverable: async () => null,
-    readEditorialShowcaseHtml,
+    readEditorialSummaryHtml,
   };
   const server = createAgentApiApp({ controlRuntime: controlRuntime as never }).listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -971,7 +976,7 @@ test('Editorial Showcase route is owner-bound and returns offline HTML', async (
   const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
   const request = (attemptId: string, token: string) => fetch(
-    `${baseUrl}/api/control-tasks/${currentTaskId}/reports/${attemptId}/editorial-showcase.html`,
+    `${baseUrl}/api/control-tasks/${currentTaskId}/reports/${attemptId}/editorial-summary.html`,
     { headers: { authorization: `Bearer ${token}` } },
   );
 
@@ -979,20 +984,24 @@ test('Editorial Showcase route is owner-bound and returns offline HTML', async (
     const ready = await request('attempt-ready', ownerToken);
     assert.equal(ready.status, 200);
     assert.equal(ready.headers.get('content-type'), 'text/html; charset=utf-8');
-    assert.equal(ready.headers.get('content-disposition'), 'inline; filename="editorial-showcase.html"');
+    assert.equal(ready.headers.get('content-disposition'), 'inline; filename="editorial-summary.html"');
     assert.equal(
       ready.headers.get('content-security-policy'),
-      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     );
-    assert.equal(await ready.text(), '<!doctype html><title>Showcase</title>');
+    assert.equal(await ready.text(), '<!doctype html><title>Editorial Summary</title>');
 
     const unavailable = await request('attempt-unavailable', ownerToken);
     assert.equal(unavailable.status, 409);
-    assert.equal((await unavailable.json() as { code: string }).code, 'editorial_showcase_unavailable');
+    assert.equal((await unavailable.json() as { code: string }).code, 'editorial_summary_unavailable');
 
     const integrity = await request('attempt-integrity', ownerToken);
     assert.equal(integrity.status, 409);
-    assert.equal((await integrity.json() as { code: string }).code, 'editorial_showcase_integrity');
+    assert.equal((await integrity.json() as { code: string }).code, 'editorial_summary_integrity');
+
+    const generation = await request('attempt-generation', ownerToken);
+    assert.equal(generation.status, 409);
+    assert.equal((await generation.json() as { code: string }).code, 'editorial_summary_generation_failed');
 
     const missing = await request('attempt-missing', ownerToken);
     assert.equal(missing.status, 404);
