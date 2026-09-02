@@ -744,6 +744,15 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
     assert.deepEqual(compiled.plan.capability_gaps, []);
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.deepEqual(compiled.plan.skill_invocations, [{
+      invocation_id: 'competitive-web-research:2',
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call',
+      step_nos: [2],
+    }]);
+    assert.equal(compiled.plan.steps[1]?.skill_invocation_id, 'competitive-web-research:2');
+    assert.equal(compiled.plan.steps[1]?.skill_stage_id, undefined);
     assert.deepEqual(
       compiled.plan.steps[1]?.input.scoring_weights,
       Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
@@ -765,6 +774,21 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
   assert.equal(speed.plan.candidate_metadata.title, '快速研究');
   assert.notDeepEqual(depth.plan.candidate_metadata, speed.plan.candidate_metadata);
   assert.equal('purpose' in depth.plan.steps[0]!, false);
+
+  const validator = new SchemaValidator();
+  assert.deepEqual(validator.validate('current-execution-plan', depth.plan), []);
+  const emptyInvocations = { ...structuredClone(depth.plan), skill_invocations: [] };
+  assert.notDeepEqual(validator.validate('current-execution-plan', emptyInvocations), []);
+  const legacyWithCompiledField = structuredClone(depth.plan) as unknown as {
+    skill_invocations: Array<Record<string, unknown>>;
+  };
+  legacyWithCompiledField.skill_invocations[0]!.contract_hash = `sha256:${'0'.repeat(64)}`;
+  assert.notDeepEqual(validator.validate('current-execution-plan', legacyWithCompiledField), []);
+  const unknownMode = structuredClone(depth.plan) as unknown as {
+    skill_invocations: Array<Record<string, unknown>>;
+  };
+  unknownMode.skill_invocations[0]!.execution_mode = 'unknown';
+  assert.notDeepEqual(validator.validate('current-execution-plan', unknownMode), []);
 });
 
 test('compiles a controlled specialty profile and freezes optional recommendation and planning provenance', () => {
@@ -1027,6 +1051,62 @@ test('Current planning persists only compiled graph, capability decisions, exact
       multiple: true,
     }]);
   }
+});
+
+test('single_skill planning rejects a candidate without a Skill Invocation before persistence', async () => {
+  const candidate = validCandidate('depth');
+  const skillQuestionIds = candidate.steps.find(({ actor_type }) => actor_type === 'skill')?.question_ids ?? [];
+  candidate.steps = candidate.steps.filter(({ actor_type }) => actor_type !== 'skill');
+  candidate.steps[0]!.question_ids = [...new Set([
+    ...candidate.steps[0]!.question_ids,
+    ...skillQuestionIds,
+  ])];
+  const result = currentPlanningResult(candidate);
+  const harness = planningServiceHarness(result);
+
+  await assert.rejects(() => harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+    orchestrationMode: 'single_skill',
+  }, result as never), /single_skill_invocation_count_invalid/u);
+  assert.equal(harness.repositoryCalls(), 0);
+});
+
+test('single_skill planning rejects a candidate with more than one Skill Invocation before persistence', async () => {
+  const candidate = validCandidate('depth');
+  const secondSkill = structuredClone(candidate.steps[1]!);
+  secondSkill.step_no = 3;
+  secondSkill.step_name = '第二个独立 Skill 分析';
+  secondSkill.actor_id = 'competitive-analysis';
+  secondSkill.depends_on = [2];
+  secondSkill.input = { research_goal: task.research_goal };
+  secondSkill.input_bindings = [];
+  secondSkill.expected_outputs = [{ pointer: '/payload', description: '第二份独立竞品分析' }];
+  candidate.steps.push(secondSkill);
+  const result = currentPlanningResult(candidate);
+  const secondSkillCapability = new SkillLoader().listCapabilitySkills().find(({ id }) => id === 'competitive-analysis');
+  assert.ok(secondSkillCapability && secondSkillCapability.status === 'active');
+  result.capabilityResolution.eligible.push({
+    skill: secondSkillCapability,
+    required_approvals: [],
+    reasons: [{ code: 'eligible', message: 'fixture second Skill is eligible' }],
+    pending_inputs: [],
+    optional_tool_decisions: [],
+  });
+  const harness = planningServiceHarness(result);
+
+  await assert.rejects(() => harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+    orchestrationMode: 'single_skill',
+  }, result as never), /single_skill_invocation_count_invalid/u);
+  assert.equal(harness.repositoryCalls(), 0);
 });
 
 test('malformed LLM Current candidate never reaches the repository', async () => {
@@ -1388,6 +1468,7 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   assert.match(candidateCall.prompt, /competitive-web-research.*scoring_weights/);
+  assert.match(candidateCall.prompt, /必须且只能包含一个 actor_type=skill/u);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;
@@ -1825,7 +1906,7 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   }
   const compiler = new PlanCompiler();
   for (const candidate of result.candidates) {
-    assert.doesNotThrow(() => compiler.compile({
+    const compiled = compiler.compile({
       candidate,
       task,
       problem_graph: result.problemGraph,
@@ -1834,7 +1915,14 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
       activated_nodes: result.activatedNodes,
       requireCompetitiveWeightContract: true,
-    }));
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.deepEqual(compiled.plan.skill_invocations, [{
+      invocation_id: `competitive-web-research:${candidate.steps.findIndex(({ actor_type }) => actor_type === 'skill') + 1}`,
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call',
+      step_nos: [candidate.steps.findIndex(({ actor_type }) => actor_type === 'skill') + 1],
+    }]);
   }
 });
 

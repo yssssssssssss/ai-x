@@ -194,6 +194,36 @@ function fail(kind: PlanCompilerValidationKind, ...issueIds: string[]): never {
   throw new PlanCompilerValidationError(kind, issueIds);
 }
 
+export function assertSingleSkillExecutionPlan(
+  plan: CurrentExecutionPlan | CurrentExecutionPlanV3,
+): void {
+  const invocationCount = Array.isArray(plan.skill_invocations)
+    ? plan.skill_invocations.length
+    : 0;
+  if (
+    plan.execution_contract_version !== 'current-execution-plan-v2'
+    || invocationCount !== 1
+  ) {
+    fail(
+      'skill_execution_contract_invalid',
+      'single_skill_invocation_count_invalid',
+      `version=${plan.execution_contract_version ?? 'unversioned'}`,
+      `actual=${invocationCount}`,
+      'expected=1',
+    );
+  }
+  const invocationId = plan.skill_invocations![0]!.invocation_id;
+  if (plan.steps.some((step) => (
+    step.actor_type === 'skill'
+    && step.skill_invocation_id !== invocationId
+  ))) {
+    fail(
+      'skill_execution_contract_invalid',
+      'single_skill_step_ownership_invalid',
+      invocationId,
+    );
+  }
+}
 
 function validateProposalShape(candidate: CurrentPlanCandidateProposal): void {
   const unknownCandidateKeys = Object.keys(candidate).filter((key) => !CANDIDATE_KEYS.has(key));
@@ -868,11 +898,18 @@ function validateSkillInvocations(
       if (assigned.has(stepNo)) fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
       assigned.add(stepNo);
       const step = steps[stepNo - 1];
-      if (
-        !step
-        || step.skill_invocation_id !== invocation.invocation_id
-        || !step.skill_stage_id
-      ) {
+      if (!step || step.skill_invocation_id !== invocation.invocation_id) {
+        fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+      }
+      if (invocation.execution_mode === 'legacy_single_call') {
+        if (
+          step.skill_stage_id !== undefined
+          || step.actor_type !== 'skill'
+          || step.actor_id !== invocation.skill_id
+        ) {
+          fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+        }
+      } else if (!step.skill_stage_id) {
         fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
       }
       if (step.actor_type === 'skill' && step.actor_id === invocation.skill_id) hasSkillOutput = true;
@@ -1041,9 +1078,10 @@ export class PlanCompiler {
     const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
     const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
     validateProposalShape(input.candidate);
+    const normalizedCandidateSteps = copySteps(input.candidate);
     const expandedSkills = input.frozen_skill_invocations
-      ? { steps: input.candidate.steps.map((step) => structuredClone(step)), invocations: structuredClone(input.frozen_skill_invocations) }
-      : compileSkillSteps(input.candidate.steps, input.task);
+      ? { steps: normalizedCandidateSteps, invocations: structuredClone(input.frozen_skill_invocations) }
+      : compileSkillSteps(normalizedCandidateSteps, input.task);
     const candidate = { ...input.candidate, steps: expandedSkills.steps };
     this.validator.validateOrThrow('current-execution-plan', {
       task_id: '',

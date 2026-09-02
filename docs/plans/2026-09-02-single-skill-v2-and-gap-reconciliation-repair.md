@@ -1,8 +1,9 @@
 # Single Skill Plan v2 与 Smoke Gap 对账修复方案
 
-> 状态：Phase A 已完成并验证；Phase B 尚未开始
+> 状态：Phase A、Phase B 已完成并通过自动化验证；Phase C 真实重跑待执行
 > 日期：2026-09-02
 > 基线：`main@4a7a754`
+> Phase A 检查点：`c880c00 fix: reconcile degraded skill gaps in current smoke`
 > 关联提交：`6a1fe85 feat: integrate dual orchestration and report set`
 > 适用范围：新建 `single_skill`／`multi_skill` Current Task、官方 `smoke:current:real`
 
@@ -624,6 +625,33 @@ multi_skill + $skill-id → 422
 模式冻结、Retry、Resume、Revision 不变
 ```
 
+### 10.6 实施结果
+
+Phase B 已按 TDD 完成：
+
+- v2 Invocation 已改为 `compiled | legacy_single_call` 判别联合。
+- Legacy Skill 保留单步执行，并写入唯一 `skill_invocation_id`，不伪造 compiled-only 字段。
+- Task 创建、Clarification 恢复和 Revision 重规划共用 `single_skill` exactly-one 断言。
+- Resume 跳过前置可选步骤时保持 Invocation ID，并同步重映射 v2 `step_nos`；跳过 Invocation 自有步骤仍 fail closed。
+- Routed Planner 会在持久化前拒绝零个或多个 Skill Invocation，并将同一错误反馈给唯一一次候选修复。
+- Plan v3 Portfolio 已适配 v2 Legacy Invocation 的临时编译结果，最终仍只发布 v3 Invocation。
+- Legacy v2 Engine 回归确认 Skill 只执行一次，且不进入 compiled Stage 路径。
+
+自动化结果：
+
+```text
+pnpm quality
+Tests：2274
+Passed：2259
+Skipped：15
+Failed：0
+
+pnpm --dir apps/web build
+Result：pass
+```
+
+本阶段未调用真实 LLM；真实单／多 Skill Smoke 属于 Phase C。
+
 ## 11. 涉及文件
 
 ### Phase A
@@ -639,14 +667,19 @@ tests/current-real-smoke.test.ts
 packages/api-contract/research-deliverable.ts
 schemas/current-execution-plan.schema.json
 apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts
+apps/orchestrator-runtime/src/skills/portfolio-skill-plan-compiler.ts
 apps/orchestrator-runtime/src/planners/plan-compiler.ts
 apps/orchestrator-runtime/src/planners/routed-planner.ts
 apps/orchestrator-runtime/src/control/control-planning-service.ts
-apps/orchestrator-runtime/src/control/lease-execution-engine.ts
-tests/contributor-skill-execution-contract.test.ts
+apps/orchestrator-runtime/src/control/task-workflow.ts
+apps/agent-api/src/control-runtime.ts
+tests/control-api-integration.test.ts
+tests/control-planning-service.test.ts
+tests/current-revision-integrity.test.ts
 tests/plan-compiler.test.ts
 tests/lease-execution-engine.test.ts
-tests/control-planning.test.ts
+tests/skill-execution-contract.test.ts
+tests/task-workflow.test.ts
 ```
 
 ### 决策文档

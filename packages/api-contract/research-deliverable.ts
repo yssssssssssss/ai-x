@@ -84,9 +84,13 @@ export interface CurrentSkillResourceGap {
   reason: string;
 }
 
-export interface CurrentSkillInvocation {
+export interface CurrentSkillInvocationV2Base {
   invocation_id: string;
   skill_id: string;
+  step_nos: number[];
+}
+
+export interface CurrentCompiledSkillInvocationV2 extends CurrentSkillInvocationV2Base {
   execution_mode: 'compiled';
   contract_version: 'skill-execution-contract-v1';
   contract_hash: string;
@@ -94,8 +98,21 @@ export interface CurrentSkillInvocation {
   skill_reference_hashes: Array<{ path: string; hash: string }>;
   knowledge_references: CurrentKnowledgeReference[];
   resource_gaps: CurrentSkillResourceGap[];
-  step_nos: number[];
 }
+
+export interface CurrentLegacySkillInvocationV2 extends CurrentSkillInvocationV2Base {
+  execution_mode: 'legacy_single_call';
+  contract_version?: never;
+  contract_hash?: never;
+  degraded_policy?: never;
+  skill_reference_hashes?: never;
+  knowledge_references?: never;
+  resource_gaps?: never;
+}
+
+export type CurrentSkillInvocation =
+  | CurrentCompiledSkillInvocationV2
+  | CurrentLegacySkillInvocationV2;
 
 export interface CurrentSkillInvocationV3Base {
   invocation_id: string;

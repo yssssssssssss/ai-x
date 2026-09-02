@@ -19,7 +19,10 @@ import {
   resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningResult,
 } from '../planners/research-planning-service.ts';
-import { PlanCompiler } from '../planners/plan-compiler.ts';
+import {
+  assertSingleSkillExecutionPlan,
+  PlanCompiler,
+} from '../planners/plan-compiler.ts';
 import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
 type ProvisionalExecutionPlan =
@@ -120,7 +123,10 @@ export class ControlPlanningService {
 
   constructor(private readonly dependencies: ControlPlanningDependencies) {}
 
-  private prepareCandidates(planningResult: CurrentResearchPlanningResult): Array<{
+  private prepareCandidates(
+    planningResult: CurrentResearchPlanningResult,
+    orchestrationMode: OrchestrationModeV1,
+  ): Array<{
     candidateId: PlanCandidate['id'];
     plan: ProvisionalExecutionPlan;
     pendingInputs: PendingInput[];
@@ -182,6 +188,9 @@ export class ControlPlanningService {
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
           });
+      if (orchestrationMode === 'single_skill') {
+        assertSingleSkillExecutionPlan(compiled.plan);
+      }
       return {
         candidateId: candidate.id,
         plan: compiled.plan,
@@ -256,7 +265,7 @@ export class ControlPlanningService {
       taskType: boundPlanningResult.task.task_type,
       structuredTask: boundPlanningResult.structuredTask ?? boundPlanningResult.task,
       orchestrationMode: input.orchestrationMode,
-      candidates: this.prepareCandidates(boundPlanningResult),
+      candidates: this.prepareCandidates(boundPlanningResult, input.orchestrationMode),
     });
     return this.responseFromPersisted(conversation.id, boundPlanningResult, persisted);
   }
@@ -288,7 +297,7 @@ export class ControlPlanningService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
-    const preparedCandidates = this.prepareCandidates(planningResult);
+    const preparedCandidates = this.prepareCandidates(planningResult, orchestrationMode);
     if (input.commandReservation) {
       if (!this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand) {
         throw new Error('atomic clarification planning persistence is unavailable');

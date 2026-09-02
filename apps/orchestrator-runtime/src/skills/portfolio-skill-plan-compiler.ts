@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type {
+  CurrentCompiledSkillInvocationV2,
   CurrentCompiledSkillInvocationV3,
   CurrentExecutionPlanV3,
   CurrentLegacySkillInvocationV3,
@@ -48,7 +49,7 @@ interface SourceSkillBinding {
   invocationId: string;
   stepNos: number[];
   outputStepNo: number;
-  compiledInvocation?: CurrentSkillInvocation;
+  compiledInvocation?: CurrentCompiledSkillInvocationV2;
 }
 
 function uniqueSorted(values: readonly number[]): number[] {
@@ -245,9 +246,15 @@ function sourceBindings(
       step.actor_type === 'skill' && step.actor_id === invocation.skillId
     ));
     if (!sourceStep) throw new Error(`Portfolio Skill ${invocation.skillId} has no source step`);
-    const compiledInvocation = compiledInvocations.find(({ skill_id, invocation_id }) => (
+    const sourceInvocation = compiledInvocations.find(({ skill_id, invocation_id }) => (
       skill_id === invocation.skillId && invocation_id.endsWith(`:${sourceStep.step_no}`)
     ));
+    if (!sourceInvocation) {
+      throw new Error(`Portfolio Skill ${invocation.skillId} has no source invocation`);
+    }
+    const compiledInvocation = sourceInvocation.execution_mode === 'compiled'
+      ? sourceInvocation
+      : undefined;
     if (compiledInvocation) {
       const outputStep = compiledSteps.find((step) => (
         step.actor_type === 'skill'
@@ -267,7 +274,7 @@ function sourceBindings(
     const outputStep = compiledSteps.find((step) => (
       step.actor_type === 'skill'
       && step.actor_id === invocation.skillId
-      && step.skill_invocation_id === undefined
+      && step.skill_invocation_id === sourceInvocation.invocation_id
     ));
     if (!outputStep) throw new Error(`Legacy Skill ${invocation.skillId} has no output step`);
     result.set(invocation.skillId, {

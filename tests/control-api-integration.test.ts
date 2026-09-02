@@ -437,6 +437,25 @@ class PlanningModelFixtureLLM implements LLMClient {
         requires_approval: false,
         fallback_actor_ids: [],
       });
+      const skillStep = () => {
+        const skillId = this.requirement.task_type === 'competitive_research'
+          ? 'competitive-analysis'
+          : 'generate-interview-guide';
+        return {
+          step_no: 99,
+          step_name: skillId,
+          actor_type: 'skill' as const,
+          actor_id: skillId,
+          question_ids: ['model-receipt-question'],
+          depends_on: [],
+          input: { research_goal: this.requirement.research_goal },
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/payload', description: 'skill result' }],
+          acceptance_criteria: ['研究计划可执行'],
+          requires_approval: false,
+          fallback_actor_ids: [],
+        };
+      };
       const specialtyCandidate = (
         id: Exclude<CandidateProfile, 'speed' | 'depth'>,
         title: string,
@@ -446,8 +465,8 @@ class PlanningModelFixtureLLM implements LLMClient {
         rationale: `按${title}组织研究路径`,
         tradeoffs: '针对性增强，需要对应能力可用',
         steps: [{
-          ...systemStep('llm', 'research-synthesis', []),
-          input: { profile_contract: id },
+          ...skillStep(),
+          input: { research_goal: this.requirement.research_goal, profile_contract: id },
         }],
         assumptions: [],
       });
@@ -456,7 +475,7 @@ class PlanningModelFixtureLLM implements LLMClient {
         title: string;
         rationale: string;
         tradeoffs: string;
-        steps: ReturnType<typeof systemStep>[];
+        steps: Array<ReturnType<typeof systemStep> | ReturnType<typeof skillStep>>;
         assumptions: never[];
       }>([
         ['depth', {
@@ -465,7 +484,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           rationale: '包含复核',
           tradeoffs: '耗时更长',
           steps: [
-            systemStep('llm', 'research-synthesis', []),
+            skillStep(),
             systemStep('reviewer', 'evidence-reviewer', [1]),
           ],
           assumptions: [],
@@ -475,7 +494,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           title: '快速研究',
           rationale: '最短路径',
           tradeoffs: '复核较少',
-          steps: [systemStep('llm', 'research-synthesis', [])],
+          steps: [skillStep()],
           assumptions: [],
         }],
         ['breadth', specialtyCandidate('breadth', '广度扫描')],

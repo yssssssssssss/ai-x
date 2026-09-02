@@ -21,6 +21,7 @@ import {
   TaskWorkflowGateError,
   TaskWorkflowService,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
@@ -3213,6 +3214,80 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
     ...currentPlan(optional.task.id, 'optional-resume', originalOptionalSteps),
     steps: expectedSteps,
   });
+});
+
+test('resume skip preserves a legacy v2 Invocation id while remapping its owned step', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const invocationId = 'competitive-analysis:2';
+  const steps = [
+    currentStep({
+      step_name: 'failed optional search',
+      actor_type: 'tool',
+      actor_id: 'ai-spider-search',
+      expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+    }),
+    currentStep({
+      step_no: 2,
+      step_name: 'competitive analysis',
+      actor_type: 'skill',
+      actor_id: 'competitive-analysis',
+      input: { research_goal: 'compare competitors' },
+      expected_outputs: [{ pointer: '/payload', description: 'analysis result' }],
+      skill_invocation_id: invocationId,
+    }),
+  ];
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'legacy-v2-invocation-remap',
+    failedStepNo: 1,
+    steps,
+    allowedActions: ['retry', 'skip', 'abort'],
+    planFactory(taskId, planSteps) {
+      const plan = currentPlan(taskId, 'legacy-v2-invocation-remap', planSteps);
+      const skill = new SkillLoader().listCapabilitySkills()
+        .find(({ id }) => id === 'competitive-analysis');
+      assert.ok(skill?.status === 'active');
+      plan.capability_decisions.eligible.push({
+        skill,
+        reasons: [{ code: 'eligible', message: 'fixture Skill is eligible' }],
+        pending_inputs: [],
+        required_approvals: [],
+        optional_tool_decisions: [],
+      });
+      plan.execution_contract_version = 'current-execution-plan-v2';
+      plan.skill_invocations = [{
+        invocation_id: invocationId,
+        skill_id: 'competitive-analysis',
+        execution_mode: 'legacy_single_call',
+        step_nos: [2],
+      }];
+      return plan;
+    },
+  });
+
+  const skipped = await workflow.resume({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'legacy-v2-invocation-remap',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'skip',
+    failedStepNo: 1,
+  });
+  assert.equal(skipped.state, 'awaiting_confirmation');
+
+  const task = await repository.getTaskDetail(paused.task.id);
+  const revised = await repository.getPlanVersionDetail(task?.activePlanVersionId ?? '');
+  const revisedPlan = revised?.plan as CurrentExecutionPlan | undefined;
+  assert.equal(revisedPlan?.execution_contract_version, 'current-execution-plan-v2');
+  assert.deepEqual(revisedPlan?.skill_invocations, [{
+    invocation_id: invocationId,
+    skill_id: 'competitive-analysis',
+    execution_mode: 'legacy_single_call',
+    step_nos: [1],
+  }]);
+  assert.equal(revisedPlan?.steps[0]?.skill_invocation_id, invocationId);
+  assert.equal(revisedPlan?.steps[0]?.step_no, 1);
 });
 
 test('resume skip remaps every remaining PendingInput target with the step map', async () => {

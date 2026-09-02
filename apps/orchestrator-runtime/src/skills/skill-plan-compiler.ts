@@ -5,6 +5,8 @@ import type {
   CurrentPlanInputBinding,
   CurrentPlanStep,
   CurrentSkillInvocation,
+  CurrentCompiledSkillInvocationV2,
+  CurrentLegacySkillInvocationV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import { loadRuntimeKnowledgeIndex } from '../knowledge/index.ts';
@@ -26,7 +28,12 @@ interface Expansion {
   reusedOldStepByStage: Map<string, number>;
   references: CurrentKnowledgeReference[];
   skillReferenceHashes: Array<{ path: string; hash: string }>;
-  resourceGaps: CurrentSkillInvocation['resource_gaps'];
+  resourceGaps: CurrentCompiledSkillInvocationV2['resource_gaps'];
+}
+
+interface LegacyInvocation {
+  invocationId: string;
+  skillId: string;
 }
 
 interface DraftStep {
@@ -59,7 +66,7 @@ function taskTerms(task: ResearchTaskV2): string[] {
 
 export function selectFrozenKnowledgeReferences(contract: SkillExecutionContract, task: ResearchTaskV2): {
   references: CurrentKnowledgeReference[];
-  resourceGaps: CurrentSkillInvocation['resource_gaps'];
+  resourceGaps: CurrentCompiledSkillInvocationV2['resource_gaps'];
 } {
   const runtimeIndex = loadRuntimeKnowledgeIndex();
   const index = new Map(runtimeIndex.map((item) => [item.id, item]));
@@ -82,7 +89,7 @@ export function selectFrozenKnowledgeReferences(contract: SkillExecutionContract
     };
   });
   const seen = new Set(references.map(({ resourceId }) => resourceId));
-  const resourceGaps: CurrentSkillInvocation['resource_gaps'] = [];
+  const resourceGaps: CurrentCompiledSkillInvocationV2['resource_gaps'] = [];
   const terms = taskTerms(task);
   for (const query of contract.resource_queries ?? []) {
     const ranked = runtimeIndex
@@ -244,7 +251,7 @@ function planDrift(message: string): never {
 
 export function assertFrozenKnowledgeQueryMembership(
   contract: SkillExecutionContract,
-  invocation: Pick<CurrentSkillInvocation, 'invocation_id' | 'knowledge_references' | 'resource_gaps'>,
+  invocation: Pick<CurrentCompiledSkillInvocationV2, 'invocation_id' | 'knowledge_references' | 'resource_gaps'>,
 ): void {
   const knowledgeIndex = new Map(loadRuntimeKnowledgeIndex().map((item) => [item.id, item]));
   const staticResourceIds = new Set(contract.resources.map(({ resource_id }) => resource_id));
@@ -323,7 +330,7 @@ export function assertCompiledSkillPlan(
   const stepsByInvocation = new Map<string, CurrentPlanStep[]>();
   for (const step of plan.steps) {
     if (!step.skill_invocation_id && !step.skill_stage_id) continue;
-    if (!step.skill_invocation_id || !step.skill_stage_id) planDrift(`step ${step.step_no} has partial Skill metadata`);
+    if (!step.skill_invocation_id) planDrift(`step ${step.step_no} has a Skill stage without an invocation`);
     const list = stepsByInvocation.get(step.skill_invocation_id) ?? [];
     list.push(step);
     stepsByInvocation.set(step.skill_invocation_id, list);
@@ -338,6 +345,31 @@ export function assertCompiledSkillPlan(
   );
   const seenStepNos = new Set<number>();
   for (const invocation of plan.skill_invocations) {
+    const invocationSteps = (stepsByInvocation.get(invocation.invocation_id) ?? [])
+      .sort((left, right) => left.step_no - right.step_no);
+    if (!isDeepStrictEqual(invocationSteps.map(({ step_no }) => step_no), invocation.step_nos)) {
+      planDrift(`Skill invocation ${invocation.invocation_id} step set drift`);
+    }
+    if (invocation.execution_mode === 'legacy_single_call') {
+      if (skillLoader.loadSkillExecution(invocation.skill_id) !== null) {
+        planDrift(`Legacy Skill invocation ${invocation.invocation_id} execution mode drift`);
+      }
+      const legacyStep = invocationSteps[0];
+      if (
+        invocationSteps.length !== 1
+        || !legacyStep
+        || legacyStep.actor_type !== 'skill'
+        || legacyStep.actor_id !== invocation.skill_id
+        || legacyStep.skill_stage_id !== undefined
+      ) {
+        planDrift(`Legacy Skill invocation ${invocation.invocation_id} step binding drift`);
+      }
+      if (seenStepNos.has(legacyStep.step_no)) {
+        planDrift(`Skill invocation step ${legacyStep.step_no} is assigned twice`);
+      }
+      seenStepNos.add(legacyStep.step_no);
+      continue;
+    }
     const loaded = skillLoader.loadSkillExecution(invocation.skill_id);
     if (!loaded || loaded.hash !== invocation.contract_hash) {
       planDrift(`Skill invocation ${invocation.invocation_id} contract hash drift`);
@@ -354,12 +386,10 @@ export function assertCompiledSkillPlan(
       planDrift(`Skill invocation ${invocation.invocation_id} reference hash drift`);
     }
     assertFrozenKnowledgeQueryMembership(loaded.contract, invocation);
-    const invocationSteps = (stepsByInvocation.get(invocation.invocation_id) ?? [])
-      .sort((left, right) => left.step_no - right.step_no);
-    if (!isDeepStrictEqual(invocationSteps.map(({ step_no }) => step_no), invocation.step_nos)) {
-      planDrift(`Skill invocation ${invocation.invocation_id} step set drift`);
-    }
-    const stageById = new Map(invocationSteps.map((step) => [step.skill_stage_id!, step]));
+    const stageById = new Map(invocationSteps.map((step) => {
+      if (!step.skill_stage_id) planDrift(`Compiled Skill invocation ${invocation.invocation_id} has a step without a stage`);
+      return [step.skill_stage_id, step];
+    }));
     if (stageById.size !== loaded.contract.stages.length) {
       planDrift(`Skill invocation ${invocation.invocation_id} stage set drift`);
     }
@@ -443,11 +473,18 @@ export function compileSkillSteps(
   options: CompileSkillStepsOptions = {},
 ): CompiledSkillSteps {
   const expansions = new Map<number, Expansion>();
+  const legacyInvocations = new Map<number, LegacyInvocation>();
   for (const step of steps) {
     if (step.actor_type !== 'skill') continue;
     if (!skillLoader.getSkill(step.actor_id)) continue;
     const loaded = skillLoader.loadSkillExecution(step.actor_id);
-    if (!loaded) continue;
+    if (!loaded) {
+      legacyInvocations.set(step.step_no, {
+        invocationId: `${step.actor_id}:${step.step_no}`,
+        skillId: step.actor_id,
+      });
+      continue;
+    }
     for (const pointer of loaded.contract.required_requirement_fields) {
       if (!requiredPointerPresent(task, pointer)) {
         throw new Error(`Skill ${step.actor_id} requires finalized Requirement field ${pointer}`);
@@ -481,7 +518,9 @@ export function compileSkillSteps(
       }).map(({ path, hash }) => ({ path, hash })),
     });
   }
-  if (expansions.size === 0) return { steps: steps.map((step) => structuredClone(step)), invocations: [] };
+  if (expansions.size === 0 && legacyInvocations.size === 0) {
+    return { steps: steps.map((step) => structuredClone(step)), invocations: [] };
+  }
 
   const reusedMetadata = new Map<number, { expansion: Expansion; stage: SkillExecutionStage }>();
   for (const expansion of expansions.values()) {
@@ -527,6 +566,11 @@ export function compileSkillSteps(
         : `old:${stepNo}`;
     });
     const step = structuredClone(original);
+    const legacyInvocation = legacyInvocations.get(original.step_no);
+    if (legacyInvocation) {
+      step.skill_invocation_id = legacyInvocation.invocationId;
+      delete step.skill_stage_id;
+    }
     let dependencyKeys = oldDependencyKeys;
     let bindingSources = original.input_bindings.map((binding) => ({
       binding: { ...binding, source_step_no: 0 },
@@ -577,7 +621,7 @@ export function compileSkillSteps(
     }),
   }));
 
-  const invocations = [...expansions.values()].map((expansion): CurrentSkillInvocation => ({
+  const compiledInvocations = [...expansions.values()].map((expansion): CurrentCompiledSkillInvocationV2 => ({
     invocation_id: expansion.invocationId,
     skill_id: expansion.contract.skill_id,
     execution_mode: 'compiled',
@@ -591,5 +635,15 @@ export function compileSkillSteps(
       .filter((step) => step.skill_invocation_id === expansion.invocationId)
       .map((step) => step.step_no),
   }));
+  const legacy = [...legacyInvocations.values()].map((invocation): CurrentLegacySkillInvocationV2 => ({
+    invocation_id: invocation.invocationId,
+    skill_id: invocation.skillId,
+    execution_mode: 'legacy_single_call',
+    step_nos: compiled
+      .filter((step) => step.skill_invocation_id === invocation.invocationId)
+      .map((step) => step.step_no),
+  }));
+  const invocations: CurrentSkillInvocation[] = [...compiledInvocations, ...legacy]
+    .sort((left, right) => left.step_nos[0]! - right.step_nos[0]!);
   return { steps: compiled, invocations };
 }

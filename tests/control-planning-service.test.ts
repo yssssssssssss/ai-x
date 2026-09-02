@@ -211,25 +211,45 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
     title: id === 'depth' ? '深度研究' : '快速研究',
     rationale: id === 'depth' ? '优先覆盖来源与交叉验证' : '优先产出可执行框架',
     tradeoffs: id === 'depth' ? '耗时更长' : '来源覆盖较窄',
-    steps: [{
-      step_no: 99,
-      step_name: id === 'depth' ? '公开来源深度检索' : '公开来源快速检索',
-      actor_type: 'tool' as const,
-      actor_id: 'tavily-search',
-      question_ids: ['q-public-source'],
-      depends_on: [],
-      input: {
-        query: originalInput,
-        filters: id === 'depth'
-          ? { language: 'zh-CN', freshness: 'year' }
-          : { language: 'zh-CN' },
+    steps: [
+      {
+        step_no: 99,
+        step_name: id === 'depth' ? '公开来源深度检索' : '公开来源快速检索',
+        actor_type: 'tool' as const,
+        actor_id: 'tavily-search',
+        question_ids: ['q-public-source'],
+        depends_on: [],
+        input: {
+          query: originalInput,
+          filters: id === 'depth'
+            ? { language: 'zh-CN', freshness: 'year' }
+            : { language: 'zh-CN' },
+        },
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
+        acceptance_criteria: ['至少返回一个公开来源'],
+        requires_approval: false,
+        fallback_actor_ids: [],
       },
-      input_bindings: [],
-      expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
-      acceptance_criteria: ['至少返回一个公开来源'],
-      requires_approval: false,
-      fallback_actor_ids: [],
-    }],
+      {
+        step_no: 99,
+        step_name: '形成研究计划',
+        actor_type: 'skill' as const,
+        actor_id: 'competitive-web-research',
+        question_ids: ['q-public-source'],
+        depends_on: [1],
+        input: { research_goal: originalInput, sources: null },
+        input_bindings: [{
+          target_pointer: '/sources',
+          source_step_no: 1,
+          source_pointer: '/results',
+        }],
+        expected_outputs: [{ pointer: '/payload', description: '证据约束研究结果' }],
+        acceptance_criteria: ['结论保持公开来源边界'],
+        requires_approval: false,
+        fallback_actor_ids: [],
+      },
+    ],
     assumptions: [],
     activated_nodes: ['D5_competitive', 'D6_evidence'],
   });
@@ -521,7 +541,17 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps.map((step, stepIndex) => ({
       ...step,
       step_no: stepIndex + 1,
+      ...(step.actor_type === 'skill'
+        ? { skill_invocation_id: `${step.actor_id}:${stepIndex + 1}` }
+        : {}),
     })));
+    assert.equal(candidate.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.deepEqual(candidate.plan.skill_invocations, [{
+      invocation_id: 'competitive-web-research:2',
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call',
+      step_nos: [2],
+    }]);
     assert.deepEqual(candidate.plan.problem_graph, planningResult.problemGraph);
     assert.deepEqual(candidate.plan.capability_decisions, planningResult.capabilityResolution);
     assert.deepEqual(candidate.plan.candidate_metadata, {

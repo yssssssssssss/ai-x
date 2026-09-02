@@ -4834,6 +4834,54 @@ test('executes frozen Knowledge before Skill and emits Knowledge Evidence', asyn
   assert.equal(steps[0]?.skillProvenance?.kind, 'knowledge');
 });
 
+test('executes a degraded legacy single-call Skill through CurrentExecutionPlan v2 without compiled stages', async () => {
+  const invocationId = 'digital-human-competitive-analysis:2';
+  const steps = planSteps.map((step) => ({
+    ...structuredClone(step),
+    ...(step.step_no === 2 ? { skill_invocation_id: invocationId } : {}),
+  }));
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'public-market-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: [{
+        invocation_id: invocationId,
+        skill_id: 'digital-human-competitive-analysis',
+        execution_mode: 'legacy_single_call',
+        step_nos: [2],
+      }],
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'digital-human-competitive-analysis', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: 'compare digital human competitors' },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedSkillLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /research wiki was unavailable/u);
+  const persisted = await repository.listExecutionSteps(lease.attemptId);
+  const skillStep = persisted.find(({ stepNo }) => stepNo === 2);
+  assert.equal(skillStep?.state, 'succeeded');
+  assert.equal(skillStep?.skillProvenance?.status, 'degraded');
+});
+
 test('executes a compiled generate-research-plan invocation stage by stage', async () => {
   const original: CurrentPlanStep[] = [
     planSteps[0]!,
@@ -4959,7 +5007,9 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
   }
   const gapLoader = new ResourceGapSkillLoader();
   const gapCompiled = compileSkillSteps(original, task, gapLoader);
-  assert.equal(gapCompiled.invocations[0]?.resource_gaps.length, 1);
+  const gapInvocation = gapCompiled.invocations[0];
+  assert.ok(gapInvocation && gapInvocation.execution_mode === 'compiled');
+  assert.equal(gapInvocation.resource_gaps.length, 1);
   const gapExecution = await claimedExecution(
     new Date(Date.now() + 60_000),
     gapCompiled.steps,

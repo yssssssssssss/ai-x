@@ -31,7 +31,10 @@ import {
   type CurrentResearchPlanningOutcome,
   type ResearchPlanningInput,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
-import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
+import {
+  assertSingleSkillExecutionPlan,
+  PlanCompiler,
+} from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
 import {
   isCandidateProfile,
   type CandidateProfile,
@@ -826,6 +829,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
           });
+      if (task.orchestrationMode === 'single_skill') {
+        assertSingleSkillExecutionPlan(compiled.plan);
+      }
       return {
         plan: { ...compiled.plan, task_id: task.id },
         pendingInputs: compiled.pending_inputs,

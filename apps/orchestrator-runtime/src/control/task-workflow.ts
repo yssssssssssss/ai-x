@@ -264,9 +264,37 @@ function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): {
     if (remapped === undefined) throw new TaskWorkflowGateError([issue]);
     return remapped;
   };
+  let remappedSkillInvocations: Array<Record<string, unknown>> | undefined;
+  if (plan.execution_contract_version === 'current-execution-plan-v2') {
+    if (!Array.isArray(plan.skill_invocations)) {
+      throw new TaskWorkflowGateError(['plan.skill_invocations']);
+    }
+    remappedSkillInvocations = plan.skill_invocations.map((invocation, invocationIndex) => {
+      if (!isRecord(invocation) || !Array.isArray(invocation.step_nos)) {
+        throw new TaskWorkflowGateError([`plan.skill_invocations:${invocationIndex}`]);
+      }
+      return {
+        ...invocation,
+        step_nos: invocation.step_nos.map((stepNo, stepIndex) => {
+          if (typeof stepNo !== 'number' || !Number.isInteger(stepNo)) {
+            throw new TaskWorkflowGateError([
+              `plan.skill_invocations:${invocationIndex}:step_nos:${stepIndex}`,
+            ]);
+          }
+          return remapReference(
+            stepNo,
+            `plan.skill_invocations:${invocationIndex}:step_nos:${stepIndex}`,
+          );
+        }),
+      };
+    });
+  }
   return {
     plan: {
       ...plan,
+      ...(remappedSkillInvocations
+        ? { skill_invocations: remappedSkillInvocations }
+        : {}),
       steps: remaining.map((entry, index) => ({
         ...entry.step,
         step_no: index + 1,

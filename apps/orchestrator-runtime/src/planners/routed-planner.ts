@@ -47,6 +47,7 @@ import {
 import {
   MAX_BROWSER_CAPTURE_COUNT,
   MAX_BROWSER_FALLBACK_RESULTS,
+  assertSingleSkillExecutionPlan,
   PlanCompiler,
   PlanCompilerValidationError,
   frozenVisualSourceQueries,
@@ -562,7 +563,7 @@ function routedCandidateValidationFeedback(input: {
           requireCompetitiveWeightContract: true,
         });
       } else {
-        compiler.compile({
+        const compiled = compiler.compile({
           candidate: { ...candidate, activated_nodes: input.activatedNodes },
           task: input.task,
           problem_graph: input.problemGraph,
@@ -573,6 +574,7 @@ function routedCandidateValidationFeedback(input: {
           planning_provenance: input.planningProvenance,
           requireCompetitiveWeightContract: true,
         });
+        assertSingleSkillExecutionPlan(compiled.plan);
       }
     } catch (error) {
       if (!(error instanceof PlanCompilerValidationError)) throw error;
@@ -1286,7 +1288,7 @@ export class RoutedPlanner implements PlanStrategy {
         `只能按顺序返回 [${profiles.map(({ id }) => id).join(', ')}]，不得新增、删除、重排 Profile，也不得生成 recommended；步骤预算为 ${profileSummary}。` +
         (portfolios
           ? `每个候选必须且只能使用 context.portfolios_by_profile[候选 id].invocations 中列出的 Skill；每个 Contributor 与 Synthesizer 恰好出现一次，Synthesizer 位于全部 Contributor 之后。不得生成任何 Skill 到其他步骤的 depends_on 或 input_binding，不得生成 skill_invocation_id、skill_stage_id、shared_stage_key、shared_by_invocation_ids、share_fingerprint、prior_contributions、contribution_bundle 或 contribution_order；这些由 Plan v3 Compiler 注入。`
-          : '') +
+          : `每个候选必须且只能包含一个 actor_type=skill 的步骤；检索、推理和复核分别使用 tool、llm、reviewer，不得添加第二个辅助 Skill。`) +
         (profiles.length === 2 && depthProfile && speedProfile
           ? `depth 总步数不得超过 ${depthProfile.max_steps}，speed 总步数不得超过 ${speedProfile.max_steps}；`
           : '') +

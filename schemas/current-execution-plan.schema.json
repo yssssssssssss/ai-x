@@ -20,6 +20,7 @@
     "execution_contract_version": { "const": "current-execution-plan-v2" },
     "skill_invocations": {
       "type": "array",
+      "minItems": 1,
       "items": { "$ref": "#/$defs/skillInvocation" }
     },
     "deliverable_type": {
@@ -71,6 +72,12 @@
   ],
   "$defs": {
     "skillInvocation": {
+      "oneOf": [
+        { "$ref": "#/$defs/compiledSkillInvocation" },
+        { "$ref": "#/$defs/legacySkillInvocation" }
+      ]
+    },
+    "compiledSkillInvocation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["invocation_id", "skill_id", "execution_mode", "contract_version", "contract_hash", "degraded_policy", "skill_reference_hashes", "knowledge_references", "resource_gaps", "step_nos"],
@@ -115,6 +122,17 @@
           }
         },
         "step_nos": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
+      }
+    },
+    "legacySkillInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocation_id", "skill_id", "execution_mode", "step_nos"],
+      "properties": {
+        "invocation_id": { "type": "string", "minLength": 1 },
+        "skill_id": { "type": "string", "minLength": 1 },
+        "execution_mode": { "const": "legacy_single_call" },
+        "step_nos": { "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
       }
     },
     "knowledgeReference": {
