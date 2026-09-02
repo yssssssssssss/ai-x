@@ -171,6 +171,7 @@ export class InvalidScenarioSelectionError extends Error {
 }
 
 const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const CLARIFICATION_RESOLUTION_PROMPT = `context.clarification 包含用户此前各轮的累计显式回答；必须把这些回答视为权威约束并完整保留，不得重复已回答的问题或换 key 重问同一事项。仅当回答本身仍不明确，或引入新的权限、隐私、合规、安全、外部发布或不可逆操作阻塞时，才能继续生成 clarification_questions；其他不确定性写入 assumptions 或 non-blocking ambiguities。`;
 
 const PLAN_OUTCOME_SIGNALS = [
   /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈方案|问卷方案|样本方案|研究排期)/u,
@@ -803,12 +804,7 @@ export class RequirementRefinementService {
       && !Array.isArray(active.clarification)
       ? active.clarification as Record<string, unknown>
       : {};
-    const priorAnswers = Object.fromEntries(
-      ['deliverable_intent', 'outcome_mode']
-        .filter((key) => Object.hasOwn(priorRecord, key))
-        .map((key) => [key, priorRecord[key]]),
-    );
-    const clarificationAnswers = { ...priorAnswers, ...input.answers };
+    const clarificationAnswers = { ...priorRecord, ...input.answers };
     const unchangedClarification = hasNoClarificationChanges(
       input.answers,
       active.structuredTask,
@@ -977,7 +973,9 @@ export class RequirementRefinementService {
         ? { ...context, validation_feedback: validationFeedback }
         : context;
       const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
-        prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`
+        prompt: `${REQUIREMENT_PROMPT}`
+          + (input.clarification === null ? '' : `\n${CLARIFICATION_RESOLUTION_PROMPT}`)
+          + `\n用户当前输入:${input.originalInput}`
           + (validationFeedback ? `\n上一次结构化需求未通过校验，请只修正以下问题：${validationFeedback}` : ''),
         schema: researchTaskSchema(),
         schemaName: 'research-task-v2',

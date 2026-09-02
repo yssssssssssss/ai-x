@@ -991,6 +991,62 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.deepEqual(progress, [planningProgress]);
 });
 
+test('successive clarification rounds preserve every prior explicit answer', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const regionRequirement = requirement({
+    target_audience: ['enterprise buyers'],
+    ambiguities: [{ id: 'region', statement: 'market region is unclear', blocking: true }],
+    clarification_questions: [{
+      key: 'market_region',
+      ambiguity_id: 'region',
+      question: 'Which market region?',
+      rationale: 'The competitor set depends on the region.',
+      options: ['Mainland China', 'North America'],
+    }],
+  });
+  const finalized = requirement({
+    target_audience: ['enterprise buyers'],
+    scope: ['Mainland China'],
+  });
+  const llm = new FixtureLLM([ambiguousRequirement, regionRequirement, finalized]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  await service.understand({ taskId, conversationId, ownerUserId, originalInput: 'compare competitors' });
+  const narrowed = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { audience: 'enterprise buyers' },
+  });
+  assert.equal(narrowed.status, 'clarification_required');
+
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { market_region: 'Mainland China' },
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.match(llm.calls[1]?.prompt ?? '', /累计显式回答.*不得重复已回答的问题/u);
+  assert.match(llm.calls[2]?.prompt ?? '', /累计显式回答.*不得重复已回答的问题/u);
+  assert.deepEqual(
+    (llm.calls[2]?.context as { clarification?: unknown } | undefined)?.clarification,
+    { audience: 'enterprise buyers', market_region: 'Mainland China' },
+  );
+  assert.deepEqual(repository.versions[2]?.clarification, {
+    audience: 'enterprise buyers',
+    market_region: 'Mainland China',
+  });
+});
+
 test('post-activation retry emits the ready message only after planning succeeds', async () => {
   const { RequirementRefinementService } = await loadModule();
   const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });

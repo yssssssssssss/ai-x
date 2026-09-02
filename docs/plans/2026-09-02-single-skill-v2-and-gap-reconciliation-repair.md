@@ -1,6 +1,6 @@
 # Single Skill Plan v2 与 Smoke Gap 对账修复方案
 
-> 状态：Phase A、Phase B 已完成并通过自动化验证；Phase C 真实重跑待执行
+> 状态：Phase A、Phase B 已完成；Phase C 多 Skill 已通过，单 Skill 核心链路通过但完整 CLI Exit 0 待重验
 > 日期：2026-09-02
 > 基线：`main@4a7a754`
 > Phase A 检查点：`c880c00 fix: reconcile degraded skill gaps in current smoke`
@@ -641,8 +641,8 @@ Phase B 已按 TDD 完成：
 
 ```text
 pnpm quality
-Tests：2274
-Passed：2259
+Tests：2275
+Passed：2260
 Skipped：15
 Failed：0
 
@@ -866,6 +866,83 @@ Smoke Exit：0
 - 不增加跨模式 fallback。
 - 全量 Quality 通过。
 
+## 15.4 Phase C 真实运行记录
+
+### 单 Skill
+
+核心链路已真实通过：
+
+```text
+Task：5d5fb8f8-7fb7-400f-bde6-18e7c42f7aa5
+Plan：7fa3d0d8-9ccc-4b3a-8372-a683065f0659
+Attempt：dad1f8aa-9442-415c-862b-6d026f322033
+Plan Contract：current-execution-plan-v2
+Invocation：1 × competitive-web-research / legacy_single_call / step_nos=[2]
+Task State：completed_with_gaps
+Degraded Skill Gap：1
+History Reread：通过后才进入 Editorial Summary
+Review／Report Package：SEALED
+```
+
+首次 Editorial Summary 生成在一次 targeted repair 后仍未通过 deterministic HTML validation；该失败没有影响 Detail、Task 或已封存 Package。同一冻结 Task 的独立 Summary 重试随后成功：
+
+```text
+Publication：esrp_f77634f4da91fd53efb32c9d25af8091b25791f1125ae8fccbd08a31122605ea
+HTML：sha256:93bdde71d6d32e8deb1048e3b1559677bb36d707ffde2715c2606b2143ccc7e3
+Fidelity：pass
+```
+
+真实运行同时暴露 Requirement 多轮澄清会丢失早期答案。根因修复为：
+
+- 每轮继承全部已持久化的显式回答，而非只继承 `deliverable_intent`／`outcome_mode`。
+- Clarification Prompt 明确累计回答是权威约束，禁止换 key 重问已回答事项。
+- 新增三轮回归测试并完成 Red／Green。
+
+按有界真实调用纪律，修复 Prompt 后未继续启动新的单 Skill 全链运行。因此当前单 Skill 官方 CLI Exit 0 仍待一次后续重验。
+
+### 多 Skill
+
+官方真实 Smoke 完整 Exit 0：
+
+```text
+Task：8c063b4d-7a3a-4245-875a-9084b00aed58
+Plan：8236294d-d802-4eb5-80ab-f5d302688b39
+Attempt：0d621b32-347f-4aa2-aab7-83e9682c307e
+Plan Contract：current-execution-plan-v3
+Skill Invocations：7
+Execution Steps：19
+Task State：completed_with_gaps
+Receipt／Historical Gap：3 = 3
+History Reread：pass
+Review：pass
+Report Package：5ed56d1a-a61b-47a4-91ab-9e98f2c07610 / SEALED
+Editorial Summary：esrp_cf5e4e4cf51009d504629426e05760ec7b3f272a74858b7ddf910573d568e836
+Fidelity：pass
+Smoke Exit：0
+```
+
+3 个诚实 Gap 分别来自：
+
+```text
+competitive-web-research    degraded
+generate-persona            degraded
+research-strategy-synthesis degraded
+```
+
+`virtual-user-lab` 已停止，`127.0.0.1:8804` 已释放。
+
+### 最终自动化门禁
+
+```text
+pnpm quality
+Tests：2275
+Passed：2260
+Skipped：15
+Failed：0
+
+git diff --check：pass
+```
+
 ## 16. 风险与控制
 
 ### 风险 1：v2 联合类型影响 compiled-only 属性访问
@@ -904,17 +981,17 @@ Smoke Exit：0
 - [x] Skill Resource Gap Smoke 测试通过。
 - [x] 单 Skill 历史 Gap 由 0 修正为 1。
 - [x] 多 Skill 历史 Gap 由 0 修正为 2。
-- [ ] Legacy Invocation v2 Schema 通过。
-- [ ] `competitive-web-research` 新任务生成 Plan v2。
-- [ ] compiled 单 Skill Plan v2 不回归。
-- [ ] 多 Skill Plan v3 不回归。
-- [ ] 单 Skill 官方真实 Smoke Exit 0。
-- [ ] 多 Skill 官方真实 Smoke Exit 0。
-- [ ] Task 保留真实 `completed_with_gaps`。
-- [ ] 全量 `pnpm quality` 通过。
-- [ ] Web Production Build 通过。
-- [ ] `git diff --check` 通过。
-- [ ] 未经授权未 push 或部署。
+- [x] Legacy Invocation v2 Schema 通过。
+- [x] `competitive-web-research` 新任务生成 Plan v2。
+- [x] compiled 单 Skill Plan v2 不回归。
+- [x] 多 Skill Plan v3 不回归。
+- [ ] 单 Skill 官方真实 Smoke Exit 0（核心链路通过；完整 CLI 待重验）。
+- [x] 多 Skill 官方真实 Smoke Exit 0。
+- [x] Task 保留真实 `completed_with_gaps`。
+- [x] 全量 `pnpm quality` 通过。
+- [x] Web Production Build 通过。
+- [x] `git diff --check` 通过。
+- [x] 未经授权未 push 或部署。
 
 ## 19. 后续顺序
 
