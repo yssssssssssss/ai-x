@@ -668,6 +668,128 @@ test('browser evidence is optional by default and mandatory only for the protect
   }), /required browser or chart evidence is missing/u);
 });
 
+test('real smoke reconstructs one degraded Skill Gap from persisted Skill provenance', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    outputArtifactId: 'skill-output-2',
+    toolProvenance: null,
+    skillProvenance: {
+      status: 'degraded',
+      limitations: ['public evidence is insufficient'],
+    },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  const evidence = summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke reconstructs a frozen Skill resource Gap from the Plan', () => {
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:2',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one current source is available',
+        }],
+        step_nos: [2],
+      }],
+    },
+    steps: [],
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke counts every degraded Skill once and composes Skill, resource, and Tool Gaps', () => {
+  const degradedSteps = [
+    {
+      stepNo: 2,
+      actorType: 'skill',
+      actorId: 'competitive-web-research',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['insufficient evidence'] },
+    },
+    {
+      stepNo: 3,
+      actorType: 'skill',
+      actorId: 'research-strategy-synthesis',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['unverified assumptions'] },
+    },
+    {
+      stepNo: 4,
+      actorType: 'tool',
+      actorId: 'optional-tool',
+      state: 'skipped',
+      toolProvenance: null,
+    },
+  ] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:3',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one source is available',
+        }],
+        step_nos: [3],
+      }],
+    },
+    steps: degradedSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 4);
+
+  const succeededSteps = [{
+    ...degradedSteps[0],
+    skillProvenance: { status: 'succeeded', limitations: [] },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  assert.equal(summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps: succeededSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }).gapCount, 0);
+});
+
+test('real smoke fails closed on an unknown persisted Skill status', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    skillProvenance: { status: 'partial' },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  assert.throws(() => summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }), /skillProvenance\.status is invalid/u);
+});
+
 test('visual smoke keeps the legacy skipped-Tool gap fallback', () => {
   const evidence = summarizeSmokeEvidence({
     plan: { capability_gaps: [] },

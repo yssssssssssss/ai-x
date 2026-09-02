@@ -118,6 +118,7 @@ interface SmokeEvidenceStep {
   state: string;
   outputArtifactId?: string | null;
   toolProvenance?: Record<string, unknown> | null;
+  skillProvenance?: Record<string, unknown> | null;
   failure?: Record<string, unknown> | null;
 }
 
@@ -654,9 +655,49 @@ function gapKeys(input: {
     keys.add(`capability:${capabilityId}:${code}`);
   });
 
+  const skillInvocations = plan.skill_invocations === undefined
+    ? []
+    : array(plan.skill_invocations, 'plan.skill_invocations');
+  skillInvocations.forEach((value, invocationIndex) => {
+    const invocation = record(value, `plan.skill_invocations[${invocationIndex}]`);
+    const invocationId = nonBlankString(invocation.invocation_id, 'Skill invocation id');
+    const resourceGaps = invocation.resource_gaps === undefined
+      ? []
+      : array(invocation.resource_gaps, `plan.skill_invocations[${invocationIndex}].resource_gaps`);
+    resourceGaps.forEach((gapValue, gapIndex) => {
+      const gap = record(
+        gapValue,
+        `plan.skill_invocations[${invocationIndex}].resource_gaps[${gapIndex}]`,
+      );
+      const queryId = nonBlankString(gap.query_id, 'Skill resource gap query id');
+      const minItems = finiteNumber(gap.min_items, 'Skill resource gap min_items');
+      const selectedItems = finiteNumber(gap.selected_items, 'Skill resource gap selected_items');
+      if (
+        !Number.isInteger(minItems)
+        || minItems < 1
+        || !Number.isInteger(selectedItems)
+        || selectedItems < 0
+        || gap.failure_policy !== 'gap'
+        || typeof gap.reason !== 'string'
+        || !gap.reason.trim()
+      ) {
+        throw new Error('Skill resource gap is malformed');
+      }
+      keys.add(`skill:${invocationId}:resource:${queryId}`);
+    });
+  });
+
   input.steps.forEach((step, index) => {
     const stepNo = finiteNumber(step.stepNo, `steps[${index}].stepNo`);
     if (!Number.isInteger(stepNo) || stepNo <= 0) throw new Error(`steps[${index}].stepNo is invalid`);
+    if (step.actorType === 'skill' && step.state === 'succeeded' && step.skillProvenance) {
+      const skillProvenance = record(step.skillProvenance, `steps[${index}].skillProvenance`);
+      if (skillProvenance.status === 'degraded') {
+        keys.add(`step:${stepNo}:skill:${step.actorId}:degraded`);
+      } else if (skillProvenance.status !== 'succeeded') {
+        throw new Error(`steps[${index}].skillProvenance.status is invalid`);
+      }
+    }
     const provenance = step.toolProvenance;
     if (provenance === null || provenance === undefined) {
       if (step.actorType === 'tool' && step.state === 'skipped') keys.add(`step:${stepNo}:legacy_skip`);
