@@ -349,13 +349,27 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       }
     }
 
+    const composition = input.portfolio_context ? resolveSkillComposition(skill) : resolveSkillComposition(skill);
     const requiredInputRoles = input.portfolio_context
-      ? resolveSkillComposition(skill).required_input_roles
+      ? composition.required_input_roles
       : [];
-    const pendingInputs = [...new Set([...skill.inputs, ...requiredInputRoles])]
+    const declaredPendingMaterialRoles = input.task.task_type === 'industry_market_analysis'
+      ? (input.task.available_material_roles ?? []).filter((role) => (
+          composition.optional_input_roles.includes(role)
+        ))
+      : [];
+    const pendingInputs = [...new Set([
+      ...skill.inputs,
+      ...requiredInputRoles,
+      ...declaredPendingMaterialRoles,
+    ])]
       .filter((role) => !availableInputs.has(role))
       .map((role): CapabilityPendingInput => ({
-        kind: skill.visual_inputs?.includes(role) === true ? 'visual' : 'value',
+        kind: skill.dataset_inputs?.includes(role) === true
+          ? 'dataset'
+          : skill.visual_inputs?.includes(role) === true
+            ? 'visual'
+            : 'value',
         role,
         label: role,
         multiple: skill.multiple_visual_inputs?.includes(role) === true,

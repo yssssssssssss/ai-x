@@ -330,6 +330,52 @@ test('portfolio compiler preserves Contributor parallelism and makes Synthesizer
   ]);
 });
 
+test('portfolio compiler drops a declared unavailable optional Tool from a generated candidate', () => {
+  const resolution = capabilityResolution();
+  const market = resolution.eligible.find(({ skill }) => skill.id === 'competitive-analysis');
+  assert.ok(market);
+  market.skill.optional_tools = ['playwright-page-capture'];
+  market.optional_tool_decisions = [{
+    tool_id: 'playwright-page-capture',
+    status: 'unavailable',
+    reason_code: 'optional_tool_real_adapter_unavailable',
+    message: 'optional tool has no qualified real adapter',
+  }];
+  const loader = {
+    getSkill(id: string) {
+      const skill = legacySkillLoader.getSkill(id)!;
+      return id === 'competitive-analysis'
+        ? { ...skill, optional_tools: ['playwright-page-capture'] }
+        : skill;
+    },
+    loadSkillExecution() { return null; },
+  } as unknown as SkillLoader;
+  const optionalStep: CurrentPlanStep = {
+    step_no: 5,
+    step_name: '可选页面抓取',
+    actor_type: 'tool',
+    actor_id: 'playwright-page-capture',
+    question_ids: ['question-market'],
+    depends_on: [1],
+    input: { urls: [] },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/pages', description: '可选页面' }],
+    acceptance_criteria: ['可用时补充页面证据'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+
+  const compiled = compilePortfolioSkillSteps({
+    steps: [...highLevelSteps(), optionalStep],
+    task,
+    portfolio,
+    capabilityResolution: resolution,
+    skillLoader: loader,
+  });
+
+  assert.equal(compiled.steps.some(({ actor_id }) => actor_id === 'playwright-page-capture'), false);
+});
+
 test('portfolio compiler records Synthesizer-owned Demands as direct answers, not Contributions', () => {
   const directPortfolio = structuredClone(portfolio);
   directPortfolio.invocations = [{

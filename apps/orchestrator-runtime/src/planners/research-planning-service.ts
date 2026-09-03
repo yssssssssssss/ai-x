@@ -114,6 +114,7 @@ export function isPlanningGuidanceClarification(
 const TASK_UNDERSTANDING_PROMPT =
   `把用户需求结构化为 ResearchTask。\n` +
   `【task_type 按"用户想做什么"选最贴切的一个,不要默认竞品】:\n` +
+  `- industry_market_analysis:对一个明确品类或频道完成行业、用户、供给、竞品、京东现状、机会和设计策略的完整分析。信号:"行业分析/市场分析/赛道分析/品类分析/频道年度规划/从行业到设计策略"。\n` +
   `- design_audit:对已有设计稿/页面/界面做走查·评估·审查(美学/视觉/注意力/品牌一致性/可用性)。信号:"走查/评估设计稿/看这个页面/UI 审查/视觉评估"。\n` +
   `- competitive_research:分析对标竞品、比较各家能力差异。信号:"竞品/对标/各家/横评/差异化"。\n` +
   `- user_research_planning:规划一次用户研究(找谁/用什么方法/问什么)。信号:"规划研究/研究方案/怎么调研/招募"。\n` +

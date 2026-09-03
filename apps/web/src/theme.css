@@ -719,6 +719,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .stage-title { font-size: 15px; letter-spacing: -0.005em; }
 .stage-note { color: var(--text-faint); font-size: 12px; }
+.dataset-field-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1.5fr) minmax(90px, 0.7fr);
+}
+@media (max-width: 520px) {
+  .dataset-field-row { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ---- 澄清需求:深色内嵌编辑面 ---- */
 .clarification-field {

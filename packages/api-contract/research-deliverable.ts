@@ -10,7 +10,7 @@ import type {
 
 export type { EvidenceClass } from './plan.ts';
 
-export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot';
+export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot' | 'dataset';
 
 export interface EvidenceRequirement {
   id: string;
@@ -262,7 +262,7 @@ export interface CurrentCapabilityDecisionReason {
 }
 
 export interface CurrentCapabilityPendingInput {
-  kind: 'value' | 'visual';
+  kind: 'value' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;
@@ -527,7 +527,7 @@ export interface ContributionLedgerV1 {
 }
 
 export interface PendingInput {
-  kind: 'value' | 'visual';
+  kind: 'value' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;
@@ -766,6 +766,258 @@ export type LegacyResearchDeliverableEnvelope<TPayload> =
   Omit<ResearchDeliverableEnvelope<TPayload>, 'coverage'> & {
     coverage?: ResearchDeliverableCoverage;
   };
+
+export interface IndustryMarketSupportV1 {
+  questionIds: string[];
+  evidenceIds: string[];
+  status: 'supported' | 'provisional' | 'unavailable';
+  confidence: number;
+  validationNeeded: string;
+  sourceContributionUnitIds?: string[];
+}
+
+export interface IndustryMarketClaimV1 {
+  id: string;
+  title: string;
+  statement: string;
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketSectionV1 {
+  status: IndustryMarketSupportV1['status'];
+  summary: string;
+  items: IndustryMarketClaimV1[];
+}
+
+export interface IndustryMarketScopeV1 {
+  category: string;
+  subcategories: string[];
+  exclusions: string[];
+  analysisDepth: 'light' | 'medium' | 'heavy';
+  primaryFocus: string;
+  secondaryFocuses: string[];
+  decisionAudience: string[];
+  decisionGoal: string;
+  timeWindow: string;
+}
+
+export interface IndustryMarketCoverageEntryV1 {
+  dimension: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
+  status: 'supported' | 'partial' | 'unavailable';
+  summary: string;
+  evidenceIds: string[];
+  gapIds: string[];
+}
+
+export interface IndustryMarketAudienceV1 extends IndustryMarketSectionV1 {
+  basisType: 'dataset_derived' | 'qualitative_draft' | 'simulation';
+  coreVariables: string[];
+  supportingVariables: string[];
+  sampleCoverage: string;
+  segments: IndustryMarketClaimV1[];
+  personas: IndustryMarketClaimV1[];
+  differences: IndustryMarketClaimV1[];
+  designImplications: IndustryMarketClaimV1[];
+}
+
+export interface IndustryMarketCompetitorSampleV1 {
+  id: string;
+  name: string;
+  rationale: string;
+  evidenceIds: string[];
+}
+
+export interface IndustryMarketCompetitorAnalysisV1 extends IndustryMarketSectionV1 {
+  competitorSamples: IndustryMarketCompetitorSampleV1[];
+  dimensionMatrix: Array<{
+    dimension: string;
+    values: Array<{ sampleId: string; value: string; evidenceIds: string[] }>;
+  }>;
+  differences: Array<{
+    id: string;
+    dimension: string;
+    statement: string;
+    support: IndustryMarketSupportV1;
+  }>;
+  impacts: Array<{
+    differenceId: string;
+    audience: string;
+    statement: string;
+    support: IndustryMarketSupportV1;
+  }>;
+  visualEvidence: Array<{
+    id: string;
+    sampleIds: string[];
+    dimension: string;
+    assetId: string;
+    evidenceIds: string[];
+    caption: string;
+  }>;
+  screenshotComparisons: Array<{
+    id: string;
+    dimension: string;
+    sampleIds: string[];
+    assetIds: [string, string];
+    caption: string;
+  }>;
+}
+
+export interface IndustryMarketFindingV1 {
+  id: string;
+  statement: string;
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketGapMatrixItemV1 {
+  id: string;
+  userNeed: string;
+  jdState: string;
+  competitorSupply: string;
+  gapLevel: 'low' | 'medium' | 'high';
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketOpportunityV1 {
+  id: string;
+  title: string;
+  statement: string;
+  priority: 'P0' | 'P1' | 'P2' | 'P3';
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketStrategyChainV1 {
+  id: string;
+  priority: 'P0' | 'P1' | 'P2' | 'P3';
+  opportunityId: string;
+  title: string;
+  goal: string;
+  currentProblem: string;
+  currentEvidenceIds: string[];
+  currentScreenshotAssetIds: string[];
+  competitorReference: string;
+  competitorEvidenceIds: string[];
+  designAction: string;
+  categoryAssetRefs: string[];
+  ownerType: string;
+  measurement: string;
+  validationMethod: string;
+  wireframeAssetId: string | null;
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketCategoryAssetV1 {
+  id: string;
+  family: string;
+  name: string;
+  fitness: 'recommended' | 'optional' | 'unsuitable';
+  rationale: string;
+  benchmarkEvidenceIds: string[];
+  collectedAt: string;
+  reviewStatus: 'current' | 'pending_review' | 'outdated';
+  platformInheritance: string;
+  categoryDelta: string;
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketMeasurementV1 {
+  id: string;
+  name: string;
+  definition: string;
+  baseline: string | number | null;
+  target: string | number | null;
+  validationMethod: string;
+  support: IndustryMarketSupportV1;
+}
+
+export interface IndustryMarketDataGapV1 {
+  id: string;
+  dimensionIds: IndustryMarketCoverageEntryV1['dimension'][];
+  statement: string;
+  impact: string;
+  resolutionPath: string;
+}
+
+interface IndustryMarketPayloadBaseV1 {
+  title: string;
+  scope: IndustryMarketScopeV1;
+  coverageLedger: IndustryMarketCoverageEntryV1[];
+  marketLandscape: IndustryMarketSectionV1;
+  audienceSegments: IndustryMarketAudienceV1;
+  supplyLandscape: IndustryMarketSectionV1;
+  competitorAnalysis: IndustryMarketCompetitorAnalysisV1;
+  jdDiagnosis: IndustryMarketSectionV1;
+  validatedFindings: IndustryMarketFindingV1[];
+  gapMatrix: IndustryMarketGapMatrixItemV1[];
+  positioning: {
+    statement: string;
+    exclusions: string[];
+    support: IndustryMarketSupportV1;
+  };
+  opportunities: IndustryMarketOpportunityV1[];
+  strategyChains: IndustryMarketStrategyChainV1[];
+  designLanguage: IndustryMarketSectionV1;
+  categoryAssets: IndustryMarketCategoryAssetV1[];
+  measurementPlan: IndustryMarketMeasurementV1[];
+  dataGaps: IndustryMarketDataGapV1[];
+}
+
+export interface IndustryMarketContentDraftV1 extends IndustryMarketPayloadBaseV1 {
+  schemaVersion: 'industry-market-content-draft-v1';
+  contributionExclusions?: Array<{
+    unitId: string;
+    reason: string;
+  }>;
+}
+
+export interface IndustryMarketAnalysisPayloadV1 extends IndustryMarketPayloadBaseV1 {
+  schemaVersion: 'industry-market-analysis-v1';
+}
+
+export type IndustryMarketPatchableTextField =
+  | 'title'
+  | 'statement'
+  | 'userNeed'
+  | 'jdState'
+  | 'competitorSupply'
+  | 'opportunity'
+  | 'name'
+  | 'rationale'
+  | 'goal'
+  | 'currentProblem'
+  | 'competitorReference'
+  | 'designAction'
+  | 'ownerType'
+  | 'measurement'
+  | 'validationMethod'
+  | 'platformInheritance'
+  | 'categoryDelta'
+  | 'definition'
+  | 'baseline'
+  | 'target'
+  | 'impact'
+  | 'resolutionPath';
+
+export interface IndustryMarketReplaceTextPatchV1 {
+  op: 'replace_text';
+  reviewIssueId: string;
+  targetNodeId: string;
+  field: IndustryMarketPatchableTextField;
+  value: string;
+  reason: string;
+}
+
+export interface IndustryMarketReplaceSupportPatchV1 {
+  op: 'replace_support';
+  reviewIssueId: string;
+  targetNodeId: string;
+  value: IndustryMarketSupportV1;
+  reason: string;
+}
+
+export interface IndustryMarketContentPatchV1 {
+  version: 'industry-market-content-patch-v1';
+  operations: Array<IndustryMarketReplaceTextPatchV1 | IndustryMarketReplaceSupportPatchV1>;
+}
 
 export interface ResearchPlanPayload {
   title: string;

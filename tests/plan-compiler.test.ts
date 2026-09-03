@@ -1926,6 +1926,215 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   }
 });
 
+test('finalized Current direct Industry Skill compiles one Plan v2 invocation with typed pending materials', async () => {
+  const industryTask: ResearchTaskV2 = {
+    version: 'research-task-v2',
+    task_type: 'industry_market_analysis',
+    outcome_mode: 'answer',
+    business_domain: 'pet-food',
+    research_goal: '形成宠物食品行业、用户、竞品、京东现状与设计策略报告',
+    target_audience: ['频道产品与设计团队'],
+    scope: ['中国大陆线上宠物食品'],
+    constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '形成可追溯的行业证据' },
+      { id: 'criterion-action', statement: '形成可执行的行业策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'internal',
+    pii_detected: false,
+    industry_scope: {
+      category: '宠物食品',
+      subcategories: ['猫用冻干'],
+      exclusions: ['线下渠道'],
+      analysis_depth: 'medium',
+      primary_focus: '竞品与设计策略',
+      secondary_focuses: ['用户洞察'],
+      decision_audience: ['频道产品与设计团队'],
+      decision_goal: '确定频道改版优先级',
+      time_window: '最近十二个月',
+    },
+    available_material_roles: [
+      'jd_screenshots',
+      'competitor_screenshots',
+      'competitor_platform_names',
+      'user_research_dataset',
+      'internal_metrics_dataset',
+    ],
+    unavailable_material_roles: [],
+  };
+  const llm = new CurrentPlanningLLM();
+  const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'tavily',
+    implementationId: 'qualified-real-tavily',
+    executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+
+  const result = await planning.planCurrentFromRequirement(
+    industryTask,
+    `$industry-market-analysis ${industryTask.research_goal}`,
+  );
+  assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
+
+  const compiler = new PlanCompiler();
+  const selection = resolvePlanningDeliverableSelection(industryTask);
+  for (const candidate of result.candidates) {
+    const compiled = compiler.compile({
+      candidate,
+      task: industryTask,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements,
+      activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.equal(compiled.plan.skill_invocations?.length, 1);
+    assert.equal(compiled.plan.skill_invocations?.[0]?.skill_id, 'industry-market-analysis');
+    assert.equal(compiled.plan.skill_invocations?.[0]?.execution_mode, 'compiled');
+    assert.deepEqual(
+      compiled.pending_inputs.map(({ role, kind, multiple }) => ({ role, kind, multiple })),
+      [
+        { role: 'jd_screenshots', kind: 'visual', multiple: true },
+        { role: 'competitor_screenshots', kind: 'visual', multiple: true },
+        { role: 'competitor_platform_names', kind: 'value', multiple: false },
+        { role: 'user_research_dataset', kind: 'dataset', multiple: false },
+        { role: 'internal_metrics_dataset', kind: 'dataset', multiple: false },
+      ],
+    );
+  }
+});
+
+test('Industry planning removes unavailable materials from Pending Inputs without changing mode or deliverable', async () => {
+  const unavailableTask: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
+    business_domain: 'books', research_goal: '形成图书行业与频道策略报告',
+    target_audience: ['频道团队'], scope: ['中国大陆线上图书'], constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '结论可追溯' },
+      { id: 'criterion-action', statement: '形成可执行策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+    industry_scope: {
+      category: '图书', subcategories: ['童书'], exclusions: [], analysis_depth: 'medium',
+      primary_focus: '行业与频道策略', secondary_focuses: [], decision_audience: ['频道团队'],
+      decision_goal: '确定改版优先级', time_window: '最近十二个月',
+    },
+    available_material_roles: [],
+    unavailable_material_roles: [
+      'jd_screenshots', 'competitor_screenshots', 'competitor_platform_names',
+      'user_research_dataset', 'internal_metrics_dataset',
+    ],
+  };
+  const tools = new ToolRouter().register({
+    adapterType: 'tavily', implementationId: 'qualified-real-tavily', executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test', async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm: new CurrentPlanningLLM(), validator: new SchemaValidator(), skillLoader: new SkillLoader(),
+    tools, approvalAuthorities: ['owner'],
+  });
+  const result = await planning.planCurrentFromRequirement(
+    unavailableTask,
+    `$industry-market-analysis ${unavailableTask.research_goal}`,
+  );
+  const selection = resolvePlanningDeliverableSelection(unavailableTask);
+  for (const candidate of result.candidates) {
+    const compiled = new PlanCompiler().compile({
+      candidate, task: unavailableTask, problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements,
+      activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.equal(compiled.plan.deliverable_type, 'industry_market_analysis_report');
+    assert.equal(compiled.plan.skill_invocations?.[0]?.skill_id, 'industry-market-analysis');
+    assert.deepEqual(compiled.pending_inputs, []);
+  }
+});
+
+test('Industry Plan v2 binds an available Joyspace optional Tool into the compiled output stage', async () => {
+  const industryTask: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
+    business_domain: 'pet-food', research_goal: '形成宠物食品行业与频道策略报告',
+    target_audience: ['频道团队'], scope: ['中国大陆线上市场'], constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '结论可追溯' },
+      { id: 'criterion-action', statement: '形成可执行策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    industry_scope: {
+      category: '宠物食品', subcategories: ['猫用冻干'], exclusions: [], analysis_depth: 'medium',
+      primary_focus: '行业策略', secondary_focuses: [], decision_audience: ['频道团队'],
+      decision_goal: '确定方向', time_window: '最近十二个月',
+    },
+    available_material_roles: [], unavailable_material_roles: [],
+  };
+  const tools = new ToolRouter()
+    .register({
+      adapterType: 'tavily', implementationId: 'qualified-real-tavily', executionMode: 'real',
+      endpointHost: () => 'api.tavily.com', async invoke() { throw new Error('not used'); },
+    })
+    .register({
+      adapterType: 'o2', implementationId: 'o2-joyspace-test', executionMode: 'real',
+      endpointHost: () => 'joyspace.jd.com', async invoke() { throw new Error('not used'); },
+    });
+  const planning = new ResearchPlanningService({
+    llm: new CurrentPlanningLLM(), validator: new SchemaValidator(), skillLoader: new SkillLoader(),
+    tools, approvalAuthorities: ['owner'],
+  });
+  const result = await planning.planCurrentFromRequirement(
+    industryTask,
+    `$industry-market-analysis ${industryTask.research_goal}`,
+  );
+  const selection = resolvePlanningDeliverableSelection(industryTask);
+  for (const candidate of result.candidates) {
+    const compiled = new PlanCompiler().compile({
+      candidate, task: industryTask, problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution, deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements, activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    const joyspace = compiled.plan.steps.find(({ actor_id }) => actor_id === 'joyspace-read');
+    const output = compiled.plan.steps.find(({ skill_stage_id }) => skill_stage_id === 'compose-industry-content-draft');
+    assert.ok(joyspace && output);
+    assert.deepEqual(joyspace.input, {
+      operation: 'search', target: '用户研究 行业分析', limit: 5, scope: 'auto', viewTopResult: true,
+    });
+    assert.ok(output.depends_on.includes(joyspace.step_no));
+    assert.equal(compiled.plan.skill_invocations?.length, 1);
+    assert.equal(compiled.plan.skill_invocations?.[0]?.step_nos.length, 9);
+    assert.deepEqual(
+      compiled.plan.capability_decisions.eligible
+        .find(({ skill }) => skill.id === 'industry-market-analysis')
+        ?.optional_tool_decisions,
+      [{ tool_id: 'joyspace-read', status: 'available' }],
+    );
+  }
+});
+
 test('Current direct planning freezes explicit user percentages instead of replacing them with equal weights', async () => {
   const percentages = [30, 25, 20, 15, 10];
   const weightedTask: ResearchTaskV2 = {

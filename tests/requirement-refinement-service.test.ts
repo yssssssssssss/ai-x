@@ -45,6 +45,33 @@ function requirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
   };
 }
 
+function industryRequirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
+  return requirement({
+    task_type: 'industry_market_analysis',
+    outcome_mode: 'answer',
+    business_domain: 'pet-food',
+    research_goal: '形成宠物食品行业与京东频道策略报告',
+    target_audience: ['频道产品与设计团队'],
+    scope: ['中国大陆线上宠物食品'],
+    success_criteria: [{ id: 'criterion-1', statement: '形成可追溯的行业结论与策略' }],
+    expected_deliverables: ['industry_market_analysis_report'],
+    industry_scope: {
+      category: '宠物食品',
+      subcategories: ['猫用冻干'],
+      exclusions: ['线下渠道'],
+      analysis_depth: 'medium',
+      primary_focus: '竞品与设计策略',
+      secondary_focuses: ['用户洞察'],
+      decision_audience: ['频道产品与设计团队'],
+      decision_goal: '确定频道改版优先级',
+      time_window: '最近十二个月',
+    },
+    available_material_roles: ['competitor_screenshots'],
+    unavailable_material_roles: ['internal_metrics_dataset'],
+    ...overrides,
+  });
+}
+
 const ambiguousRequirement = requirement({
   ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
   clarification_questions: [{
@@ -333,6 +360,42 @@ test('public-only synthetic research boundaries remain constraints instead of bl
     null,
   );
   assert.deepEqual(normalized.blocking_issues, []);
+});
+
+test('retries when Industry normalization exposes missing Industry scope fields', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const initiallyGeneric = requirement({
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+  });
+  const valid = industryRequirement();
+  const llm = new FixtureLLM([initiallyGeneric, valid]);
+  const repository = makeRepository();
+  let planned: ResearchTaskV2 | undefined;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input: { requirement: ResearchTaskV2 }) {
+        planned = input.requirement;
+      },
+    },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '请分析宠物食品行业的市场、用户、竞品和京东频道现状，并给出设计策略。',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 2);
+  assert.equal(planned?.task_type, 'industry_market_analysis');
+  assert.deepEqual(planned?.expected_deliverables, ['industry_market_analysis_report']);
+  assert.equal(planned?.industry_scope?.category, '宠物食品');
 });
 
 test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {

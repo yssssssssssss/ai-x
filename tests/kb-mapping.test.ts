@@ -18,10 +18,10 @@ const activeSkillFixture: SkillRegistryEntry = {
 };
 
 
-test('loads exactly 24 mappings in active registry order', () => {
+test('loads exactly 25 mappings in active registry order', () => {
   const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
   const mappings = loadSkillKnowledgeMappings(activeSkills);
-  assert.equal(mappings.size, 24);
+  assert.equal(mappings.size, 25);
   assert.deepEqual([...mappings.keys()], activeSkills.map((skill) => skill.id));
   assert.equal(mappings.get('competitive-web-research')?.kb_mode, 'not_applicable');
   assert.equal((mappings.get('generate-survey')?.required_sources.length ?? 0) > 0, true);

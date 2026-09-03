@@ -28,6 +28,7 @@ const TASK_TYPES = new Set([
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',
+  'industry_market_analysis',
   // Present only on the reviewed draft Skill; it never becomes eligible for ResearchTaskV2.
   'solution-generation',
 ]);
@@ -346,7 +347,8 @@ function availableMaterialRoles(task: ResearchTaskV2): string[] {
   if (task.constraints.length > 0) roles.push('constraints');
   if (task.success_criteria.length > 0) roles.push('success_criteria');
   if (task.expected_deliverables.length > 0) roles.push('expected_deliverables');
-  return roles;
+  roles.push(...(task.available_material_roles ?? []));
+  return [...new Set(roles)];
 }
 
 function problemGraphSignals(graph: ProblemGraph): Array<'independent_evidence_paths_required'> {

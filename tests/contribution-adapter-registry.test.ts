@@ -79,6 +79,33 @@ test('generic Skill envelope adapter preserves every semantic field as provision
   assert.match(artifact.source.adapterHash, /^sha256:[a-f0-9]{64}$/u);
 });
 
+test('generate-persona binds dataset-derived units to the Dataset profile Evidence', () => {
+  const datasetManifest: EvidenceManifest = {
+    ...evidenceManifest,
+    entries: [{
+      id: 'dataset:user_research_dataset:profile',
+      kind: 'dataset',
+      evidenceClass: 'dataset',
+      artifactId: 'dataset-profile-1',
+      artifactContentSha256: `sha256:${'d'.repeat(64)}`,
+      jsonPointer: '/columnProfiles',
+      sensitivity: 'internal',
+      redaction: 'none',
+    }],
+  };
+  const artifact = adapt({ evidenceManifest: datasetManifest });
+  const personaUnits = artifact.contribution.units.filter(({ kind }) => kind === 'persona');
+  assert.ok(personaUnits.length > 0);
+  assert.ok(personaUnits.every(({ support }) => (
+    support.status === 'supported'
+    && support.evidenceIds.join(',') === 'dataset:user_research_dataset:profile'
+  )));
+  assert.equal(
+    artifact.contribution.units.find(({ kind }) => kind === 'hypothesis')?.support.status,
+    'provisional',
+  );
+});
+
 test('generic adapter deterministically binds every unit to all frozen scoped Questions', () => {
   const artifact = adapt({ questionIds: ['question-a', 'question-b'] });
   assert.ok(artifact.contribution.units.every(({ support }) => (

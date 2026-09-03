@@ -44,6 +44,7 @@ const EDITORIAL_DELIVERABLE_TYPES = new Set<EditorialDeliverableType>([
   'voc_diagnosis_report',
   'design_audit_report',
   'accessibility_audit_report',
+  'industry_market_analysis_report',
 ]);
 
 type VerifiedJson<T = unknown> = { artifact: ControlArtifact; value: T };

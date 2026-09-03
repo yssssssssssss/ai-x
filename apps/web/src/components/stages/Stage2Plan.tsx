@@ -4,11 +4,15 @@ import {
   extractCompetitiveScoringWeights,
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
 import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
-import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import type { DatasetUpload, PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
 import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
 import { multiSkillPlanViewModel } from '../../multi-skill-view-model.ts';
 import { Header } from './Stage1Understand.tsx';
-import { buildPlanConfirmationPayload } from './stage2-plan-confirmation.ts';
+import {
+  buildPlanConfirmationPayload,
+  parseDatasetColumns,
+  reconcileDatasetColumnMetadata,
+} from './stage2-plan-confirmation.ts';
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
 // locked=true 时(已进入执行)隐藏确认按钮、禁用编辑。
@@ -22,6 +26,7 @@ export function Stage2Plan({
     confirmationAnswers: Record<string, unknown>,
     inputValues: Record<string, unknown>,
     uploads: Upload[],
+    datasetUploads: DatasetUpload[],
   ) => void;
   onRevise: (instruction: string) => void;
 }) {
@@ -42,6 +47,9 @@ export function Stage2Plan({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [images, setImages] = useState<Record<string, string[]>>({});
+  const [datasets, setDatasets] = useState<Record<string, DatasetUpload | undefined>>({});
+  const [datasetColumns, setDatasetColumns] = useState<Record<string, string[]>>({});
+  const [datasetHeaderErrors, setDatasetHeaderErrors] = useState<Record<string, string | undefined>>({});
   const [values, setValues] = useState<Record<string, string>>({});
   const [revisionInstruction, setRevisionInstruction] = useState('');
 
@@ -64,6 +72,75 @@ export function Stage2Plan({
     setImages((previous) => ({ ...previous, [pu.role]: dataUrls }));
   }
 
+  async function pickDataset(role: string, file: File | undefined): Promise<void> {
+    if (!file) {
+      setDatasets((previous) => ({ ...previous, [role]: undefined }));
+      setDatasetColumns((previous) => ({ ...previous, [role]: [] }));
+      setDatasetHeaderErrors((previous) => ({ ...previous, [role]: undefined }));
+      return;
+    }
+    let columns: string[];
+    try {
+      columns = parseDatasetColumns(await file.text());
+      setDatasetHeaderErrors((previous) => ({ ...previous, [role]: undefined }));
+    } catch (error) {
+      columns = [];
+      setDatasetHeaderErrors((previous) => ({
+        ...previous,
+        [role]: error instanceof Error ? error.message : '无法读取 CSV 表头',
+      }));
+    }
+    setDatasetColumns((previous) => ({ ...previous, [role]: columns }));
+    setDatasets((previous) => {
+      const metadata = reconcileDatasetColumnMetadata({
+        rowMeaning: previous[role]?.metadata.rowMeaning ?? '',
+        timeRange: previous[role]?.metadata.timeRange ?? '',
+        fieldNotes: previous[role]?.metadata.fieldNotes ?? {},
+        units: previous[role]?.metadata.units ?? {},
+        sampling: previous[role]?.metadata.sampling ?? '',
+        piiConfirmedAbsent: previous[role]?.metadata.piiConfirmedAbsent ?? false,
+      }, columns);
+      return { ...previous, [role]: { role, file, metadata } };
+    });
+  }
+
+  function editDatasetMetadata(
+    role: string,
+    field: 'rowMeaning' | 'timeRange' | 'sampling' | 'piiConfirmedAbsent',
+    value: string | boolean,
+  ): void {
+    setDatasets((previous) => {
+      const current = previous[role];
+      if (!current) return previous;
+      return {
+        ...previous,
+        [role]: { ...current, metadata: { ...current.metadata, [field]: value } },
+      };
+    });
+  }
+
+  function editDatasetColumnMetadata(
+    role: string,
+    field: 'fieldNotes' | 'units',
+    column: string,
+    value: string,
+  ): void {
+    setDatasets((previous) => {
+      const current = previous[role];
+      if (!current) return previous;
+      return {
+        ...previous,
+        [role]: {
+          ...current,
+          metadata: {
+            ...current.metadata,
+            [field]: { ...current.metadata[field], [column]: value },
+          },
+        },
+      };
+    });
+  }
+
   function confirm() {
     if (missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) return;
     const payload = buildPlanConfirmationPayload({
@@ -71,9 +148,15 @@ export function Stage2Plan({
       pending,
       values,
       images,
+      datasets,
     });
     setConfirmed(true);
-    onConfirm(payload.confirmationAnswers, payload.inputValues, payload.uploads);
+    onConfirm(
+      payload.confirmationAnswers,
+      payload.inputValues,
+      payload.uploads,
+      payload.datasetUploads,
+    );
   }
 
   const pending = plan.pendingUploads ?? [];
@@ -85,6 +168,15 @@ export function Stage2Plan({
       return input.multiple
         ? raw.split('\n').every((item) => item.trim() === '')
         : raw.trim() === '';
+    }
+    if (input.kind === 'dataset') {
+      const dataset = datasets[input.role];
+      return !dataset
+        || Boolean(datasetHeaderErrors[input.role])
+        || !dataset.metadata.rowMeaning.trim()
+        || !dataset.metadata.timeRange.trim()
+        || !dataset.metadata.sampling.trim()
+        || !dataset.metadata.piiConfirmedAbsent;
     }
     return true;
   });
@@ -209,6 +301,91 @@ export function Stage2Plan({
               )}
             </label>
           ))}
+        </div>
+      )}
+
+      {pending.some((input) => input.kind === 'dataset') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV（必须为匿名、UTF-8 数据）</div>
+          {pending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
+            const selected = datasets[datasetInput.role];
+            return (
+              <div key={datasetInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+                <span style={{ fontSize: 13 }}>{datasetInput.label}</span>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  disabled={locked || confirmed}
+                  onChange={(event) => {
+                    void pickDataset(datasetInput.role, event.currentTarget.files?.[0]);
+                  }}
+                />
+                <input
+                  value={selected?.metadata.rowMeaning ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'rowMeaning', event.target.value)}
+                  placeholder="一行代表什么，例如：一位匿名受访者"
+                />
+                <input
+                  value={selected?.metadata.timeRange ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'timeRange', event.target.value)}
+                  placeholder="数据时间范围，例如：2026-Q3"
+                />
+                <input
+                  value={selected?.metadata.sampling ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'sampling', event.target.value)}
+                  placeholder="样本或采集方式"
+                />
+                {datasetHeaderErrors[datasetInput.role] ? (
+                  <span role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}>
+                    {datasetHeaderErrors[datasetInput.role]}
+                  </span>
+                ) : null}
+                {selected && (datasetColumns[datasetInput.role]?.length ?? 0) > 0 ? (
+                  <fieldset
+                    disabled={locked || confirmed}
+                    style={{ display: 'grid', gap: 8, margin: '3px 0', padding: 10, border: '1px solid var(--border-soft)', borderRadius: 7 }}
+                  >
+                    <legend style={{ padding: '0 5px', color: 'var(--text-faint)', fontSize: 12 }}>
+                      字段说明与单位（选填）
+                    </legend>
+                    {datasetColumns[datasetInput.role]!.map((column) => (
+                      <div
+                        key={column}
+                        className="dataset-field-row"
+                        style={{ gap: 7, alignItems: 'center' }}
+                      >
+                        <code style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--text-dim)', fontSize: 11 }}>{column}</code>
+                        <input
+                          value={selected.metadata.fieldNotes[column] ?? ''}
+                          onChange={(event) => editDatasetColumnMetadata(datasetInput.role, 'fieldNotes', column, event.target.value)}
+                          placeholder="字段含义"
+                          aria-label={`${column} 字段含义`}
+                        />
+                        <input
+                          value={selected.metadata.units[column] ?? ''}
+                          onChange={(event) => editDatasetColumnMetadata(datasetInput.role, 'units', column, event.target.value)}
+                          placeholder="单位"
+                          aria-label={`${column} 单位`}
+                        />
+                      </div>
+                    ))}
+                  </fieldset>
+                ) : null}
+                <label style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={selected?.metadata.piiConfirmedAbsent ?? false}
+                    disabled={!selected || locked || confirmed}
+                    onChange={(event) => editDatasetMetadata(datasetInput.role, 'piiConfirmedAbsent', event.target.checked)}
+                  />
+                  我确认文件已匿名化且不含姓名、手机号、地址、订单号等个人信息
+                </label>
+              </div>
+            );
+          })}
         </div>
       )}
 

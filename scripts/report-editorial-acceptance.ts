@@ -494,6 +494,7 @@ function evidenceArtifactKind(kind: EvidenceEntry['kind']): string {
     case 'knowledge_excerpt': return 'knowledge_output';
     case 'screenshot': return 'visual_asset_manifest';
     case 'user_constraint': return 'chart_data';
+    case 'dataset': return 'dataset_input_profile';
   }
 }
 

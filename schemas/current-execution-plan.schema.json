@@ -320,7 +320,7 @@
       "additionalProperties": false,
       "required": ["kind", "role", "label", "multiple", "capability_id"],
       "properties": {
-        "kind": { "enum": ["value", "visual"] },
+        "kind": { "enum": ["value", "visual", "dataset"] },
         "role": { "type": "string", "minLength": 1 },
         "label": { "type": "string", "minLength": 1 },
         "multiple": { "type": "boolean" },
@@ -418,6 +418,11 @@
           "uniqueItems": true
         },
         "multiple_visual_inputs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "dataset_inputs": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true

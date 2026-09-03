@@ -426,6 +426,28 @@ function freezeCompetitiveScoringWeights(
   };
 }
 
+const JOYSPACE_INDUSTRY_QUERY = '用户研究 行业分析';
+
+function freezeJoyspaceReadInput(
+  candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>,
+): Omit<CurrentPlanCandidateProposal, 'activated_nodes'> {
+  return {
+    ...candidate,
+    steps: candidate.steps.map((step) => step.actor_id === 'joyspace-read'
+      ? {
+          ...step,
+          input: {
+            operation: 'search',
+            target: JOYSPACE_INDUSTRY_QUERY,
+            limit: 5,
+            scope: 'auto',
+            viewTopResult: true,
+          },
+        }
+      : step),
+  };
+}
+
 function freezePlaywrightFallbackPools(
   candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>,
   researchGoal: string,
@@ -495,7 +517,7 @@ function freezeCompetitiveScoringWeightEnvelope(input: {
   return {
     candidates: input.candidates.map((candidate) => (
       freezeCompetitiveScoringWeights(
-        freezePlaywrightFallbackPools(candidate, input.researchGoal),
+        freezePlaywrightFallbackPools(freezeJoyspaceReadInput(candidate), input.researchGoal),
         input.fallbackDimensions,
         input.explicitWeights,
       )
@@ -1029,6 +1051,11 @@ export class RoutedPlanner implements PlanStrategy {
           ctx.requirement,
         );
         const isBrowserCapture = tool.id === 'playwright-page-capture';
+        if (tool.id === 'joyspace-read') {
+          input.operation = 'search';
+          input.target = JOYSPACE_INDUSTRY_QUERY;
+          input.viewTopResult = true;
+        }
         if (tool.id === 'tavily-web-search' && hasPlannedBrowserCapture) {
           input.query = frozenVisualSourceQueries(
             ctx.requirement.research_goal,
@@ -1080,7 +1107,9 @@ export class RoutedPlanner implements PlanStrategy {
           expected_outputs: [{
             pointer: tool.id === 'tavily-web-search'
               ? '/results'
-              : isBrowserCapture ? '/captures' : '/result',
+              : tool.id === 'joyspace-read'
+                ? '/documents'
+                : isBrowserCapture ? '/captures' : '/result',
             description: `${tool.name} result`,
           }],
           acceptance_criteria: acceptanceCriteria,
@@ -1171,7 +1200,7 @@ export class RoutedPlanner implements PlanStrategy {
         const { activated_nodes, ...proposal } = candidate;
         return {
           ...freezeCompetitiveScoringWeights(
-            freezePlaywrightFallbackPools(proposal, ctx.requirement.research_goal),
+            freezePlaywrightFallbackPools(freezeJoyspaceReadInput(proposal), ctx.requirement.research_goal),
             ctx.requirement.comparison_dimensions,
             explicitWeights,
           ),

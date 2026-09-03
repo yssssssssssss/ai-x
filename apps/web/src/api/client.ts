@@ -33,6 +33,22 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
   return data as T;
 }
 
+async function reqForm<T>(path: string, form: FormData, idempotencyKey: string): Promise<T> {
+  const headers: Record<string, string> = { 'Idempotency-Key': idempotencyKey };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      data?.error ?? `HTTP ${res.status}`,
+      typeof data?.code === 'string' ? data.code : undefined,
+    );
+  }
+  return data as T;
+}
+
 async function reqBlob(path: string): Promise<Response> {
   const headers: Record<string, string> = {};
   const token = getToken();
@@ -59,6 +75,12 @@ export class ApiError extends Error {
   }
 }
 
+export interface DatasetUpload {
+  role: string;
+  file: File;
+  metadata: DatasetUploadMetadata;
+}
+
 // ---- 类型 ----
 // 契约类型集中在 packages/api-contract(前后端共享同一份,漂移编译期即炸)。
 // 这里 re-export,让前端各组件的 import 路径('./api/client.ts')保持不变。
@@ -77,6 +99,8 @@ export type {
 export type {
   User,
   Upload,
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
   Finding,
   Report,
   ExecLogRow,
@@ -93,6 +117,10 @@ export type {
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 
+import type {
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
+} from '../../../../packages/api-contract/http.ts';
 import type {
   CurrentPlanningResponse,
 } from '../../../agent-api/src/routes/control-planning.ts';
@@ -346,6 +374,23 @@ export const api = {
     req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  uploadControlDataset: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    file: File,
+    metadata: DatasetUploadMetadata,
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('metadata', JSON.stringify(metadata));
+    return reqForm<DatasetUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/dataset`,
+      form,
+      idempotencyKey,
+    );
+  },
   approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>

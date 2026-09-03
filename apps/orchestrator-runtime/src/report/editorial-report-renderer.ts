@@ -42,6 +42,7 @@ const TITLES: Record<EditorialMaterial['deliverableType'], string> = {
   voc_diagnosis_report: 'VOC 诊断报告',
   design_audit_report: '设计审计报告',
   accessibility_audit_report: '无障碍审计报告',
+  industry_market_analysis_report: '行业市场分析报告',
 };
 
 const SECTION_LABELS: Record<EditorialBlueprint['sections'][number]['role'], string> = {

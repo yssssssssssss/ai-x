@@ -65,8 +65,26 @@ export interface SmokeReceiptInput extends VerifiedSmokeEvidenceSummary {
     verdict: 'pass';
   };
 }
+export interface EditorialSummarySmokeResult {
+  status: 'ready' | 'failed';
+  htmlSha256?: string;
+  failure?: string;
+}
+
+export interface JoyspaceSmokeReceipt {
+  status: 'available';
+  stepNo: number;
+  toolArtifactId: string;
+  knowledgeSnapshotArtifactId: string;
+  evidenceId: string;
+  o2Version: string;
+  webcliVersion: string;
+}
+
 export interface SmokeReceipt extends SmokeReceiptInput {
   evidenceCount: number;
+  editorialSummary?: EditorialSummarySmokeResult;
+  joyspace?: JoyspaceSmokeReceipt;
 }
 
 export interface SemanticGoldScenario {
@@ -84,6 +102,7 @@ export interface SemanticGoldScenario {
   requireMultiSkill?: boolean;
   expectedContributorSkillIds?: string[];
   requiredToolIds?: string[];
+  requireJoyspace?: boolean;
   planningScenarioId?: string;
 }
 
@@ -233,6 +252,7 @@ export const CURRENT_REAL_SMOKE_PROFILES = [
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',
+  'industry_market_analysis',
 ] as const;
 
 export function assertRealSmokeConfig(env: RealSmokeConfig): void {
@@ -546,6 +566,39 @@ function nonBlankString(value: unknown, field: string): string {
     throw new Error(`${field} is missing or invalid`);
   }
   return value;
+}
+
+export async function readEditorialSummaryWithOneRetry(
+  read: () => Promise<string | null>,
+): Promise<string | null> {
+  try {
+    return await read();
+  } catch {
+    return read();
+  }
+}
+
+export async function verifyEditorialSummaryForSmoke(
+  read: () => Promise<string | null>,
+): Promise<EditorialSummarySmokeResult> {
+  try {
+    const html = await readEditorialSummaryWithOneRetry(read);
+    if (
+      !html
+      || !/^<!doctype html>/iu.test(html.trim())
+      || !/<html\b[^>]*\blang=["'](?:zh-CN|en)["']/iu.test(html)
+      || !/data-summary-section-id=/u.test(html)
+      || !/data-source-ids=/u.test(html)
+      || /<(?:iframe|object|embed|form)\b/iu.test(html)
+      || /<(?:script|img|video|audio|source)\b[^>]*\bsrc\s*=\s*["']https?:\/\//iu.test(html)
+    ) throw new Error('Editorial Summary did not satisfy its binding, language, or offline contract');
+    return {
+      status: 'ready',
+      htmlSha256: `sha256:${createHash('sha256').update(html).digest('hex')}`,
+    };
+  } catch (error) {
+    return { status: 'failed', failure: safeSmokeErrorMessage(error) };
+  }
 }
 
 export function selectSmokeScenario(
@@ -1415,6 +1468,23 @@ async function executeRealSmoke(
   ) {
     throw new Error('deliverable evidence manifest does not match the execution receipt');
   }
+  if (scenario.profile === 'industry_market_analysis') {
+    const payload = record(deliverable.payload, 'deliverable.payload');
+    if (payload.schemaVersion !== 'industry-market-analysis-v1') {
+      throw new Error('Industry smoke did not produce the canonical Industry payload');
+    }
+    const coverage = array(payload.coverageLedger, 'deliverable.payload.coverageLedger')
+      .map((value, index) => record(value, `coverageLedger[${index}]`));
+    const dimensions = coverage.map((entry) => nonBlankString(entry.dimension, 'coverage dimension'));
+    if (
+      dimensions.length !== 10
+      || new Set(dimensions).size !== 10
+      || 'ABCDEFGHIJ'.split('').some((dimension) => !dimensions.includes(dimension))
+    ) throw new Error('Industry smoke coverage ledger does not contain A-J exactly once');
+    if (array(payload.strategyChains, 'deliverable.payload.strategyChains').length === 0) {
+      throw new Error('Industry smoke has no strategy chain');
+    }
+  }
   if (scenario.profile === 'research_synthesis') {
     const payload = record(deliverable.payload, 'deliverable.payload');
     const directAnswers = array(payload.directAnswers, 'deliverable.payload.directAnswers').map((value, index) => record(value, `directAnswers[${index}]`));
@@ -1488,6 +1558,7 @@ async function executeRealSmoke(
   }
 
   const steps = await runtime.repository.listExecutionSteps(attemptId);
+  let joyspaceReceipt: JoyspaceSmokeReceipt | undefined;
   requireActorCoverage(steps, selectedCandidate.plan.steps);
   const realToolStep = steps.find((step) => {
     const provenance = step.toolProvenance;
@@ -1547,14 +1618,70 @@ async function executeRealSmoke(
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
   const requiredModelCalls = modelCalls.filter((call) => call.stage !== 'report_layout' || call.status === 'succeeded');
   assertGatewayModelReceipts({ modelRoutes, modelCalls: requiredModelCalls });
-  if (scenario.profile === 'research_synthesis' && modelCalls.some(({ stage }) => stage === 'deliverable')) {
-    throw new Error('research strategy execution must not rewrite the reviewed Skill output in a deliverable LLM stage');
+  if (
+    (scenario.profile === 'research_synthesis' || scenario.profile === 'industry_market_analysis')
+    && modelCalls.some(({ stage }) => stage === 'deliverable')
+  ) {
+    throw new Error('reviewed Skill execution must not rewrite the Skill output in a deliverable LLM stage');
   }
   const representativeModelCall = requiredModelCalls[0]!;
 
   const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
     record(entry, `evidenceManifest.entries[${index}]`)
   ));
+  if (scenario.requireJoyspace === true) {
+    const joyspaceStep = steps.find((step) => (
+      step.actorType === 'tool'
+      && step.actorId === 'joyspace-read'
+      && step.state === 'succeeded'
+      && step.toolProvenance?.executionMode === 'real'
+      && step.toolProvenance.declaredAdapterType === 'o2'
+      && step.toolProvenance.resolvedAdapterType === 'o2'
+      && step.toolProvenance.endpointHost === 'joyspace.jd.com'
+    ));
+    if (!joyspaceStep?.toolProvenance) {
+      throw new Error('Industry real smoke has no qualifying Joyspace search/view receipt');
+    }
+    const versions = record(joyspaceStep.toolProvenance.runtimeVersions, 'Joyspace runtimeVersions');
+    nonBlankString(versions.o2, 'Joyspace o2 version');
+    nonBlankString(versions.webcli, 'Joyspace webcli version');
+    const snapshotIds = array(
+      joyspaceStep.toolProvenance.knowledgeSnapshotArtifactIds,
+      'Joyspace knowledgeSnapshotArtifactIds',
+    ).map((value, index) => nonBlankString(value, `Joyspace snapshot ${index}`));
+    if (snapshotIds.length !== 1) throw new Error('Industry real smoke requires one Joyspace Knowledge Snapshot');
+    const artifacts = await runtime.repository.listArtifactsForAttempt({
+      taskId,
+      planVersionId: selected.planVersionId,
+      attemptId,
+    });
+    const snapshot = artifacts.find(({ id }) => id === snapshotIds[0]);
+    if (
+      !snapshot
+      || snapshot.state !== 'SEALED'
+      || snapshot.kind !== 'knowledge_snapshot'
+      || snapshot.schemaVersion !== 'joyspace-knowledge-snapshot-v1'
+      || !snapshot.contentSha256
+    ) throw new Error('Industry real smoke Joyspace Knowledge Snapshot is not SEALED');
+    if (!entries.some((entry) => (
+      entry.kind === 'knowledge_excerpt'
+      && entry.evidenceClass === 'knowledge'
+      && entry.artifactId === snapshot.id
+      && entry.sensitivity === 'internal'
+      && typeof entry.sourceUrl === 'string'
+      && entry.sourceUrl.startsWith('https://joyspace.jd.com/')
+    ))) throw new Error('Industry real smoke has no Joyspace Knowledge Evidence binding');
+    const evidence = entries.find((entry) => entry.artifactId === snapshot.id)!;
+    joyspaceReceipt = {
+      status: 'available',
+      stepNo: joyspaceStep.stepNo,
+      toolArtifactId: nonBlankString(joyspaceStep.outputArtifactId, 'Joyspace Tool Artifact id'),
+      knowledgeSnapshotArtifactId: snapshot.id,
+      evidenceId: nonBlankString(evidence.id, 'Joyspace Evidence id'),
+      o2Version: nonBlankString(versions.o2, 'Joyspace o2 version'),
+      webcliVersion: nonBlankString(versions.webcli, 'Joyspace webcli version'),
+    };
+  }
   const realEvidenceEntries = entries.filter((entry) => {
     const proof = entry.toolProof;
     return entry.toolId === 'tavily-web-search'
@@ -1678,22 +1805,13 @@ async function executeRealSmoke(
   if (rereadTask.state !== expectedTaskState) {
     throw new Error('historical task state does not match its gapCount');
   }
-  const editorialSummaryHtml = await runtime.readEditorialSummaryHtml({
-    taskId,
-    attemptId,
-    ownerUserId: seedUser.id,
-  });
-  if (
-    !editorialSummaryHtml
-    || !/^<!doctype html>/iu.test(editorialSummaryHtml.trim())
-    || !/<html\b[^>]*\blang=["'](?:zh-CN|en)["']/iu.test(editorialSummaryHtml)
-    || !/data-summary-section-id=/u.test(editorialSummaryHtml)
-    || !/data-source-ids=/u.test(editorialSummaryHtml)
-    || /<(?:iframe|object|embed|form)\b/iu.test(editorialSummaryHtml)
-    || /<(?:script|img|video|audio|source)\b[^>]*\bsrc\s*=\s*["']https?:\/\//iu.test(editorialSummaryHtml)
-  ) {
-    throw new Error('Editorial Summary did not satisfy its binding, language, or offline contract');
-  }
+  const editorialSummary = await verifyEditorialSummaryForSmoke(() => (
+    runtime.readEditorialSummaryHtml({
+      taskId,
+      attemptId,
+      ownerUserId: seedUser.id,
+    })
+  ));
   const provenance = realToolStep.toolProvenance;
   reportProgress({
     stage: 'completed',
@@ -1701,7 +1819,8 @@ async function executeRealSmoke(
     taskId,
     attemptId,
   });
-  return formatSmokeReceipt({
+  return {
+    ...formatSmokeReceipt({
     scenarioId: scenario.id,
     profile: scenario.profile,
     taskType: finalized.requirement.task_type,
@@ -1737,7 +1856,10 @@ async function executeRealSmoke(
       recommendations: recommendations.length,
     },
     sources,
-  });
+    }),
+    editorialSummary,
+    ...(joyspaceReceipt ? { joyspace: joyspaceReceipt } : {}),
+  };
 }
 
 function requireBrowserEvidence(value: string | undefined): boolean {
@@ -1809,9 +1931,13 @@ export function safeSmokeErrorMessage(error: unknown): string {
 
 async function main(): Promise<void> {
   try {
-    const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
-      ?? 'tests/fixtures/current-semantic-gold.json';
     const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
+    const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
+      ?? (profile === 'research_synthesis'
+        ? 'tests/fixtures/research-synthesis-real-smoke.json'
+        : profile === 'industry_market_analysis'
+          ? 'tests/fixtures/industry-real-smoke.json'
+          : 'tests/fixtures/current-semantic-gold.json');
     const scenarioId = nonBlankString(process.env.CURRENT_SMOKE_SCENARIO, 'CURRENT_SMOKE_SCENARIO');
     console.log(JSON.stringify(await runCurrentRealSmoke({
       fixturePath,

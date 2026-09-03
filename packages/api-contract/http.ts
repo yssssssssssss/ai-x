@@ -35,6 +35,24 @@ export interface Upload {
   dataUrl: string;
 }
 
+export interface DatasetUploadMetadata {
+  rowMeaning: string;
+  timeRange: string;
+  fieldNotes: Record<string, string>;
+  units: Record<string, string>;
+  sampling: string;
+  piiConfirmedAbsent: boolean;
+}
+
+export interface DatasetUploadResponse {
+  datasetInputId: string;
+  fileName: string;
+  contentSha256: string;
+  byteSize: number;
+  rowCount: number;
+  columns: string[];
+}
+
 export interface Finding {
   id: string;
   statement: string;

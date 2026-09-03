@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { buildPlanConfirmationPayload } from '../apps/web/src/components/stages/stage2-plan-confirmation.ts';
+import {
+  buildPlanConfirmationPayload,
+  parseDatasetColumns,
+  reconcileDatasetColumnMetadata,
+} from '../apps/web/src/components/stages/stage2-plan-confirmation.ts';
 
 const component = new URL('../apps/web/src/components/stages/Stage2Plan.tsx', import.meta.url);
 
@@ -25,6 +29,15 @@ test('Stage2Plan renders frozen resource cardinality gaps before confirmation', 
   assert.match(source, /知识资源缺口/u);
   assert.match(source, /gap\.selected_items/u);
   assert.match(source, /gap\.min_items/u);
+});
+
+test('Stage2Plan exposes CSV field descriptions and units after reading the selected header', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /parseDatasetColumns\(await file\.text\(\)\)/u);
+  assert.match(source, /字段说明与单位（选填）/u);
+  assert.match(source, /editDatasetColumnMetadata\(datasetInput\.role, 'fieldNotes'/u);
+  assert.match(source, /editDatasetColumnMetadata\(datasetInput\.role, 'units'/u);
+  assert.match(source, /Boolean\(datasetHeaderErrors\[input\.role\]\)/u);
 });
 
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
@@ -57,6 +70,55 @@ test('Stage2 confirmation payload includes only declared pending inputs and no w
     confirmationAnswers: { scope: '中国主流平台' },
     inputValues: { competitors: ['京东', '淘宝'] },
     uploads: [{ role: 'screenshots', dataUrl: 'data:image/png;base64,fixture' }],
+    datasetUploads: [],
   });
   assert.equal(JSON.stringify(payload).includes('scoring_weights'), false);
+});
+
+test('Stage2 parses quoted UTF-8 CSV headers and scopes field metadata to the selected columns', () => {
+  const columns = parseDatasetColumns('\uFEFFsample_id,"quote,raw",score\r\nu1,"价格,太复杂",3\r\n');
+  assert.deepEqual(columns, ['sample_id', 'quote,raw', 'score']);
+  assert.deepEqual(reconcileDatasetColumnMetadata({
+    rowMeaning: '一行代表一位匿名受访者',
+    timeRange: '2026-Q3',
+    fieldNotes: { score: '满意度评分', obsolete: '旧字段' },
+    units: { score: '分', obsolete: '次' },
+    sampling: '访谈样本',
+    piiConfirmedAbsent: true,
+  }, columns), {
+    rowMeaning: '一行代表一位匿名受访者',
+    timeRange: '2026-Q3',
+    fieldNotes: { sample_id: '', 'quote,raw': '', score: '满意度评分' },
+    units: { sample_id: '', 'quote,raw': '', score: '分' },
+    sampling: '访谈样本',
+    piiConfirmedAbsent: true,
+  });
+});
+
+test('Stage2 confirmation keeps an uploaded Dataset as an opaque pre-upload request', () => {
+  const file = new File(['sample_id,quote\nu1,hello\n'], 'users.csv', { type: 'text/csv' });
+  const dataset = {
+    role: 'user_research_dataset',
+    file,
+    metadata: {
+      rowMeaning: '一行代表一位匿名受访者',
+      timeRange: '2026-Q3',
+      fieldNotes: { sample_id: '匿名样本编号', quote: '用户原话' },
+      units: { score: '分' },
+      sampling: '访谈样本',
+      piiConfirmedAbsent: true,
+    },
+  };
+  const payload = buildPlanConfirmationPayload({
+    confirmationAnswers: {},
+    pending: [{
+      kind: 'dataset', role: dataset.role, label: '用户研究 CSV', multiple: false,
+      targets: [{ step_no: 4, tool_id: 'industry-market-analysis', field: dataset.role, multiple: false }],
+    }],
+    values: {}, images: {}, datasets: { [dataset.role]: dataset },
+  });
+
+  assert.deepEqual(payload.inputValues, {});
+  assert.deepEqual(payload.uploads, []);
+  assert.deepEqual(payload.datasetUploads, [dataset]);
 });

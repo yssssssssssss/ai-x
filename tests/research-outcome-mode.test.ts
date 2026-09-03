@@ -7,6 +7,41 @@ function requirement(): ResearchTaskV2 {
   return { version: 'research-task-v2', task_type: 'user_research_planning', business_domain: 'pets', research_goal: 'pet strategy', target_audience: ['team'], scope: ['pets'], constraints: [], success_criteria: [{ id: 'SC1', statement: 'useful result' }], expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false };
 }
 
+test('complete category analysis routes to the Industry deliverable before competitor heuristics', () => {
+  const value = normalizeOutcomeRequirement(
+    requirement(),
+    '请分析宠物食品行业的市场、用户、竞品和京东频道现状，并给出完整设计策略。',
+    null,
+  );
+
+  assert.equal(value.task_type, 'industry_market_analysis');
+  assert.equal(value.outcome_mode, 'answer');
+  assert.deepEqual(value.expected_deliverables, ['industry_market_analysis_report']);
+});
+
+test('a competitor-only request remains a competitive analysis', () => {
+  const value = normalizeOutcomeRequirement(
+    requirement(),
+    '请对比皇家和渴望两个宠物食品竞品。',
+    null,
+  );
+
+  assert.equal(value.task_type, 'competitive_research');
+  assert.notDeepEqual(value.expected_deliverables, ['industry_market_analysis_report']);
+});
+
+test('an explicit Industry deliverable choice freezes the Industry task identity', () => {
+  const value = normalizeOutcomeRequirement(
+    requirement(),
+    '请分析宠物食品竞品。',
+    { deliverable_intent: 'industry_market_analysis_report' },
+  );
+
+  assert.equal(value.task_type, 'industry_market_analysis');
+  assert.equal(value.outcome_mode, 'answer');
+  assert.deepEqual(value.expected_deliverables, ['industry_market_analysis_report']);
+});
+
 test('ambiguous plan plus answer request requires an explicit outcome choice', () => {
   const value = normalizeOutcomeRequirement(requirement(), '创建一个调研任务，输出策略地图、心智模型和机会点', null);
   assert.equal(value.outcome_mode, undefined);

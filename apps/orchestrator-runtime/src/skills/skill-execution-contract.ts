@@ -107,6 +107,11 @@ function validateGraph(contract: SkillExecutionContract): void {
   const stages = new Map<string, SkillExecutionStage>();
   for (const stage of contract.stages) {
     if (stages.has(stage.stage_id)) throw new Error(`duplicate Skill stage ${stage.stage_id}`);
+    if (stage.actor_type === 'skill' && stage.actor_id !== contract.skill_id) {
+      throw new Error(
+        `Skill execution contract ${contract.skill_id} contains hidden Skill actor ${stage.actor_id}`,
+      );
+    }
     if (stage.share_scope === 'plan' && stage.actor_type !== 'tool' && stage.actor_type !== 'knowledge') {
       throw new Error(`Skill stage ${stage.stage_id} may declare share_scope only for Tool or Knowledge`);
     }

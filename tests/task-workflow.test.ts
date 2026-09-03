@@ -23,6 +23,7 @@ import {
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { DatasetInputGateStore } from '../apps/orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import {
@@ -1004,6 +1005,86 @@ test('seals valid visual input and stores only its Artifact reference in the gat
     }
     const manifest = await artifacts.readVerifiedBoundJson<unknown>(gate!.evidenceRef!);
     assert.doesNotMatch(JSON.stringify(manifest.value), /data:image|base64/u);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('binds one uploaded Dataset by Artifact reference without creating a visual publication', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-dataset-input-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const datasetGates = new DatasetInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+      datasetGates,
+    );
+    const created = await createCandidateTask(repository, 'sealed-dataset-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'sealed-dataset-input', [currentStep({ input: { user_research_dataset: null } })]),
+      pendingInputs: [{
+        kind: 'dataset', role: 'user_research_dataset', label: '匿名用户研究 CSV', multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'user_research_dataset', multiple: false }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'sealed-dataset-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const uploaded = await datasetGates.upload({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      role: 'user_research_dataset',
+      ownerUserId: ownerId,
+      taskSensitivity: 'internal',
+      fileName: 'users.csv',
+      mediaType: 'text/csv',
+      bytes: Buffer.from('sample_id,score\nu1,3\n'),
+      metadata: {
+        rowMeaning: '一行一个匿名样本', timeRange: '2026-Q3', fieldNotes: {}, units: { score: '分' },
+        sampling: '访谈样本', piiConfirmedAbsent: true,
+      },
+    });
+
+    await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'sealed-dataset-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { user_research_dataset: uploaded.datasetInputId },
+    });
+
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.value, null);
+    assert.equal(gate?.evidenceRef, uploaded.datasetInputId);
+    const verified = await datasetGates.resolve({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      ownerUserId: ownerId,
+      gates: [gate!],
+      pendingInputs: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.pendingInputs as never,
+    });
+    assert.equal((verified.gates[0]?.value as { version?: string }).version, 'dataset-model-view-v1');
+    const connection = await scopedDatabase.connect();
+    try {
+      const publications = await connection.query(
+        'SELECT count(*)::int AS count FROM control_visual_publications WHERE task_id = $1',
+        [created.task.id],
+      );
+      assert.equal(publications.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
   } finally {
     rmSync(artifactRoot, { recursive: true, force: true });
   }

@@ -23,6 +23,7 @@ import type {
   SourceArtifactRef,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-contract.ts';
 import { researchStrategyPayloadV2 } from './fixtures/research-strategy-v2.ts';
+import { validIndustryMarketPayload } from './fixtures/industry-market.ts';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const PLAN_ID = '22222222-2222-4222-8222-222222222222';
@@ -291,6 +292,9 @@ const payloads: Record<EditorialDeliverableType, unknown> = {
     remediations: [{ issueId: 'i1', action: '实现焦点陷阱' }],
     verification: [{ issueId: 'i1', method: '键盘巡检', expectedResult: '焦点顺序正确' }],
   },
+  industry_market_analysis_report: JSON.parse(
+    JSON.stringify(validIndustryMarketPayload()).replaceAll('"E1-1"', '"evidence-1"'),
+  ) as unknown,
 };
 
 test('materialization is deterministic, preserves scalar types and emits a minimal model context', () => {
@@ -309,7 +313,7 @@ test('materialization is deterministic, preserves scalar types and emits a minim
   assert.equal(context.includes('/payload/'), false);
 });
 
-test('all six registered deliverables use explicit projectors', () => {
+test('all seven registered deliverables use explicit projectors', () => {
   const expectedPointers: Record<EditorialDeliverableType, string> = {
     research_plan: '/payload/competitorSampling/targetCount',
     research_strategy_report: '/payload/directAnswers/0/answer',
@@ -317,6 +321,7 @@ test('all six registered deliverables use explicit projectors', () => {
     voc_diagnosis_report: '/payload/frequencies/0/share',
     design_audit_report: '/payload/remediations/0/acceptanceCriteria/0',
     accessibility_audit_report: '/payload/verification/0/expectedResult',
+    industry_market_analysis_report: '/payload/strategyChains/0/designAction',
   };
   for (const deliverableType of Object.keys(payloads) as EditorialDeliverableType[]) {
     const result = materializeEditorialReport(source(deliverableType, payloads[deliverableType]));
@@ -370,6 +375,29 @@ test('all six registered deliverables use explicit projectors', () => {
     assert.equal(validation.verdict, 'pass', deliverableType);
     assert.ok(rendered.htmlBytes.byteLength > 0, deliverableType);
   }
+});
+
+test('Industry materialization emits one matrix dimension unit for multiple competitor values', () => {
+  const payload = structuredClone(payloads.industry_market_analysis_report) as ReturnType<typeof validIndustryMarketPayload>;
+  payload.competitorAnalysis.competitorSamples.push({
+    id: 'sample-2', name: '竞品平台 B', rationale: '第二个截图样本。', evidenceIds: ['evidence-1'],
+  }, {
+    id: 'sample-3', name: '竞品平台 C', rationale: '待补证据样本。', evidenceIds: [],
+  });
+  payload.competitorAnalysis.dimensionMatrix[0]!.values.push({
+    sampleId: 'sample-2', value: '展示来源说明。', evidenceIds: ['evidence-1'],
+  }, {
+    sampleId: 'sample-3', value: '待补对照。', evidenceIds: [],
+  });
+  const result = materializeEditorialReport(source('industry_market_analysis_report', payload));
+  const pointers = result.material.units.map(({ sourceRefs }) => sourceRefs[0].jsonPointer);
+  assert.equal(pointers.filter((pointer) => pointer === '/payload/competitorAnalysis/dimensionMatrix/0/dimension').length, 1);
+  assert.equal(pointers.filter((pointer) => pointer.startsWith('/payload/competitorAnalysis/dimensionMatrix/0/values/')).length, 3);
+  const unsupported = result.material.units.find(({ sourceRefs }) => (
+    sourceRefs[0].jsonPointer === '/payload/competitorAnalysis/dimensionMatrix/0/values/2/value'
+  ));
+  assert.equal(unsupported?.role, 'claim');
+  assert.equal(unsupported?.role === 'claim' ? unsupported.epistemicStatus : undefined, 'inference');
 });
 
 test('typed projectors preserve every required direct basis edge', () => {

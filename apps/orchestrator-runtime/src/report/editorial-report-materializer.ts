@@ -1,5 +1,7 @@
 import type {
   EvidenceEntry,
+  IndustryMarketAnalysisPayloadV1,
+  IndustryMarketSupportV1,
   ResearchDeliverableEnvelope,
   ResearchStrategyReportPayloadV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -1305,6 +1307,192 @@ function reportDocumentTitle(document: ReadableReportDocument): string | undefin
     : document.title.text;
 }
 
+function projectIndustryMarket(builder: MaterialBuilder, payloadValue: unknown): void {
+  const payload = payloadValue as IndustryMarketAnalysisPayloadV1;
+  if (payload?.schemaVersion !== 'industry-market-analysis-v1') {
+    fail('EDITORIAL_PAYLOAD_INVALID', 'industry_market_analysis_report requires industry-market-analysis-v1');
+  }
+  const epistemicStatus = (support: IndustryMarketSupportV1): EpistemicStatus => (
+    support.status === 'supported' ? 'fact' : support.status === 'provisional' ? 'inference' : 'unknown'
+  );
+  const addSupported = (input: {
+    pointer: string;
+    value: string | number | boolean;
+    role: 'claim' | 'recommendation' | 'validation';
+    groupId: string;
+    support: IndustryMarketSupportV1;
+    requiredInBody?: boolean;
+  }): EditorialMaterialUnit => builder.addUnit({
+    ...input,
+    ...(input.role === 'claim' ? { epistemicStatus: epistemicStatus(input.support) } : {}),
+    evidenceIds: input.support.evidenceIds,
+    questionIds: input.support.questionIds,
+  });
+  const projectClaims = (
+    values: readonly { id: string; title: string; statement: string; support: IndustryMarketSupportV1 }[],
+    pointer: string,
+    groupPrefix: string,
+  ): void => values.forEach((item, index) => {
+    const groupId = `${groupPrefix}:${item.id}`;
+    builder.addUnit({ pointer: `${pointer}/${index}/title`, value: item.title, role: 'context', groupId });
+    addSupported({ pointer: `${pointer}/${index}/statement`, value: item.statement, role: 'claim', groupId, support: item.support });
+    if (item.support.validationNeeded) {
+      builder.addUnit({ pointer: `${pointer}/${index}/support/validationNeeded`, value: item.support.validationNeeded, role: 'validation', groupId, evidenceIds: item.support.evidenceIds, questionIds: item.support.questionIds });
+    }
+  });
+
+  const title = builder.addUnit({ pointer: '/payload/title', value: payload.title, role: 'context', groupId: 'industry-report', requiredInBody: true });
+  builder.titleUnitId = title.id;
+  const scope = payload.scope;
+  builder.addUnit({ pointer: '/payload/scope/category', value: scope.category, role: 'context', groupId: 'industry-scope', requiredInBody: true });
+  scope.subcategories.forEach((value, index) => builder.addUnit({ pointer: `/payload/scope/subcategories/${index}`, value, role: 'context', groupId: 'industry-scope' }));
+  scope.exclusions.forEach((value, index) => builder.addUnit({ pointer: `/payload/scope/exclusions/${index}`, value, role: 'audit', groupId: 'industry-scope' }));
+  for (const [field, value] of [
+    ['analysisDepth', scope.analysisDepth],
+    ['primaryFocus', scope.primaryFocus],
+    ['decisionGoal', scope.decisionGoal],
+    ['timeWindow', scope.timeWindow],
+  ] as const) builder.addUnit({ pointer: `/payload/scope/${field}`, value, role: 'context', groupId: 'industry-scope' });
+  scope.secondaryFocuses.forEach((value, index) => builder.addUnit({ pointer: `/payload/scope/secondaryFocuses/${index}`, value, role: 'context', groupId: 'industry-scope' }));
+  scope.decisionAudience.forEach((value, index) => builder.addUnit({ pointer: `/payload/scope/decisionAudience/${index}`, value, role: 'context', groupId: 'industry-scope' }));
+
+  payload.coverageLedger.forEach((entry, index) => {
+    const groupId = `industry-coverage:${entry.dimension}`;
+    builder.addUnit({ pointer: `/payload/coverageLedger/${index}/dimension`, value: entry.dimension, role: 'context', groupId });
+    builder.addUnit({ pointer: `/payload/coverageLedger/${index}/status`, value: entry.status, role: 'audit', groupId });
+    builder.addUnit({ pointer: `/payload/coverageLedger/${index}/summary`, value: entry.summary, role: entry.status === 'unavailable' ? 'validation' : 'claim', epistemicStatus: entry.status === 'supported' ? 'fact' : entry.status === 'partial' ? 'inference' : 'unknown', groupId, evidenceIds: entry.evidenceIds, requiredInBody: true });
+  });
+
+  const sections = [
+    ['marketLandscape', payload.marketLandscape, 'industry-market'],
+    ['supplyLandscape', payload.supplyLandscape, 'industry-supply'],
+    ['jdDiagnosis', payload.jdDiagnosis, 'industry-jd-diagnosis'],
+    ['designLanguage', payload.designLanguage, 'industry-design-language'],
+  ] as const;
+  for (const [key, section, groupId] of sections) {
+    const sectionEvidenceIds = uniqueStrings(section.items.flatMap(({ support }) => support.evidenceIds));
+    const sectionQuestionIds = uniqueStrings(section.items.flatMap(({ support }) => support.questionIds));
+    builder.addUnit({ pointer: `/payload/${key}/summary`, value: section.summary, role: section.status === 'unavailable' ? 'validation' : section.status === 'supported' && sectionEvidenceIds.length === 0 ? 'context' : 'claim', epistemicStatus: section.status === 'supported' ? 'fact' : section.status === 'provisional' ? 'inference' : 'unknown', groupId, evidenceIds: sectionEvidenceIds, questionIds: sectionQuestionIds, requiredInBody: true });
+    projectClaims(section.items, `/payload/${key}/items`, groupId);
+  }
+
+  const audience = payload.audienceSegments;
+  const audienceEvidenceIds = uniqueStrings([
+    ...audience.items,
+    ...audience.segments,
+    ...audience.personas,
+    ...audience.differences,
+    ...audience.designImplications,
+  ].flatMap(({ support }) => support.evidenceIds));
+  const audienceQuestionIds = uniqueStrings([
+    ...audience.items,
+    ...audience.segments,
+    ...audience.personas,
+    ...audience.differences,
+    ...audience.designImplications,
+  ].flatMap(({ support }) => support.questionIds));
+  builder.addUnit({ pointer: '/payload/audienceSegments/summary', value: audience.summary, role: audience.status === 'unavailable' ? 'validation' : audience.status === 'supported' && audienceEvidenceIds.length === 0 ? 'context' : 'claim', epistemicStatus: audience.status === 'supported' ? 'fact' : audience.status === 'provisional' ? 'inference' : 'unknown', groupId: 'industry-audience', evidenceIds: audienceEvidenceIds, questionIds: audienceQuestionIds, requiredInBody: true });
+  builder.addUnit({ pointer: '/payload/audienceSegments/basisType', value: audience.basisType, role: 'audit', groupId: 'industry-audience' });
+  builder.addUnit({ pointer: '/payload/audienceSegments/sampleCoverage', value: audience.sampleCoverage, role: 'audit', groupId: 'industry-audience' });
+  projectClaims(audience.items, '/payload/audienceSegments/items', 'industry-audience-item');
+  projectClaims(audience.segments, '/payload/audienceSegments/segments', 'industry-segment');
+  projectClaims(audience.personas, '/payload/audienceSegments/personas', 'industry-persona');
+  projectClaims(audience.differences, '/payload/audienceSegments/differences', 'industry-audience-difference');
+  projectClaims(audience.designImplications, '/payload/audienceSegments/designImplications', 'industry-audience-implication');
+
+  const competitor = payload.competitorAnalysis;
+  const competitorEvidenceIds = uniqueStrings([
+    ...competitor.items.flatMap(({ support }) => support.evidenceIds),
+    ...competitor.competitorSamples.flatMap(({ evidenceIds }) => evidenceIds),
+    ...competitor.dimensionMatrix.flatMap(({ values }) => values.flatMap(({ evidenceIds }) => evidenceIds)),
+    ...competitor.differences.flatMap(({ support }) => support.evidenceIds),
+    ...competitor.impacts.flatMap(({ support }) => support.evidenceIds),
+  ]);
+  const competitorQuestionIds = uniqueStrings([
+    ...competitor.items,
+    ...competitor.differences,
+    ...competitor.impacts,
+  ].flatMap(({ support }) => support.questionIds));
+  builder.addUnit({ pointer: '/payload/competitorAnalysis/summary', value: competitor.summary, role: competitor.status === 'unavailable' ? 'validation' : competitor.status === 'supported' && competitorEvidenceIds.length === 0 ? 'context' : 'claim', epistemicStatus: competitor.status === 'supported' ? 'fact' : competitor.status === 'provisional' ? 'inference' : 'unknown', groupId: 'industry-competition', evidenceIds: competitorEvidenceIds, questionIds: competitorQuestionIds, requiredInBody: true });
+  projectClaims(competitor.items, '/payload/competitorAnalysis/items', 'industry-competitor-item');
+  competitor.competitorSamples.forEach((sample, index) => {
+    const groupId = `industry-competitor:${sample.id}`;
+    builder.addUnit({ pointer: `/payload/competitorAnalysis/competitorSamples/${index}/name`, value: sample.name, role: 'context', groupId, evidenceIds: sample.evidenceIds });
+    builder.addUnit({ pointer: `/payload/competitorAnalysis/competitorSamples/${index}/rationale`, value: sample.rationale, role: 'audit', groupId, evidenceIds: sample.evidenceIds });
+  });
+  competitor.dimensionMatrix.forEach((row, rowIndex) => {
+    const groupId = `industry-competitor-matrix:${rowIndex}`;
+    builder.addUnit({ pointer: `/payload/competitorAnalysis/dimensionMatrix/${rowIndex}/dimension`, value: row.dimension, role: 'context', groupId });
+    row.values.forEach((value, valueIndex) => {
+      builder.addUnit({
+        pointer: `/payload/competitorAnalysis/dimensionMatrix/${rowIndex}/values/${valueIndex}/value`,
+        value: value.value,
+        role: 'claim',
+        epistemicStatus: value.evidenceIds.length > 0 ? 'fact' : 'inference',
+        groupId,
+        evidenceIds: value.evidenceIds,
+        requiredInBody: true,
+      });
+    });
+  });
+  competitor.differences.forEach((item, index) => addSupported({ pointer: `/payload/competitorAnalysis/differences/${index}/statement`, value: item.statement, role: 'claim', groupId: `industry-difference:${item.id}`, support: item.support }));
+  competitor.impacts.forEach((item, index) => addSupported({ pointer: `/payload/competitorAnalysis/impacts/${index}/statement`, value: item.statement, role: 'claim', groupId: `industry-impact:${item.differenceId}:${index}`, support: item.support }));
+
+  payload.validatedFindings.forEach((item, index) => addSupported({ pointer: `/payload/validatedFindings/${index}/statement`, value: item.statement, role: 'claim', groupId: `industry-finding:${item.id}`, support: item.support }));
+  payload.gapMatrix.forEach((item, index) => {
+    const groupId = `industry-gap-matrix:${item.id}`;
+    addSupported({ pointer: `/payload/gapMatrix/${index}/userNeed`, value: item.userNeed, role: 'claim', groupId, support: item.support });
+    builder.addUnit({ pointer: `/payload/gapMatrix/${index}/jdState`, value: item.jdState, role: 'audit', groupId, evidenceIds: item.support.evidenceIds, questionIds: item.support.questionIds });
+    builder.addUnit({ pointer: `/payload/gapMatrix/${index}/competitorSupply`, value: item.competitorSupply, role: 'audit', groupId, evidenceIds: item.support.evidenceIds, questionIds: item.support.questionIds });
+    builder.addUnit({ pointer: `/payload/gapMatrix/${index}/gapLevel`, value: item.gapLevel, role: 'context', groupId });
+  });
+  addSupported({ pointer: '/payload/positioning/statement', value: payload.positioning.statement, role: 'claim', groupId: 'industry-positioning', support: payload.positioning.support, requiredInBody: true });
+  payload.positioning.exclusions.forEach((value, index) => builder.addUnit({ pointer: `/payload/positioning/exclusions/${index}`, value, role: 'audit', groupId: 'industry-positioning' }));
+
+  payload.opportunities.forEach((item, index) => {
+    const groupId = `industry-requested-artifact:opportunity:${item.id}`;
+    builder.addUnit({ pointer: `/payload/opportunities/${index}/title`, value: item.title, role: 'context', groupId });
+    builder.addUnit({ pointer: `/payload/opportunities/${index}/priority`, value: item.priority, role: 'context', groupId });
+    addSupported({ pointer: `/payload/opportunities/${index}/statement`, value: item.statement, role: 'recommendation', groupId, support: item.support });
+  });
+  payload.strategyChains.forEach((item, index) => {
+    const groupId = `industry-requested-artifact:strategy-chain:${item.id}`;
+    builder.addUnit({ pointer: `/payload/strategyChains/${index}/title`, value: item.title, role: 'context', groupId });
+    builder.addUnit({ pointer: `/payload/strategyChains/${index}/priority`, value: item.priority, role: 'context', groupId, requiredInBody: item.priority === 'P0' });
+    addSupported({ pointer: `/payload/strategyChains/${index}/goal`, value: item.goal, role: 'recommendation', groupId, support: item.support });
+    addSupported({ pointer: `/payload/strategyChains/${index}/currentProblem`, value: item.currentProblem, role: 'claim', groupId, support: item.support });
+    addSupported({ pointer: `/payload/strategyChains/${index}/competitorReference`, value: item.competitorReference, role: 'claim', groupId, support: item.support });
+    addSupported({ pointer: `/payload/strategyChains/${index}/designAction`, value: item.designAction, role: 'recommendation', groupId, support: item.support, requiredInBody: true });
+    addSupported({ pointer: `/payload/strategyChains/${index}/measurement`, value: item.measurement, role: 'validation', groupId, support: item.support });
+    addSupported({ pointer: `/payload/strategyChains/${index}/validationMethod`, value: item.validationMethod, role: 'validation', groupId, support: item.support });
+  });
+  payload.categoryAssets.forEach((item, index) => {
+    const groupId = `industry-requested-artifact:category-asset:${item.id}`;
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/family`, value: item.family, role: 'context', groupId });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/name`, value: item.name, role: 'context', groupId });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/fitness`, value: item.fitness, role: 'context', groupId });
+    addSupported({ pointer: `/payload/categoryAssets/${index}/rationale`, value: item.rationale, role: 'recommendation', groupId, support: item.support });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/reviewStatus`, value: item.reviewStatus, role: 'audit', groupId });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/collectedAt`, value: item.collectedAt, role: 'audit', groupId });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/platformInheritance`, value: item.platformInheritance, role: 'audit', groupId });
+    builder.addUnit({ pointer: `/payload/categoryAssets/${index}/categoryDelta`, value: item.categoryDelta, role: 'audit', groupId });
+  });
+  payload.measurementPlan.forEach((item, index) => {
+    const groupId = `industry-requested-artifact:measurement:${item.id}`;
+    builder.addUnit({ pointer: `/payload/measurementPlan/${index}/name`, value: item.name, role: 'context', groupId });
+    addSupported({ pointer: `/payload/measurementPlan/${index}/definition`, value: item.definition, role: 'claim', groupId, support: item.support });
+    if (item.baseline !== null) builder.addUnit({ pointer: `/payload/measurementPlan/${index}/baseline`, value: item.baseline, role: 'context', groupId, metricEligible: typeof item.baseline === 'number', evidenceIds: item.support.evidenceIds });
+    if (item.target !== null) builder.addUnit({ pointer: `/payload/measurementPlan/${index}/target`, value: item.target, role: 'context', groupId, metricEligible: typeof item.target === 'number', evidenceIds: item.support.evidenceIds });
+    addSupported({ pointer: `/payload/measurementPlan/${index}/validationMethod`, value: item.validationMethod, role: 'validation', groupId, support: item.support });
+  });
+  payload.dataGaps.forEach((item, index) => {
+    const groupId = `industry-data-gap:${item.id}`;
+    builder.addUnit({ pointer: `/payload/dataGaps/${index}/statement`, value: item.statement, role: 'risk', groupId, requiredInBody: true });
+    builder.addUnit({ pointer: `/payload/dataGaps/${index}/impact`, value: item.impact, role: 'risk', groupId });
+    builder.addUnit({ pointer: `/payload/dataGaps/${index}/resolutionPath`, value: item.resolutionPath, role: 'validation', groupId });
+  });
+}
+
 function projectPayload(builder: MaterialBuilder, deliverable: ResearchDeliverableEnvelope<unknown>): void {
   switch (deliverable.deliverableType) {
     case 'research_plan': return projectResearchPlan(builder, deliverable.payload);
@@ -1313,6 +1501,7 @@ function projectPayload(builder: MaterialBuilder, deliverable: ResearchDeliverab
     case 'voc_diagnosis_report': return projectVoc(builder, deliverable.payload);
     case 'design_audit_report': return projectDesignAudit(builder, deliverable.payload);
     case 'accessibility_audit_report': return projectAccessibility(builder, deliverable.payload);
+    case 'industry_market_analysis_report': return projectIndustryMarket(builder, deliverable.payload);
     default: fail('EDITORIAL_DELIVERABLE_UNSUPPORTED', `unsupported deliverable ${deliverable.deliverableType}`);
   }
 }

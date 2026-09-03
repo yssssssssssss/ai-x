@@ -170,6 +170,30 @@ function provisionalSupport(input: ContributionAdapterInput, confidence: number)
   };
 }
 
+function contributionSupport(
+  input: ContributionAdapterInput,
+  primaryType: ContributionType,
+  confidence: number,
+) {
+  if (input.skillId === 'generate-persona' && primaryType === 'persona') {
+    const profileEvidence = input.evidenceManifest.entries.filter((entry) => (
+      entry.kind === 'dataset'
+      && entry.evidenceClass === 'dataset'
+      && entry.id.endsWith(':profile')
+    ));
+    if (profileEvidence.length > 0) {
+      return {
+        questionIds: [...input.questionIds],
+        evidenceIds: profileEvidence.map(({ id }) => id),
+        status: 'supported' as const,
+        confidence,
+        validationNeeded: '',
+      };
+    }
+  }
+  return provisionalSupport(input, confidence);
+}
+
 function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContributionArtifactV1 {
   if (input.questionIds.length === 0) {
     throw new ContributionAdapterError(
@@ -197,7 +221,7 @@ function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContri
     title: finding.id,
     statement: finding.statement,
     requestedArtifactTypes: [],
-    support: provisionalSupport(input, finding.confidence),
+    support: contributionSupport(input, primaryType, finding.confidence),
   }, `/findings/${index}`, finding));
   envelope.assumptions.forEach((statement, index) => addUnit({
     key: `assumption-${String(index + 1).padStart(3, '0')}`,
@@ -226,7 +250,7 @@ function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContri
         ? value
         : stableJsonStringify(value),
       requestedArtifactTypes: [...input.requestedArtifactTypes],
-      support: provisionalSupport(input, 0.5),
+      support: contributionSupport(input, primaryType, 0.5),
     }, `/payload/${field.replaceAll('~', '~0').replaceAll('/', '~1')}`, value));
   if (units.length === 0) {
     throw new ContributionAdapterError('no_contribution_units', 'Skill output has no deterministic contribution units');

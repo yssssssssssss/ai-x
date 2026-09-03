@@ -1202,6 +1202,7 @@ export class PlanCompiler {
         steps: input.candidate.steps,
         task: input.task,
         portfolio: input.portfolio,
+        capabilityResolution,
         ...(input.skillLoader ? { skillLoader: input.skillLoader } : {}),
       });
     } catch (error) {

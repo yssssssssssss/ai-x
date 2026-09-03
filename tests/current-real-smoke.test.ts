@@ -15,6 +15,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   mayAutoApproveSmoke,
+  readEditorialSummaryWithOneRetry,
   resolveSmokeReportContract,
   resolveApprovalMode,
   resolveSmokeRequirement,
@@ -25,6 +26,7 @@ import {
   selectSmokeCandidate,
   SmokeInfrastructureError,
   summarizeSmokeEvidence,
+  verifyEditorialSummaryForSmoke,
   verifySmokeGapSummaryHashes,
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
@@ -100,6 +102,7 @@ const realSmokeScenarios = [
   { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
   { profile: 'design_audit', scenarioId: 'design-product-detail' },
   { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
+  { profile: 'industry_market_analysis', scenarioId: 'industry-pet-food-public' },
 ] as const;
 const realProfiles = realSmokeScenarios.map(({ profile }) => profile);
 
@@ -154,7 +157,9 @@ async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeRecei
         process.cwd(),
         profile === 'research_synthesis'
           ? 'tests/fixtures/research-synthesis-real-smoke.json'
-          : 'tests/fixtures/current-semantic-gold.json',
+          : profile === 'industry_market_analysis'
+            ? 'tests/fixtures/industry-real-smoke.json'
+            : 'tests/fixtures/current-semantic-gold.json',
       ),
       profiles: [profile],
       scenarioId,
@@ -444,7 +449,31 @@ test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   }
 });
 
-test('current real smoke covers all six Current profiles', () => {
+test('real smoke retries an isolated Editorial Summary failure at most once', async () => {
+  let calls = 0;
+  const result = await readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('transient summary failure');
+    return '<!doctype html><html lang="zh-CN"></html>';
+  });
+  assert.match(result ?? '', /^<!doctype html>/u);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(() => readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    throw new Error('persistent summary failure');
+  }), /persistent summary failure/u);
+  assert.equal(calls, 2);
+
+  const explicitFailure = await verifyEditorialSummaryForSmoke(async () => {
+    throw new Error('persistent summary failure');
+  });
+  assert.equal(explicitFailure.status, 'failed');
+  assert.match(explicitFailure.failure ?? '', /^Current real smoke failed error_type=Error message_hash=[a-f0-9]{16}$/u);
+});
+
+test('current real smoke covers all seven Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
     'user_research_planning',
@@ -452,6 +481,7 @@ test('current real smoke covers all six Current profiles', () => {
     'voc_diagnosis',
     'design_audit',
     'a11y_audit',
+    'industry_market_analysis',
   ]);
 });
 

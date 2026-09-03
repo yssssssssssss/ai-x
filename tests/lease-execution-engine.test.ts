@@ -375,6 +375,80 @@ class CountingRealTavilyAdapter implements ToolAdapter {
   }
 }
 
+class JoyspaceViewTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+  readonly body = '已审阅的 Joyspace 行业方法正文。';
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    const contentSha256 = `sha256:${createHash('sha256').update(this.body).digest('hex')}`;
+    const document = {
+      title: 'Industry Method', body: this.body, author: 'Research Team',
+      url: 'https://joyspace.jd.com/pages/industry-method', contentSha256,
+    };
+    return {
+      output: {
+        version: 'joyspace-read-output-v1', operation: 'search', status: 'available',
+        documents: [{
+          title: document.title, url: document.url, author: document.author,
+          updatedAt: '2026-09-03T10:00:00.000+08:00', preview: '行业方法摘要',
+        }],
+        viewedDocument: document,
+        runtime: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+      knowledgeAttachments: [{
+        attachmentId: 'joyspace-document', title: document.title, body: document.body,
+        sourceUrl: document.url, author: document.author, updatedAt: '2026-09-03T10:00:00.000+08:00',
+        contentSha256, sensitivity: 'internal',
+      }],
+      latencyMs: 2,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok', latencyMs: 2,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    };
+  }
+}
+
+class FailingJoyspaceTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    throw new ToolInvocationError(options.toolId, {
+      kind: 'browser_bridge', retryable: false,
+      sanitizedMessage: 'Joyspace Browser Bridge is unavailable',
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(), status: 'failed', latencyMs: 1,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    });
+  }
+}
+
 class MixedSchemeTavilyAdapter extends CountingRealTavilyAdapter {
   override async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const result = await super.invoke(options);
@@ -4756,6 +4830,100 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(attempts[0]?.state, 'completed');
 });
 
+test('seals Joyspace search-and-view content as an internal Knowledge Snapshot with Evidence and Receipt versions', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    step_no: 2,
+    step_name: '搜索并读取 Joyspace 方法',
+    actor_type: 'tool',
+    actor_id: 'joyspace-read',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+    acceptance_criteria: ['returns a hash-bound Knowledge Snapshot'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const skillStep = structuredClone(planSteps[1]!);
+  skillStep.step_no = 3;
+  skillStep.depends_on = [1, 2];
+  const summaryStep = structuredClone(planSteps[2]!);
+  summaryStep.step_no = 4;
+  summaryStep.depends_on = [3];
+  const reviewStep = structuredClone(planSteps[3]!);
+  reviewStep.step_no = 5;
+  reviewStep.depends_on = [4];
+  const steps = [structuredClone(planSteps[0]!), joyspaceStep, skillStep, summaryStep, reviewStep];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
+      }],
+      capability_decisions: {
+        eligible: [{
+          skill: {
+            id: 'digital-human-competitive-analysis',
+            required_tools: ['tavily-web-search'],
+            optional_tools: ['joyspace-read'],
+          },
+          optional_tool_decisions: [{ tool_id: 'joyspace-read', status: 'available' }],
+        }],
+        rejected: [],
+      },
+      capability_gaps: [],
+    },
+  );
+  const tavily = new CountingRealTavilyAdapter();
+  const joyspace = new JoyspaceViewTestAdapter();
+  const deliverables = new RecordingDeliverablesFake();
+  const llm = new CountingRealLLM();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(tavily).register(joyspace),
+    llm,
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed');
+  assert.equal(joyspace.calls, 1);
+  const artifacts = await repository.listArtifactsForAttempt(lease);
+  const snapshot = artifacts.find(({ kind }) => kind === 'knowledge_snapshot');
+  assert.ok(snapshot?.contentSha256);
+  assert.equal(snapshot.schemaVersion, 'joyspace-knowledge-snapshot-v1');
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<Record<string, unknown>>(snapshot.id);
+  assert.equal(stored.value.body, joyspace.body);
+  assert.equal(stored.value.contentSha256, `sha256:${createHash('sha256').update(joyspace.body).digest('hex')}`);
+
+  const deliverableInput = deliverables.calls[0];
+  assert.ok(deliverableInput);
+  const knowledgeEvidence = deliverableInput.evidenceManifest.value.entries.find(({ id }) => id === 'JV2-1');
+  assert.deepEqual(knowledgeEvidence && {
+    kind: knowledgeEvidence.kind,
+    evidenceClass: knowledgeEvidence.evidenceClass,
+    artifactId: knowledgeEvidence.artifactId,
+    jsonPointer: knowledgeEvidence.jsonPointer,
+    sensitivity: knowledgeEvidence.sensitivity,
+    sourceUrl: knowledgeEvidence.sourceUrl,
+  }, {
+    kind: 'knowledge_excerpt', evidenceClass: 'knowledge', artifactId: snapshot.id,
+    jsonPointer: '/body', sensitivity: 'internal',
+    sourceUrl: 'https://joyspace.jd.com/pages/industry-method',
+  });
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  const provenance = executionSteps.find(({ stepNo }) => stepNo === 2)?.toolProvenance;
+  assert.deepEqual(provenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.deepEqual(provenance?.knowledgeSnapshotArtifactIds, [snapshot.id]);
+  assert.match(JSON.stringify(llm.contexts[0]), /JV2-1/u);
+  assert.match(JSON.stringify(llm.contexts[0]), /已审阅的 Joyspace 行业方法正文/u);
+});
+
 test('executes frozen Knowledge before Skill and emits Knowledge Evidence', async () => {
   const knowledge = loadRuntimeKnowledgeIndex().find(({ id }) => id === 'standard_sampling');
   assert.ok(knowledge && (knowledge.status === 'approved' || knowledge.status === 'draft'));
@@ -7115,6 +7283,62 @@ test('adds an unresolved Playwright page failure only after the visual publicati
   assert.doesNotMatch(JSON.stringify(browserStep?.toolProvenance?.gapSummary), /other-source\.test|authentication/);
   const browserArtifacts = await repository.listArtifactsForAttempt(lease);
   assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
+});
+
+test('turns a Joyspace Browser Bridge failure into one explicit optional Knowledge gap', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '读取 Joyspace 方法',
+    actor_id: 'joyspace-read',
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+  };
+  const steps = [
+    planSteps[0]!,
+    joyspaceStep,
+    optionalToolOwnerStep(),
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'research-plan', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
+      }],
+      ...frozenOptionalToolPlan('joyspace-read'),
+    },
+    {
+      task_type: 'user_research_planning', research_goal: 'plan a public study',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [{ id: 'research-plan', statement: 'plan is evidence backed' }],
+    },
+  );
+  const joyspace = new FailingJoyspaceTestAdapter();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(joyspace),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(joyspace.calls, 1);
+  assert.equal(deliverables.calls[0]?.gaps.length, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /Joyspace Browser Bridge is unavailable/u);
+  const execution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(execution?.state, 'skipped');
+  assert.equal(execution?.failure?.kind, 'browser_bridge');
+  assert.equal(execution?.toolProvenance?.toolTier, 'optional');
+  assert.deepEqual(execution?.toolProvenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.ok((execution?.toolProvenance?.gapSummary as { keys?: string[] })?.keys?.includes('step:browser_bridge'));
 });
 
 test('continues after an optional Tool failure and completes with a sanitized gap', async () => {

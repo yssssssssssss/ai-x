@@ -13,6 +13,9 @@ import type {
   ResearchContributionBundleV1,
   ResearchDeliverableEnvelope,
   ProblemGraph,
+  IndustryMarketAnalysisPayloadV1,
+  IndustryMarketContentDraftV1,
+  IndustryMarketContentPatchV1,
   ResearchStrategyReportPayload,
   ResearchStrategyReportPayloadV2,
   ResearchStrategyContentDraftV2,
@@ -57,6 +60,14 @@ import {
 import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
+import {
+  applyIndustryMarketContentPatch,
+  industryMarketDraftFromPayload,
+} from './industry-market-content-patch.ts';
+import {
+  assembleIndustryMarketDeliverable,
+  isIndustryMarketPayload,
+} from './industry-market-deliverable-assembler.ts';
 import {
   assembleResearchStrategyDeliverable,
   extractResearchStrategyContentDraft,
@@ -519,6 +530,7 @@ export interface CurrentDeliverableGenerateInput {
   cancellationSignal?: AbortSignal;
   visualAssets?: readonly VerifiedVisualAsset[];
   visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
+  industryDraftOverride?: IndustryMarketContentDraftV1;
   strategyDraftOverride?: ResearchStrategyContentDraftV2;
   strategyFidelity?: {
     mode: 'structural_repair' | 'semantic_revision';
@@ -566,6 +578,8 @@ const OPTIONAL_TOOL_GAP_FAILURE_KINDS = new Set([
   'network',
   'quota',
   'authentication',
+  'permission',
+  'browser_bridge',
   'configuration',
   'capability',
   'unknown',
@@ -1567,6 +1581,128 @@ export class CurrentDeliverableService {
     const strategySkillStepNo = synthesisMaterials.find(({ actorType, actorId }) => (
       actorType === 'skill' && actorId === 'research-strategy-synthesis'
     ))?.stepNo ?? Number.POSITIVE_INFINITY;
+    if (contract.synthesisMode === 'reviewed_skill_assembly' && contract.entry.id === 'industry_market_analysis_report') {
+      if (requirement?.version !== 'research-task-v2' || requirement.task_type !== 'industry_market_analysis' || !requiredCoverage) {
+        throw new Error('reviewed Industry assembly requires a finalized Industry requirement');
+      }
+      const deliverable = assembleIndustryMarketDeliverable({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+        requirement: input.finalizedRequirement as ResearchTaskV2,
+        problemGraph: input.problemGraph as ProblemGraph,
+        evidenceManifest,
+        materials: synthesisMaterials,
+        ...(portfolioContribution ? { contributionBundle: portfolioContribution.bundle } : {}),
+        ...(input.industryDraftOverride ? { draftOverride: input.industryDraftOverride } : {}),
+        gaps: sanitizedGaps,
+        capabilityProvenance: outputData.provenance,
+        validator: this.dependencies.validator,
+      });
+      if (!isIndustryMarketPayload(deliverable.payload)) {
+        throw new Error('reviewed Industry assembly did not produce Industry Market payload v1');
+      }
+      assertRequiredCoverage(deliverable.coverage, requiredCoverage);
+      this.reportValidator.validate({
+        manifest: evidenceManifest,
+        report: deliverable,
+        resolver: input.evidenceResolver,
+        requireCoverage: true,
+        validatePayloadSchema: true,
+      });
+      let crossSkillReviewArtifactId: string | undefined;
+      let contributionLedgerArtifactId: string | undefined;
+      let contributionSummaryArtifactId: string | undefined;
+      if (portfolioContribution) {
+        const reviewed = buildGenericReviewedContributionLedger({
+          bundle: portfolioContribution.bundle,
+          deliverable: { ...deliverable, payload: deliverable.payload },
+          contributionRequirements: portfolioContribution.requirements,
+          synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+          nonAttributableSourceUnitIds: portfolioContribution.nonAttributableSourceUnitIds,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/cross-skill-review-v1.schema.json',
+          reviewed.review,
+        );
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-ledger-v1.schema.json',
+          reviewed.ledger,
+        );
+        validateContributionLedger({
+          ledger: reviewed.ledger,
+          sources: portfolioContribution.bundle.entries.map((entry) => ({
+            contributionArtifactId: entry.artifactId,
+            contribution: entry.contribution,
+          })),
+        });
+        const summary = buildContributionSummary(portfolioContribution.bundle, reviewed.ledger);
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-summary-v1.schema.json',
+          summary,
+        );
+        const crossSkillReviewArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'cross_skill_review',
+          relativePath: `reviews/cross-skill-review-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.review.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.review,
+        });
+        const ledgerArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_ledger',
+          relativePath: `deliverables/contribution-ledger-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.ledger.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.ledger,
+        });
+        const summaryArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_summary',
+          relativePath: `deliverables/contribution-summary-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: summary.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: summary,
+        });
+        crossSkillReviewArtifactId = crossSkillReviewArtifact.id;
+        contributionLedgerArtifactId = ledgerArtifact.id;
+        contributionSummaryArtifactId = summaryArtifact.id;
+      }
+      const artifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'deliverable',
+        relativePath: `deliverables/final-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: `${contract.entry.envelope_version}-review-gated`,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: deliverable,
+      });
+
+      return {
+        deliverable: deliverable as ResearchDeliverableEnvelope<IndustryMarketAnalysisPayloadV1>,
+        deliverableArtifactId: artifact.id,
+        ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+        ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+        ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
+      };
+    }
     if (contract.synthesisMode === 'reviewed_skill_assembly') {
       if (!strategyRequirement || !requiredCoverage) {
         throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
@@ -2239,6 +2375,77 @@ export class CurrentDeliverableService {
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');
+    if (input.plan.plan.deliverable_type === 'industry_market_analysis_report') {
+      if (!input.currentDeliverable || !isIndustryMarketPayload(input.currentDeliverable.payload)) {
+        throw new Error('Industry revision requires the current Canonical Deliverable');
+      }
+      const reviewIssues = input.review.dimensions.flatMap((dimension) => (
+        (dimension.revisionIssues ?? []).map((issue) => ({
+          id: issue.id,
+          dimensionId: dimension.id,
+          issue: redactString(issue.message),
+          targetNodeIds: [...issue.targetNodeIds],
+        }))
+      ));
+      if (reviewIssues.length === 0) {
+        throw new Error('Industry semantic revision requires sealed Review revisionIssues');
+      }
+      const allowedReviewIssueTargets = new Map(reviewIssues.map((issue) => (
+        [issue.id, new Set(issue.targetNodeIds)] as const
+      )));
+      const currentDraft = industryMarketDraftFromPayload(input.currentDeliverable.payload);
+      const patchSchema = JSON.parse(readFileSync(
+        join(getConfigRoot(), 'schemas/skills/industry-market-content-patch-v1.schema.json'),
+        'utf8',
+      )) as Record<string, unknown>;
+      const patch = await this.dependencies.llm.generateStructured<IndustryMarketContentPatchV1>({
+        prompt: [
+          'Return one industry-market-content-patch-v1.',
+          USER_LANGUAGE_INSTRUCTION,
+          'Resolve only the sealed final-review issues through typed leaf operations; never return or rewrite the whole Industry Draft.',
+          'Use replace_text only for an authorized semantic field on the exact target node.',
+          'Use replace_support only to lower confidence or certainty and clarify validation needs; preserve questionIds and evidenceIds exactly.',,
+          'Do not add, remove, or reorder findings, opportunities, strategy chains, category assets, measurements, or Data Gaps.',
+          'Every operation must include reviewIssueId and targetNodeId authorized by context.reviewIssues.',
+          `Review issues: ${redactString(revisionInstruction)}`,
+        ].join('\n'),
+        schema: patchSchema,
+        schemaName: 'industry-market-content-patch-v1',
+        context: {
+          authorizingReviewArtifactId: input.reviewArtifactId,
+          draft: redactSensitiveValue(currentDraft),
+          reviewIssues,
+          allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass, sourceUrl }) => ({
+            id,
+            evidenceClass,
+            ...(sourceUrl ? { sourceUrl } : {}),
+          })),
+        },
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+        receipt: {
+          stage: 'deliverable_repair',
+          attemptId: input.attempt.id,
+          stepNo: input.stepNo,
+          expectedModel: input.expectedModel,
+        },
+      });
+      this.dependencies.validator.validateSchemaOrThrow(
+        patchSchema,
+        patch.data,
+        'industry-market-content-patch-v1',
+      );
+      const revised = applyIndustryMarketContentPatch({
+        source: currentDraft,
+        patch: patch.data,
+        allowedReviewIssueTargets,
+      });
+      return this.generate({
+        ...input,
+        industryDraftOverride: revised.draft,
+        revisionInstruction,
+        revisionRound: 1,
+      });
+    }
     if (input.plan.plan.deliverable_type === 'research_strategy_report') {
       if (!input.currentDeliverable || !isResearchStrategyPayloadV2(input.currentDeliverable.payload)) {
         throw new Error('research strategy revision requires the current v2 Canonical Deliverable');

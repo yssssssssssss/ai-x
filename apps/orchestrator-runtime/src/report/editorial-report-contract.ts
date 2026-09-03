@@ -216,7 +216,8 @@ export type EditorialDeliverableType =
   | 'competitive_analysis_report'
   | 'voc_diagnosis_report'
   | 'design_audit_report'
-  | 'accessibility_audit_report';
+  | 'accessibility_audit_report'
+  | 'industry_market_analysis_report';
 
 export const EDITORIAL_MATERIALIZATION_WARNING_CODES = [
   'VISUAL_MASK_OMITTED',
@@ -731,6 +732,7 @@ const DELIVERABLE_TYPES = new Set<EditorialDeliverableType>([
   'voc_diagnosis_report',
   'design_audit_report',
   'accessibility_audit_report',
+  'industry_market_analysis_report',
 ]);
 const EVIDENCE_CLASSES = new Set([
   'public_source', 'screenshot', 'user_input', 'knowledge', 'dataset', 'simulation', 'derived',
@@ -2927,6 +2929,7 @@ function isProjectorMetricUnit(
     case 'research_strategy_report':
     case 'design_audit_report':
     case 'accessibility_audit_report':
+    case 'industry_market_analysis_report':
       return false;
   }
 }

@@ -1143,6 +1143,70 @@ after(async () => {
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
 });
 
+test('Dataset multipart upload forwards the owner-bound Idempotency-Key and parsed CSV metadata', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'dataset route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证 Dataset 上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:dataset-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadDataset: async (input: unknown) => {
+      calls.push(input);
+      return {
+        datasetInputId: 'dataset-1', fileName: 'users.csv', contentSha256: `sha256:${'1'.repeat(64)}`,
+        byteSize: 26, rowCount: 1, columns: ['sample_id', 'quote'],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('metadata', JSON.stringify({
+      rowMeaning: '一行一位匿名用户', timeRange: '2026-Q3', fieldNotes: {}, units: {},
+      sampling: '访谈样本', piiConfirmedAbsent: true,
+    }));
+    form.append('file', new Blob(['sample_id,quote\nu1,很好\n'], { type: 'text/csv' }), 'users.csv');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/user_research_dataset/dataset`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(response.headers.get('Idempotency-Key'), key);
+    assert.equal(calls.length, 1);
+    const call = calls[0] as {
+      taskId: string; planVersionId: string; role: string; ownerUserId: string;
+      idempotencyKey: string; fileName: string; mediaType: string; bytes: Uint8Array;
+    };
+    assert.deepEqual({
+      taskId: call.taskId, planVersionId: call.planVersionId, role: call.role,
+      ownerUserId: call.ownerUserId, idempotencyKey: call.idempotencyKey,
+      fileName: call.fileName, mediaType: call.mediaType, content: Buffer.from(call.bytes).toString('utf8'),
+    }, {
+      taskId: task.id, planVersionId: plan.id, role: 'user_research_dataset',
+      ownerUserId, idempotencyKey: key, fileName: 'users.csv', mediaType: 'text/csv',
+      content: 'sample_id,quote\nu1,很好\n',
+    });
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
 test('GET /api/control-tasks lists only tasks owned by the authenticated user', async () => {
   const ownerTask = await repository.createTask({
     conversationId,

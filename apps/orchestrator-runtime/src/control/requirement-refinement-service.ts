@@ -31,13 +31,19 @@ function redactRequirementValidationError(error: unknown): string {
 }
 
 const RESEARCH_TASK_FIELDS = [
-  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'business_domain',
+  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'industry_scope',
+  'available_material_roles', 'unavailable_material_roles', 'business_domain',
   'research_goal', 'comparison_dimensions', 'target_audience', 'scope', 'constraints',
   'success_criteria', 'expected_deliverables', 'assumptions', 'ambiguities',
   'clarification_questions', 'blocking_issues', 'sensitivity', 'pii_detected',
 ] as const;
 const RESEARCH_TASK_REQUIRED_FIELDS = RESEARCH_TASK_FIELDS.filter((field) => (
-  field !== 'outcome_mode' && field !== 'requested_artifacts' && field !== 'comparison_dimensions'
+  field !== 'outcome_mode'
+  && field !== 'requested_artifacts'
+  && field !== 'comparison_dimensions'
+  && field !== 'industry_scope'
+  && field !== 'available_material_roles'
+  && field !== 'unavailable_material_roles'
 ));
 
 function researchTaskCandidate(value: unknown): unknown {
@@ -170,7 +176,7 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；完整的行业、市场、赛道或品类分析使用 task_type=industry_market_analysis，并填写 industry_scope、available_material_roles、unavailable_material_roles；Industry 的资料角色只能使用 jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset 这五个机器 ID，不得写自然语言名称；行业任务应确认品类/子类、排除范围、轻中重档、主次聚焦、决策读者、决策目标、时间窗口和可提供资料；只做单项竞品对比时仍使用 competitive_research；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
 const CLARIFICATION_RESOLUTION_PROMPT = `context.clarification 包含用户此前各轮的累计显式回答；必须把这些回答视为权威约束并完整保留，不得重复已回答的问题或换 key 重问同一事项。仅当回答本身仍不明确，或引入新的权限、隐私、合规、安全、外部发布或不可逆操作阻塞时，才能继续生成 clarification_questions；其他不确定性写入 assumptions 或 non-blocking ambiguities。`;
 
 const PLAN_OUTCOME_SIGNALS = [
@@ -230,13 +236,29 @@ const SPECIALIST_INTENT_SIGNALS: ReadonlyArray<{
 ];
 
 const STRATEGY_DELIVERABLE_SIGNAL = /(?:研究策略报告|综合策略报告|策略答案|策略地图|心智模型|设计原则|\bresearch strategy report\b|\bstrategy map\b|\bmental model\b|\bdesign principles?\b)/iu;
+const INDUSTRY_DELIVERABLE_SIGNAL = /(?:行业(?:与)?市场分析|行业分析|市场分析|赛道分析|品类分析|频道(?:年度)?规划|从行业到设计策略|\bindustry market analysis\b|\bcategory analysis\b|\bmarket landscape\b)/iu;
+const INDUSTRY_BREADTH_SIGNALS = [
+  /(?:行业|市场|赛道|品类)/u,
+  /(?:用户|人群|persona)/iu,
+  /(?:竞品|竞争对手|benchmark)/iu,
+  /(?:京东|频道|现状|内诊)/u,
+  /(?:策略|机会|改版|设计)/u,
+] as const;
 
-type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report';
+function hasStrongIndustryIntent(input: string): boolean {
+  return INDUSTRY_DELIVERABLE_SIGNAL.test(input)
+    || INDUSTRY_BREADTH_SIGNALS.filter((pattern) => pattern.test(input)).length >= 4;
+}
+
+type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report' | 'industry_market_analysis_report';
 
 function clarificationDeliverableIntent(clarification: unknown): DeliverableIntent | null {
   if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
   const value = String((clarification as Record<string, unknown>).deliverable_intent ?? '');
   if (value === 'competitive_analysis_report' || /竞品分析/u.test(value)) return 'competitive_analysis_report';
+  if (value === 'industry_market_analysis_report' || /(?:行业|市场|赛道|品类).{0,8}(?:分析|报告)/u.test(value)) {
+    return 'industry_market_analysis_report';
+  }
   if (value === 'research_strategy_report' || /(?:综合|研究)?策略报告|策略答案/u.test(value)) {
     return 'research_strategy_report';
   }
@@ -304,6 +326,13 @@ function actionableBlockingIssues(
   });
 }
 
+function assertIndustryRequirementContract(requirement: ResearchTaskV2): void {
+  if (requirement.task_type !== 'industry_market_analysis') return;
+  const available = new Set(requirement.available_material_roles ?? []);
+  const overlap = (requirement.unavailable_material_roles ?? []).find((role) => available.has(role));
+  if (overlap) throw new Error(`industry material role ${overlap} cannot be both available and unavailable`);
+}
+
 export function normalizeOutcomeRequirement(
   requirement: ResearchTaskV2,
   originalInput: string,
@@ -326,8 +355,31 @@ export function normalizeOutcomeRequirement(
   ])];
   const specialistTaskType = explicitSpecialistTaskType(originalInput);
   const strongStrategySignal = STRATEGY_DELIVERABLE_SIGNAL.test(originalInput);
+  const strongIndustrySignal = hasStrongIndustryIntent(originalInput);
   const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
     || requirement.task_type === 'research_synthesis';
+
+  if (selectedDeliverable === 'industry_market_analysis_report') {
+    return {
+      ...requirement,
+      task_type: 'industry_market_analysis',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : ['research_report', 'opportunity_backlog', 'prioritized_actions', 'action_plan'],
+      expected_deliverables: ['industry_market_analysis_report'],
+      blocking_issues: actionableBlockingIssues(requirement, originalInput, 'answer'),
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(({ key, ambiguity_id }) => (
+        key !== 'deliverable_intent'
+        && key !== 'outcome_mode'
+        && (
+          ambiguity_id === undefined
+          || requirement.ambiguities.some(({ id, blocking }) => id === ambiguity_id && blocking)
+        )
+      )),
+    };
+  }
 
   if (selectedDeliverable) {
     const strategy = selectedDeliverable === 'research_strategy_report';
@@ -371,6 +423,23 @@ export function normalizeOutcomeRequirement(
         question,
         ...requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
       ],
+    };
+  }
+
+  if (selectedByUser === null && !planSignal && strongIndustrySignal) {
+    return {
+      ...requirement,
+      task_type: 'industry_market_analysis',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : ['research_report', 'opportunity_backlog', 'prioritized_actions', 'action_plan'],
+      expected_deliverables: ['industry_market_analysis_report'],
+      blocking_issues: actionableBlockingIssues(requirement, originalInput, 'answer'),
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(({ key }) => (
+        key !== 'deliverable_intent' && key !== 'outcome_mode'
+      )),
     };
   }
 
@@ -995,6 +1064,8 @@ export class RequirementRefinementService {
           input.originalInput,
           input.clarification,
         );
+        assertIndustryRequirementContract(requirement);
+        this.dependencies.validator.validateOrThrow('research-task-v2', requirement);
         canonicalRequirement = canonicalizeGeneratedExpectedDeliverables(requirement);
         break;
       } catch (error) {

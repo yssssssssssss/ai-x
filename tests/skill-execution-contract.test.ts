@@ -25,6 +25,46 @@ import { loadSkillExecutionContract } from '../apps/orchestrator-runtime/src/ski
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { CurrentPlanStep } from '../packages/api-contract/research-deliverable.ts';
 
+test('compiled Industry Market Analysis loads one reviewed nine-stage execution contract', () => {
+  const loaded = new SkillLoader().loadSkillExecution('industry-market-analysis');
+  assert.ok(loaded);
+  assert.equal(loaded.contract.skill_id, 'industry-market-analysis');
+  assert.deepEqual(loaded.contract.stages.map(({ stage_id }) => stage_id), [
+    'load-industry-methods',
+    'collect-public-evidence',
+    'inventory-inputs-and-evidence',
+    'analyze-market-users-and-supply',
+    'diagnose-jd-and-competitors',
+    'cross-validate-findings',
+    'synthesize-opportunities-and-assets',
+    'compose-industry-content-draft',
+    'self-review',
+  ]);
+  assert.equal(loaded.contract.output_stage_id, 'compose-industry-content-draft');
+  assert.deepEqual(loaded.contract.skill_references, ['references/industry-method.md']);
+});
+
+test('compiled execution contract rejects a hidden second Skill actor', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-contract-hidden-skill-'));
+  const path = 'orchestrator/skill-executions/industry-market-analysis.yaml';
+  mkdirSync(join(root, 'orchestrator/skill-executions'), { recursive: true });
+  const source = readFileSync(join(originalRoot, path), 'utf8');
+  setConfigRoot(root);
+  try {
+    writeFileSync(join(root, path), source.replace(
+      '    actor_type: llm\n    actor_id: llm.openai.gpt-4o',
+      '    actor_type: skill\n    actor_id: generate-persona',
+    ), 'utf8');
+    assert.throws(
+      () => loadSkillExecutionContract(path, 'industry-market-analysis'),
+      /hidden Skill actor/u,
+    );
+  } finally {
+    setConfigRoot(originalRoot);
+  }
+});
+
 test('compiled generate-research-plan loads one validated acyclic execution contract', () => {
   const loaded = new SkillLoader().loadSkillExecution('generate-research-plan');
   assert.ok(loaded);

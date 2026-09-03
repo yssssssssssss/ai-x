@@ -8,7 +8,7 @@ capabilities:
     method_family: multi_source_competitive_research
     evidence_paths: [public_web, screenshot_analysis, simulated_user]
   - id: competitive-web-research
-    task_types: [competitive_research]
+    task_types: [competitive_research, industry_market_analysis]
     profile_support: [breadth, decision]
     roles: [scope_expansion, decision_support]
     method_family: desk_research
@@ -38,7 +38,7 @@ capabilities:
     method_family: quantitative_attitudinal_analysis
     evidence_paths: [survey_dataset]
   - id: build-experience-metrics
-    task_types: [user_research_planning]
+    task_types: [user_research_planning, industry_market_analysis]
     profile_support: [focused, mixed_method, decision]
     roles: [focused_analysis, independent_method, decision_support]
     method_family: measurement_design
@@ -50,7 +50,7 @@ capabilities:
     method_family: qualitative_coding
     evidence_paths: [user_material, public_web]
   - id: competitive-analysis
-    task_types: [competitive_research]
+    task_types: [competitive_research, industry_market_analysis]
     profile_support: [breadth, focused, decision]
     roles: [scope_expansion, focused_analysis, decision_support]
     method_family: competitive_synthesis
@@ -74,7 +74,7 @@ capabilities:
     method_family: qualitative_interview
     evidence_paths: [user_interview]
   - id: generate-persona
-    task_types: [user_research_planning]
+    task_types: [user_research_planning, industry_market_analysis]
     profile_support: [breadth, focused, mixed_method]
     roles: [scope_expansion, focused_analysis, independent_method]
     method_family: qualitative_segmentation
@@ -92,7 +92,7 @@ capabilities:
     method_family: evidence_bound_strategy_synthesis
     evidence_paths: [public_web, knowledge_method, user_material, behavioral_dataset]
   - id: virtual-user-research
-    task_types: [research_synthesis]
+    task_types: [research_synthesis, industry_market_analysis]
     profile_support: [focused, mixed_method]
     roles: [focused_analysis, independent_method]
     method_family: synthetic_hypothesis_generation
@@ -110,29 +110,35 @@ capabilities:
     method_family: moderated_usability_test
     evidence_paths: [user_observation]
   - id: issue-prioritization
-    task_types: [user_research_planning]
+    task_types: [user_research_planning, industry_market_analysis]
     profile_support: [focused, decision, remediation]
     roles: [focused_analysis, decision_support, issue_identification, retest]
     method_family: prioritization
     evidence_paths: [derived_decision]
   - id: jobs-to-be-done
-    task_types: [user_research_planning]
+    task_types: [user_research_planning, industry_market_analysis]
     profile_support: [focused, decision]
     roles: [focused_analysis, decision_support]
     method_family: qualitative_jtbd
     evidence_paths: [user_material, knowledge_method]
   - id: journey-map
-    task_types: [user_research_planning, voc_diagnosis]
+    task_types: [user_research_planning, voc_diagnosis, industry_market_analysis]
     profile_support: [breadth, focused, mixed_method, remediation]
     roles: [scope_expansion, focused_analysis, independent_method, issue_identification, retest]
     method_family: journey_synthesis
     evidence_paths: [user_material, behavioral_dataset]
   - id: run-heuristic-evaluation
-    task_types: [design_audit]
+    task_types: [design_audit, industry_market_analysis]
     profile_support: [focused, mixed_method, remediation]
     roles: [focused_analysis, independent_method, issue_identification, retest]
     method_family: heuristic_review
     evidence_paths: [expert_review, screenshot_analysis]
+  - id: industry-market-analysis
+    task_types: [industry_market_analysis]
+    profile_support: [breadth, focused, mixed_method, decision, remediation]
+    roles: [scope_expansion, focused_analysis, independent_method, decision_support, issue_identification, retest]
+    method_family: industry_market_strategy
+    evidence_paths: [public_web, screenshot_analysis, user_material, behavioral_dataset, knowledge_method]
   - id: solution-generation
     task_types: [solution-generation]
     profile_support: [breadth, decision]

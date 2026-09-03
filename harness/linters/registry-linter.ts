@@ -6,6 +6,7 @@ import {
   fileExists,
   SKILL_RESULT_ENVELOPE_SCHEMA,
   skillCompositionIssues,
+  skillDatasetInputIssue,
   skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
@@ -58,6 +59,10 @@ function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues:
   const visualInputIssue = skillVisualInputIssue(skill);
   if (visualInputIssue) {
     issues.push({ level: 'error', target, message: `active skill 的 ${visualInputIssue}` });
+  }
+  const datasetInputIssue = skillDatasetInputIssue(skill);
+  if (datasetInputIssue) {
+    issues.push({ level: 'error', target, message: `active skill 的 ${datasetInputIssue}` });
   }
 }
 

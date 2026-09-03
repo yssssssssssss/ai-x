@@ -219,6 +219,12 @@
     "unresolved_items": []
   },
   {
+    "skill_id": "industry-market-analysis",
+    "mode": "not_applicable",
+    "selected_source_ids": [],
+    "unresolved_items": []
+  },
+  {
     "skill_id": "structure-interview-transcript",
     "mode": "gold",
     "selected_source_ids": [

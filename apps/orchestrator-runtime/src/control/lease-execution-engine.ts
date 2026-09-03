@@ -69,6 +69,7 @@ import {
   type ToolAdapterResolution,
   type ToolFailureKind,
   type ToolInvocationContext,
+  type ToolKnowledgeAttachment,
   type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
@@ -178,6 +179,10 @@ import {
 } from './step-input-resolver.ts';
 import { ExecutionScheduler } from './execution-scheduler.ts';
 import { validateCurrentExecutionPlanV3 } from '../planners/current-execution-plan-v3.ts';
+import {
+  DatasetInputGateStore,
+  type ResolvedDatasetInput,
+} from './dataset-input-gate-store.ts';
 import {
   VisualInputGateStore,
   valueForPendingInputTarget,
@@ -331,6 +336,7 @@ interface StepResult {
   toolReceipt?: ToolInvocationReceipt;
   toolAttemptReceipts?: ToolRetryAttemptReceipt[];
   mediaAttachments?: ToolMediaAttachment[];
+  knowledgeAttachments?: ToolKnowledgeAttachment[];
   toolTier?: 'core' | 'optional';
   toolResolution?: ToolAdapterResolution;
   manifestHash?: string;
@@ -836,6 +842,78 @@ function sanitizeStepResult(result: StepResult): StepResult {
       ? { skillProvenance: { ...result.skillProvenance, outputHash: hashJson(output) } }
       : {}),
   };
+}
+
+interface JoyspaceKnowledgeSnapshotPublication {
+  stepNo: number;
+  attachmentIndex: number;
+  toolId: string;
+  evidenceId: string;
+  artifact: ControlArtifact;
+  value: {
+    version: 'joyspace-knowledge-snapshot-v1';
+    title: string;
+    body: string;
+    author: string | null;
+    sourceUrl: string;
+    updatedAt: string | null;
+    contentSha256: string;
+    toolArtifactId: string;
+    toolArtifactContentSha256: string;
+  };
+}
+
+function joyspaceKnowledgeAttachments(
+  toolId: string,
+  output: unknown,
+  attachments: ToolKnowledgeAttachment[] | undefined,
+): ToolKnowledgeAttachment[] {
+  if (toolId !== 'joyspace-read') {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError(`tool ${toolId} returned unsupported Knowledge attachments`);
+    }
+    return [];
+  }
+  const record = isRecord(output) ? output : null;
+  if (record?.operation !== 'view' && record?.operation !== 'search') {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError('Joyspace Knowledge attachment has an invalid operation');
+    }
+    return [];
+  }
+  const expectedDocument = record.operation === 'view'
+    ? (isRecord(record.document) ? record.document : null)
+    : (isRecord(record.viewedDocument) ? record.viewedDocument : null);
+  if (!expectedDocument) {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError('Joyspace output has an unexpected Knowledge Snapshot attachment');
+    }
+    return [];
+  }
+  if (!attachments || attachments.length !== 1) {
+    throw new ExecutionAuthenticityError('Joyspace viewed content requires one Knowledge Snapshot attachment');
+  }
+  const attachment = attachments[0]!;
+  const expectedUpdatedAt = record.operation === 'search' && Array.isArray(record.documents)
+    ? record.documents.flatMap((candidate) => {
+        const document = isRecord(candidate) ? candidate : null;
+        return document?.url === attachment.sourceUrl ? [document.updatedAt] : [];
+      })[0] ?? null
+    : null;
+  if (
+    attachment.attachmentId !== 'joyspace-document'
+    || expectedDocument.title !== attachment.title
+    || expectedDocument.body !== attachment.body
+    || expectedDocument.url !== attachment.sourceUrl
+    || expectedDocument.author !== attachment.author
+    || attachment.updatedAt !== expectedUpdatedAt
+    || expectedDocument.contentSha256 !== attachment.contentSha256
+    || attachment.sensitivity !== 'internal'
+    || `sha256:${createHash('sha256').update(attachment.body).digest('hex')}` !== attachment.contentSha256
+  ) {
+    throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot binding is invalid');
+  }
+  return attachments;
 }
 
 function browserCaptureAttachments(
@@ -1359,6 +1437,36 @@ function parsePendingInputs(value: unknown): PendingInput[] {
   }
 }
 
+export function datasetEvidenceEntries(
+  datasets: readonly ResolvedDatasetInput[],
+): EvidenceEntry[] {
+  return datasets.flatMap((dataset) => {
+    const contentSha256 = dataset.artifact.contentSha256;
+    if (!contentSha256) {
+      throw new ExecutionAuthenticityError(`Dataset ${dataset.gateKey} profile hash is missing`);
+    }
+    return [{
+      id: `dataset:${dataset.gateKey}:profile`,
+      kind: 'dataset' as const,
+      evidenceClass: 'dataset' as const,
+      artifactId: dataset.artifact.id,
+      artifactContentSha256: contentSha256,
+      jsonPointer: '/columnProfiles',
+      sensitivity: dataset.artifact.sensitivity === 'public' ? 'public' as const : 'internal' as const,
+      redaction: 'none' as const,
+    }, ...dataset.profile.rows.map((row) => ({
+      id: row.evidenceId,
+      kind: 'dataset' as const,
+      evidenceClass: 'dataset' as const,
+      artifactId: dataset.artifact.id,
+      artifactContentSha256: contentSha256,
+      jsonPointer: `/rows/${row.index}/values`,
+      sensitivity: dataset.artifact.sensitivity === 'public' ? 'public' as const : 'internal' as const,
+      redaction: 'none' as const,
+    }))];
+  });
+}
+
 function overlayPendingInputs(
   parsedPlan: EnginePlan,
   pendingInputs: readonly PendingInput[],
@@ -1518,7 +1626,9 @@ function verifiedPriorOutputs(
     .sort((left, right) => left.stepNo - right.stepNo)
     .map(({ stepNo, actorId, kind, output, artifact }) => {
       const value = isRecord(output) ? output : null;
-      const evidenceIds = kind === 'tool_output'
+      const evidenceIds = kind === 'tool_output' && actorId === 'joyspace-read'
+        ? (isRecord(value?.document) || isRecord(value?.viewedDocument) ? [`JV${stepNo}-1`] : [])
+        : kind === 'tool_output'
         ? sourceRefs(value)
           .filter(({ sourceUrl }) => sourceUrl.startsWith('https://'))
           .map(({ originalIndex }) => `E${stepNo}-${originalIndex + 1}`)
@@ -1795,6 +1905,7 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
 export class LeaseExecutionEngine {
   private readonly llm: ReceiptLLMClient;
   private readonly visualInputGates: Pick<VisualInputGateStore, 'resolve'>;
+  private readonly datasetInputGates: Pick<DatasetInputGateStore, 'resolve'>;
 
   constructor(private readonly dependencies: {
     repository: ControlPlaneRepository;
@@ -1831,10 +1942,13 @@ export class LeaseExecutionEngine {
       }): Promise<void>;
     };
     visualInputGates?: Pick<VisualInputGateStore, 'resolve'>;
+    datasetInputGates?: Pick<DatasetInputGateStore, 'resolve'>;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
     this.visualInputGates = dependencies.visualInputGates
       ?? new VisualInputGateStore(dependencies.artifacts);
+    this.datasetInputGates = dependencies.datasetInputGates
+      ?? new DatasetInputGateStore(dependencies.artifacts);
   }
 
   async execute(input: {
@@ -1851,6 +1965,7 @@ export class LeaseExecutionEngine {
     let reviewCoverage: ReviewCoverageIds | null = null;
     let deliverableId: string;
     let materializedVisualOriginals: MaterializedVisualOriginal[] = [];
+    let resolvedDatasets: ResolvedDatasetInput[] = [];
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
@@ -1876,18 +1991,26 @@ export class LeaseExecutionEngine {
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parseExecutionPlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
-      const resolvedInputs = await this.visualInputGates.resolve({
+      const resolvedVisualInputs = await this.visualInputGates.resolve({
         taskId: input.lease.taskId,
         planVersionId: input.lease.planVersionId,
         gates,
         pendingInputs,
       });
-      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedInputs.gates, task.ownerUserId);
+      const resolvedDatasetInputs = await this.datasetInputGates.resolve({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        ownerUserId: task.ownerUserId,
+        gates: resolvedVisualInputs.gates,
+        pendingInputs,
+      });
+      resolvedDatasets = resolvedDatasetInputs.datasets;
+      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedDatasetInputs.gates, task.ownerUserId);
       if (this.dependencies.visualInputMaterializer) {
         const materializer = this.dependencies.visualInputMaterializer;
         const materialized = await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
           lease: input.lease,
-          visuals: resolvedInputs.visuals,
+          visuals: resolvedVisualInputs.visuals,
           ...(deliverableId === 'competitive_analysis_report'
             ? { annotationPurpose: 'input_provenance' as const }
             : {}),
@@ -1972,8 +2095,21 @@ export class LeaseExecutionEngine {
     );
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
+    for (const dataset of resolvedDatasets) {
+      if (!dataset.artifact.contentSha256) {
+        throw new ExecutionAuthenticityError(`Dataset ${dataset.gateKey} profile hash is missing`);
+      }
+      resolvedArtifacts.set(dataset.artifact.id, {
+        artifact: {
+          id: dataset.artifact.id,
+          contentSha256: dataset.artifact.contentSha256,
+        },
+        value: dataset.profile,
+      });
+    }
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
     const committedBrowserCaptures: CommittedBrowserCapture[] = [];
+    const committedKnowledgeSnapshots: JoyspaceKnowledgeSnapshotPublication[] = [];
     const gaps = new Map<string, ExecutionGap>(
       plan.capabilityGaps.map((gap) => [gap.key, gap]),
     );
@@ -2047,6 +2183,7 @@ export class LeaseExecutionEngine {
         let unpublishedArtifactId: string | undefined;
         let publicationGroup: ArtifactPublicationGroup | undefined;
         const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
+        const pendingKnowledgeSnapshots: JoyspaceKnowledgeSnapshotPublication[] = [];
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         let skillDegradedPolicy: 'gap' | 'block' | undefined;
@@ -2294,7 +2431,10 @@ export class LeaseExecutionEngine {
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
             : [];
-          if (captureAttachments.length > 0 || contributionPolicy) {
+          const knowledgeAttachments = step.actor_type === 'tool'
+            ? joyspaceKnowledgeAttachments(step.actor_id, result.output, result.knowledgeAttachments)
+            : [];
+          if (captureAttachments.length > 0 || knowledgeAttachments.length > 0 || contributionPolicy) {
             publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
           }
           if (toolScope) {
@@ -2326,6 +2466,52 @@ export class LeaseExecutionEngine {
           toolHeartbeat?.assertHealthy();
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
             throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
+          }
+          for (const [attachmentIndex, attachment] of knowledgeAttachments.entries()) {
+            if (!publicationGroup || !toolScope || !toolHeartbeat) {
+              throw new ExecutionAuthenticityError('Knowledge Snapshot publication scope is unavailable');
+            }
+            const snapshot = {
+              version: 'joyspace-knowledge-snapshot-v1' as const,
+              title: attachment.title,
+              body: attachment.body,
+              author: attachment.author,
+              sourceUrl: attachment.sourceUrl,
+              updatedAt: attachment.updatedAt,
+              contentSha256: attachment.contentSha256,
+              toolArtifactId: artifact.id,
+              toolArtifactContentSha256: artifact.contentSha256,
+            };
+            this.dependencies.validator.validateFileOrThrow(
+              join(getConfigRoot(), 'schemas/joyspace-knowledge-snapshot-v1.schema.json'),
+              snapshot,
+            );
+            const snapshotArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'knowledge_snapshot',
+              relativePath: `knowledge/joyspace-${step.step_no}-${attachmentIndex + 1}.json`,
+              value: snapshot,
+              schemaVersion: snapshot.version,
+              sensitivity: 'internal',
+              redactionPolicyVersion: 'v1',
+              activeLease: input.lease,
+            });
+            publicationGroup.track(snapshotArtifact.id);
+            if (snapshotArtifact.state !== 'SEALED' || !snapshotArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot was not sealed');
+            }
+            toolScope.assertActive(step.actor_id);
+            toolHeartbeat.assertHealthy();
+            pendingKnowledgeSnapshots.push({
+              stepNo: step.step_no,
+              attachmentIndex,
+              toolId: step.actor_id,
+              evidenceId: `JV${step.step_no}-${attachmentIndex + 1}`,
+              artifact: snapshotArtifact,
+              value: snapshot,
+            });
           }
           let sealedOutput: EngineSealedStepOutput = {
             stepNo: step.step_no,
@@ -2475,10 +2661,16 @@ export class LeaseExecutionEngine {
                   implementationId: result.toolReceipt.implementationId,
                   executionMode: result.toolReceipt.executionMode,
                   endpointHost: result.toolReceipt.endpointHost,
+                  ...(result.toolReceipt.runtimeVersions === undefined
+                    ? {}
+                    : { runtimeVersions: { ...result.toolReceipt.runtimeVersions } }),
                   sourceRefs: result.sourceRefs,
                   attemptReceipts: result.toolAttemptReceipts,
                   toolTier: result.toolTier,
                   ...(successfulGapSummary ? { gapSummary: successfulGapSummary } : {}),
+                  ...(pendingKnowledgeSnapshots.length === 0 ? {} : {
+                    knowledgeSnapshotArtifactIds: pendingKnowledgeSnapshots.map(({ artifact }) => artifact.id),
+                  }),
                   outputArtifactId: artifact.id,
                   status: 'succeeded',
                 }
@@ -2503,6 +2695,7 @@ export class LeaseExecutionEngine {
           publicationGroup?.commit();
           unpublishedArtifactId = undefined;
           committedBrowserCaptures.push(...pendingBrowserCaptures);
+          committedKnowledgeSnapshots.push(...pendingKnowledgeSnapshots);
           for (const pageFailure of successfulPageFailures) {
             addGap({
               key: `step:${step.step_no}:${pageFailure.sourceResultIndex}:${pageFailure.code}`,
@@ -2543,6 +2736,15 @@ export class LeaseExecutionEngine {
                 contentSha256: manifestArtifact.contentSha256!,
               },
               value: capture.result.manifest,
+            });
+          }
+          for (const snapshot of pendingKnowledgeSnapshots) {
+            resolvedArtifacts.set(snapshot.artifact.id, {
+              artifact: {
+                id: snapshot.artifact.id,
+                contentSha256: snapshot.artifact.contentSha256!,
+              },
+              value: snapshot.value,
             });
           }
           outputs.push({ ...sealedOutput, output: verified.output });
@@ -2825,7 +3027,11 @@ export class LeaseExecutionEngine {
           if (isIntegrityFailure(effectiveError)) throw effectiveError;
           return;
         } finally {
-          if (actorResult?.mediaAttachments) {
+          if (actorResult?.knowledgeAttachments) {
+          actorResult.knowledgeAttachments.length = 0;
+          actorResult.knowledgeAttachments = undefined;
+        }
+        if (actorResult?.mediaAttachments) {
             actorResult.mediaAttachments.length = 0;
             actorResult.mediaAttachments = undefined;
           }
@@ -2962,7 +3168,28 @@ export class LeaseExecutionEngine {
             redaction: 'masked',
           }));
         });
+      evidenceEntries.push(...datasetEvidenceEntries(resolvedDatasets));
       const evidenceService = new EvidenceService();
+      for (const snapshot of committedKnowledgeSnapshots
+        .sort((left, right) => left.stepNo - right.stepNo || left.attachmentIndex - right.attachmentIndex)) {
+        if (!snapshot.artifact.contentSha256) {
+          throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot has no sealed hash');
+        }
+        evidenceEntries.push({
+          id: snapshot.evidenceId,
+          kind: 'knowledge_excerpt',
+          evidenceClass: 'knowledge',
+          toolId: snapshot.toolId,
+          toolTier: 'optional',
+          artifactId: snapshot.artifact.id,
+          artifactContentSha256: snapshot.artifact.contentSha256,
+          jsonPointer: '/body',
+          sourceUrl: snapshot.value.sourceUrl,
+          stepNo: snapshot.stepNo,
+          sensitivity: 'internal',
+          redaction: 'none',
+        });
+      }
       for (const capture of [...committedBrowserCaptures]
         .sort((left, right) => left.stepNo - right.stepNo || left.captureIndex - right.captureIndex)) {
         const verified = await visualAssetService.readVerified({
@@ -3167,7 +3394,7 @@ export class LeaseExecutionEngine {
       for (const requirement of plan.evidence_requirements) {
         let actual = 0;
         for (const entry of evidenceEntries) {
-          if (requirement.required && entry.toolTier !== 'core') continue;
+          if (requirement.required && entry.kind === 'tool_output' && entry.toolTier !== 'core') continue;
           if (requirement.acceptedClasses.includes(entry.evidenceClass)) actual += 1;
         }
         if (requirement.required && actual < requirement.minimumCount) {
@@ -4011,6 +4238,7 @@ export class LeaseExecutionEngine {
         || !prior.outputArtifactId
         || !step.depends_on.every((dependency) => reusableStepNos.has(dependency))
       ) continue;
+      if (step.actor_type === 'tool' && step.actor_id === 'joyspace-read') continue;
 
       let provenance: Record<string, unknown> | null = null;
       if (step.actor_type === 'tool') {
@@ -4669,6 +4897,9 @@ export class LeaseExecutionEngine {
       implementationId: receipt?.implementationId ?? 'unknown',
       executionMode: receipt?.executionMode ?? 'unknown',
       endpointHost: receipt?.endpointHost ?? null,
+      ...(receipt?.runtimeVersions === undefined
+        ? {}
+        : { runtimeVersions: { ...receipt.runtimeVersions } }),
       sourceRefs: refs,
       ...(attemptReceipts ? { attemptReceipts } : {}),
       status: 'failed',
@@ -4695,6 +4926,9 @@ export class LeaseExecutionEngine {
         implementationId: receipt?.implementationId ?? resolution?.implementationId ?? 'unknown',
         executionMode: receipt?.executionMode ?? resolution?.executionMode ?? 'unknown',
         endpointHost: receipt?.endpointHost ?? resolution?.endpointHost ?? null,
+        ...(receipt?.runtimeVersions === undefined
+          ? {}
+          : { runtimeVersions: { ...receipt.runtimeVersions } }),
         sourceRefs: refs,
         ...(attemptReceipts ? { attemptReceipts } : {}),
         status: 'failed',
@@ -4958,6 +5192,7 @@ export class LeaseExecutionEngine {
       receipt: retryResult.receipt,
       latencyMs: retryResult.latencyMs ?? retryResult.receipt.latencyMs,
       mediaAttachments: retryResult.mediaAttachments,
+      knowledgeAttachments: retryResult.knowledgeAttachments,
     };
     const retryContext = {
       attempts: retryResult.attemptReceipts.length,
@@ -5016,6 +5251,7 @@ export class LeaseExecutionEngine {
       toolReceipt: result.receipt,
       toolAttemptReceipts: retryResult.attemptReceipts,
       mediaAttachments: result.mediaAttachments,
+      knowledgeAttachments: result.knowledgeAttachments,
       toolTier: frozenOptional ? 'optional' : 'core',
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),

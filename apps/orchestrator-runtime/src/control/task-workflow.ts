@@ -27,6 +27,11 @@ import {
   VisualInputDataUrlError,
 } from '../report/visual-input-data-url.ts';
 import {
+  DatasetInputGateError,
+  type DatasetInputGateStore,
+  type PreparedDatasetInputGate,
+} from './dataset-input-gate-store.ts';
+import {
   VisualInputGateError,
   type PreparedVisualInputGate,
   type PublishedVisualInputGate,
@@ -205,7 +210,7 @@ function planShape(plan: ControlPlanVersionDetail): WorkflowPlanShape {
 
 function pendingInputRequirements(
   plan: ControlPlanVersionDetail,
-): Array<{ kind: 'value' | 'visual'; role: string; multiple: boolean }> {
+): Array<{ kind: 'value' | 'visual' | 'dataset'; role: string; multiple: boolean }> {
   try {
     return parsePendingInputContracts(plan.pendingInputs);
   } catch {
@@ -367,6 +372,10 @@ export class TaskWorkflowService {
       VisualInputGateStore,
       'prepare' | 'publishPrepared' | 'invalidate'
     >,
+    private readonly datasetInputGates?: Pick<
+      DatasetInputGateStore,
+      'prepareBinding' | 'invalidate'
+    >,
   ) {}
 
   private async requireTask(taskId: string): Promise<ControlTaskDetail> {
@@ -418,6 +427,7 @@ export class TaskWorkflowService {
       || (
         verifiedReview.artifact.schemaVersion !== 'report-review-v1'
         && verifiedReview.artifact.schemaVersion !== 'report-review-v2'
+        && verifiedReview.artifact.schemaVersion !== 'report-review-v3'
       )
       || verifiedReview.artifact.taskId !== input.taskId
       || verifiedReview.artifact.planVersionId !== input.planVersionId
@@ -650,18 +660,35 @@ export class TaskWorkflowService {
     if (pendingInputs.some(({ kind }) => kind === 'visual') && !this.visualInputGates) {
       throw new TaskWorkflowGateError(['input_values.dataUrl']);
     }
+    if (pendingInputs.some(({ kind }) => kind === 'dataset') && !this.datasetInputGates) {
+      throw new TaskWorkflowGateError(['input_values.dataset']);
+    }
 
-    const preparedInputs = new Map<string, PreparedVisualInputGate>();
-    const plainInputs = new Map<string, PublishedVisualInputGate>();
+    const preparedVisualInputs = new Map<string, PreparedVisualInputGate>();
+    const preparedDatasetInputs = new Map<string, PreparedDatasetInputGate>();
+    const plainInputs = new Map<string, PublishedVisualInputGate & { kind: 'value' }>();
     try {
       for (const pending of pendingInputs) {
         const value = input.inputValues[pending.role];
-        if (!this.visualInputGates) {
-          if (containsInlineImageData(value)) throw new VisualInputGateError('input contains a dataUrl');
-          plainInputs.set(pending.role, { value, artifactIds: [] });
+        if (pending.kind === 'dataset') {
+          if (typeof value !== 'string' || !value.trim()) {
+            throw new DatasetInputGateError(`dataset ${pending.role} requires one uploaded Dataset id`);
+          }
+          preparedDatasetInputs.set(pending.role, await this.datasetInputGates!.prepareBinding({
+            taskId: task.id,
+            planVersionId: plan.id,
+            gateKey: pending.role,
+            ownerUserId: input.actor.userId,
+            datasetInputId: value,
+          }));
           continue;
         }
-        preparedInputs.set(pending.role, await this.visualInputGates.prepare({
+        if (!this.visualInputGates) {
+          if (containsInlineImageData(value)) throw new VisualInputGateError('input contains a dataUrl');
+          plainInputs.set(pending.role, { kind: 'value', value, artifactIds: [] });
+          continue;
+        }
+        preparedVisualInputs.set(pending.role, await this.visualInputGates.prepare({
           taskId: task.id,
           planVersionId: plan.id,
           gateKey: pending.role,
@@ -671,8 +698,14 @@ export class TaskWorkflowService {
         }));
       }
     } catch (error) {
-      if (error instanceof VisualInputGateError || error instanceof VisualInputDataUrlError) {
-        throw new TaskWorkflowGateError(['input_values.dataUrl']);
+      if (
+        error instanceof VisualInputGateError
+        || error instanceof VisualInputDataUrlError
+        || error instanceof DatasetInputGateError
+      ) {
+        throw new TaskWorkflowGateError([
+          error instanceof DatasetInputGateError ? 'input_values.dataset' : 'input_values.dataUrl',
+        ]);
       }
       throw error;
     }
@@ -707,10 +740,26 @@ export class TaskWorkflowService {
       reservationToken = reservation.reservationToken;
     }
 
-    const publishedInputs = new Map(plainInputs);
+    const publishedInputs = new Map<string, (PublishedVisualInputGate | PreparedDatasetInputGate) & {
+      kind: 'value' | 'visual' | 'dataset';
+    }>();
+    for (const [role, value] of plainInputs) publishedInputs.set(role, value);
+    const invalidatePublishedInput = (
+      published: (PublishedVisualInputGate | PreparedDatasetInputGate) & { kind: 'value' | 'visual' | 'dataset' },
+      reason: string,
+    ): Promise<void> => {
+      if (published.kind === 'dataset') {
+        return this.datasetInputGates?.invalidate(published as PreparedDatasetInputGate, reason)
+          ?? Promise.resolve();
+      }
+      if (published.kind === 'visual') {
+        return this.visualInputGates?.invalidate(published, reason) ?? Promise.resolve();
+      }
+      return Promise.resolve();
+    };
     let publicationId: string | undefined;
     try {
-      if ([...preparedInputs.values()].some((prepared) => prepared.requiredVisual)) {
+      if ([...preparedVisualInputs.values()].some((prepared) => prepared.requiredVisual)) {
         publicationId = await this.repository.beginVisualPublication({
           taskId: task.id,
           planVersionId: plan.id,
@@ -720,8 +769,15 @@ export class TaskWorkflowService {
           reservationToken,
         });
       }
-      for (const [role, prepared] of preparedInputs) {
-        publishedInputs.set(role, await this.visualInputGates!.publishPrepared(prepared, publicationId));
+      for (const [role, prepared] of preparedVisualInputs) {
+        const published = await this.visualInputGates!.publishPrepared(prepared, publicationId);
+        publishedInputs.set(role, {
+          ...published,
+          kind: prepared.requiredVisual ? 'visual' : 'value',
+        });
+      }
+      for (const [role, prepared] of preparedDatasetInputs) {
+        publishedInputs.set(role, { ...prepared, kind: 'dataset' });
       }
       const gates = [
         ...Object.entries(input.confirmationAnswers).map(([key, value]) => ({
@@ -740,8 +796,11 @@ export class TaskWorkflowService {
             gateKey: role,
             requiredAuthority: 'owner',
             decision: 'provided',
-            ...(published.value === undefined ? {} : { value: published.value }),
-            ...(published.evidenceRef === undefined ? {} : { evidenceRef: published.evidenceRef }),
+            ...('value' in published && published.value !== undefined ? { value: published.value } : {}),
+            ...(published.evidenceRef === undefined ? {} : {
+              evidenceRef: published.evidenceRef,
+              evidenceKind: published.kind === 'dataset' ? 'dataset' as const : 'visual' as const,
+            }),
             idempotencyKey: `${input.idempotencyKey}:input:${role}`,
           };
         }),
@@ -807,22 +866,19 @@ export class TaskWorkflowService {
                   && !committedEvidenceRefs.has(publication.evidenceRef)
                 ))
                 .map((publication) => (
-                  this.visualInputGates?.invalidate(publication, 'confirmation lost its reservation')
-                    ?? Promise.resolve()
+                  invalidatePublishedInput(publication, 'confirmation lost its reservation')
                 )),
             );
             return { state: state as ControlTaskState, stateVersion };
           }
         }
         await Promise.allSettled([...publishedInputs.values()].map((publication) => (
-          this.visualInputGates?.invalidate(publication, 'confirmation lost its reservation')
-            ?? Promise.resolve()
+          invalidatePublishedInput(publication, 'confirmation lost its reservation')
         )));
         throw error;
       }
       await Promise.allSettled([...publishedInputs.values()].map((publication) => (
-        this.visualInputGates?.invalidate(publication, 'confirmation did not commit')
-          ?? Promise.resolve()
+        invalidatePublishedInput(publication, 'confirmation did not commit')
       )));
       throw error;
     }

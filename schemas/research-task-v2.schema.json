@@ -26,7 +26,7 @@
     "version": { "const": "research-task-v2" },
     "task_type": {
       "type": "string",
-      "enum": ["competitive_research", "user_research_planning", "research_synthesis", "voc_diagnosis", "design_audit", "a11y_audit"]
+      "enum": ["competitive_research", "user_research_planning", "research_synthesis", "voc_diagnosis", "design_audit", "a11y_audit", "industry_market_analysis"]
     },
     "outcome_mode": { "type": "string", "enum": ["plan", "answer"] },
     "requested_artifacts": {
@@ -35,6 +35,17 @@
       "items": {
         "enum": ["executive_answers", "research_report", "strategy_map", "mind_model", "design_principles", "opportunity_backlog", "prioritized_actions", "channel_strategies", "action_plan"]
       }
+    },
+    "industry_scope": { "$ref": "#/$defs/industry_scope" },
+    "available_material_roles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/industry_material_role" }
+    },
+    "unavailable_material_roles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/industry_material_role" }
     },
     "business_domain": { "type": "string", "minLength": 1 },
     "research_goal": { "type": "string", "minLength": 1 },
@@ -85,7 +96,70 @@
     "sensitivity": { "type": "string", "enum": ["public", "internal", "confidential"] },
     "pii_detected": { "type": "boolean" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "task_type": { "const": "industry_market_analysis" } },
+        "required": ["task_type"]
+      },
+      "then": {
+        "required": ["industry_scope", "available_material_roles", "unavailable_material_roles"]
+      }
+    }
+  ],
   "$defs": {
+    "industry_material_role": {
+      "enum": [
+        "jd_screenshots",
+        "competitor_screenshots",
+        "competitor_platform_names",
+        "user_research_dataset",
+        "internal_metrics_dataset"
+      ]
+    },
+    "industry_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "subcategories",
+        "exclusions",
+        "analysis_depth",
+        "primary_focus",
+        "secondary_focuses",
+        "decision_audience",
+        "decision_goal",
+        "time_window"
+      ],
+      "properties": {
+        "category": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "subcategories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        },
+        "exclusions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        },
+        "analysis_depth": { "enum": ["light", "medium", "heavy"] },
+        "primary_focus": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "secondary_focuses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        },
+        "decision_audience": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        },
+        "decision_goal": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "time_window": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      }
+    },
     "constraint": {
       "type": "object",
       "additionalProperties": false,

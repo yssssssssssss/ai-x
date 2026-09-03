@@ -1,3 +1,4 @@
+import Busboy from 'busboy';
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
@@ -26,6 +27,7 @@ import {
 } from '../../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
+import { DatasetInputGateError } from '../../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import {
   InvalidScenarioSelectionError,
   planningGuidanceFromStored,
@@ -79,6 +81,24 @@ export interface ControlTasksRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadDataset?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+    metadata: {
+      rowMeaning: string;
+      timeRange: string;
+      fieldNotes: Record<string, string>;
+      units: Record<string, string>;
+      sampling: string;
+      piiConfirmedAbsent: boolean;
+    };
+  }): Promise<unknown>;
   clarification?: ControlClarificationPort;
 }
 
@@ -183,6 +203,9 @@ function publicError(error: unknown): {
   status: number;
   body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
 } {
+  if (error instanceof DatasetInputGateError) {
+    return { status: 422, body: { error: error.message, code: error.code } };
+  }
   if (error instanceof TaskWorkflowGateError) {
     return { status: 422, body: { error: error.message, unresolved: error.unresolved } };
   }
@@ -455,6 +478,109 @@ async function runClarification(
     await runtime.repository.recoverCommandAfterFailure({ ...command, reservationToken });
     throw error;
   }
+}
+
+interface ParsedDatasetUpload {
+  fileName: string;
+  mediaType: string;
+  bytes: Buffer;
+  metadata: {
+    rowMeaning: string;
+    timeRange: string;
+    fieldNotes: Record<string, string>;
+    units: Record<string, string>;
+    sampling: string;
+    piiConfirmedAbsent: boolean;
+  };
+}
+
+function parseDatasetMetadata(value: string): ParsedDatasetUpload['metadata'] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new DatasetInputGateError('metadata must be valid JSON');
+  }
+  const candidate = record(parsed);
+  if (
+    !candidate
+    || typeof candidate.rowMeaning !== 'string'
+    || typeof candidate.timeRange !== 'string'
+    || typeof candidate.sampling !== 'string'
+    || typeof candidate.piiConfirmedAbsent !== 'boolean'
+    || !record(candidate.fieldNotes)
+    || !record(candidate.units)
+  ) throw new DatasetInputGateError('metadata fields are malformed');
+  const stringRecord = (value: Record<string, unknown>, field: string): Record<string, string> => {
+    if (Object.values(value).some((item) => typeof item !== 'string')) {
+      throw new DatasetInputGateError(`${field} must contain only string values`);
+    }
+    return value as Record<string, string>;
+  };
+  return {
+    rowMeaning: candidate.rowMeaning,
+    timeRange: candidate.timeRange,
+    fieldNotes: stringRecord(record(candidate.fieldNotes)!, 'fieldNotes'),
+    units: stringRecord(record(candidate.units)!, 'units'),
+    sampling: candidate.sampling,
+    piiConfirmedAbsent: candidate.piiConfirmedAbsent,
+  };
+}
+
+function readDatasetMultipart(req: Request): Promise<ParsedDatasetUpload> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 1, fields: 1, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(new DatasetInputGateError(error instanceof Error ? error.message : 'invalid multipart request'));
+      return;
+    }
+    let fileName: string | null = null;
+    let mediaType: string | null = null;
+    let fileSeen = false;
+    let fileTooLarge = false;
+    let metadataText: string | null = null;
+    const chunks: Buffer[] = [];
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file' || fileSeen) {
+        stream.resume();
+        reject(new DatasetInputGateError('multipart request must contain exactly one file field'));
+        return;
+      }
+      fileSeen = true;
+      fileName = info.filename;
+      mediaType = info.mimeType;
+      stream.on('limit', () => { fileTooLarge = true; });
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on('error', reject);
+    });
+    parser.on('field', (fieldName, value) => {
+      if (fieldName !== 'metadata' || metadataText !== null) {
+        reject(new DatasetInputGateError('multipart request must contain one metadata field'));
+        return;
+      }
+      metadataText = value;
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      try {
+        if (!fileSeen || !fileName || !mediaType || fileTooLarge) {
+          throw new DatasetInputGateError(fileTooLarge ? 'CSV byte size exceeds 10 MiB' : 'file field is required');
+        }
+        if (metadataText === null) throw new DatasetInputGateError('metadata field is required');
+        resolve({
+          fileName,
+          mediaType,
+          bytes: Buffer.concat(chunks),
+          metadata: parseDatasetMetadata(metadataText),
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.pipe(parser);
+  });
 }
 
 export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
@@ -792,6 +918,43 @@ router.post('/:id/select', async (req, res) => {
       actor,
       planVersionId,
     }));
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/dataset', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadDataset) {
+    res.status(503).json({ error: 'Dataset input is unavailable' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readDatasetMultipart(req);
+    const result = await runtime.uploadDataset({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      fileName: upload.fileName,
+      mediaType: upload.mediaType,
+      bytes: upload.bytes,
+      metadata: upload.metadata,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
   } catch (error) {
     responseError(res, error);
   }

@@ -422,6 +422,17 @@ const TASK_TYPE_SCENARIOS: Readonly<Record<ResearchTaskV2['task_type'], readonly
     'priority-roadmap',
     'metrics-validation',
   ],
+  industry_market_analysis: [
+    'trend-change-identification',
+    'competitor-benchmark-research',
+    'opportunity-direction-evaluation',
+    'user-material-synthesis',
+    'user-segmentation',
+    'experience-walkthrough',
+    'strategy-synthesis',
+    'priority-roadmap',
+    'metrics-validation',
+  ],
 };
 
 const RATIONALE_CODES = new Set<ScenarioClassifierResult['rationale_codes'][number]>([
@@ -459,6 +470,7 @@ const PROFILE_SPEC_HASH = canonicalHash({ version: PROFILE_SPEC_VERSION, profile
 const SCENARIO_MAPPING_HASH = canonicalHash({
   version: SCENARIO_MAPPING_VERSION,
   mappings: SCENARIOS.map(({ id, candidate_profiles }) => ({ scenario_id: id, candidate_profiles })),
+  task_type_scenarios: TASK_TYPE_SCENARIOS,
 });
 
 function normalized(value: string): string {

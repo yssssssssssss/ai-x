@@ -363,6 +363,10 @@ export class VisualInputGateStore {
       }
       const pending = pendingByRole.get(gate.gateKey);
       if (!pending) throw new VisualInputGateError(`gate ${gate.gateKey} has no pending input`);
+      if (pending.kind === 'dataset') {
+        gates.push(gate);
+        continue;
+      }
       if (gate.evidenceRef && gate.value !== null) {
         throw new VisualInputGateError(`gate ${gate.gateKey} has both a value and evidence reference`);
       }

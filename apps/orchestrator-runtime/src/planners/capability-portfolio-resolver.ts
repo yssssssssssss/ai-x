@@ -206,6 +206,15 @@ interface ContributorCandidate {
   estimatedSteps: number;
 }
 
+function promisedInputRoles(input: CapabilityPortfolioResolveInput): Set<string> {
+  return new Set([
+    ...input.availableInputRoles,
+    ...(input.task.task_type === 'industry_market_analysis'
+      ? input.task.available_material_roles ?? []
+      : []),
+  ]);
+}
+
 function eligibleContributorCandidates(
   input: CapabilityPortfolioResolveInput,
   demands: readonly CapabilityDemand[],
@@ -214,18 +223,31 @@ function eligibleContributorCandidates(
   const acceptedTypes = input.compositionPolicy.mode === 'portfolio'
     ? new Set(input.compositionPolicy.accepted_contribution_types)
     : new Set<ContributionType>();
-  const availableInputs = new Set(input.availableInputRoles);
+  const availableInputs = promisedInputRoles(input);
   const candidates: ContributorCandidate[] = [];
   for (const decision of input.capabilityResolution.eligible) {
     const skillId = decision.skill.id;
     const composition = resolveSkillComposition(decision.skill);
     const missingInputRoles = composition.required_input_roles.filter((role) => !availableInputs.has(role));
-    if (decision.pending_inputs.length > 0 || missingInputRoles.length > 0) {
+    const unpromisedPendingInputs = decision.pending_inputs.filter(({ role }) => !availableInputs.has(role));
+    if (
+      input.deliverableId === 'industry_market_analysis_report'
+      && skillId === 'generate-persona'
+      && !availableInputs.has('user_research_dataset')
+    ) {
+      rejected.push({
+        skillId,
+        reasonCode: 'pending_required_input',
+        relatedIds: ['user_research_dataset'],
+      });
+      continue;
+    }
+    if (unpromisedPendingInputs.length > 0 || missingInputRoles.length > 0) {
       rejected.push({
         skillId,
         reasonCode: 'pending_required_input',
         relatedIds: [...new Set([
-          ...decision.pending_inputs.map(({ role }) => role),
+          ...unpromisedPendingInputs.map(({ role }) => role),
           ...missingInputRoles,
         ])],
       });
@@ -280,7 +302,11 @@ function selectSynthesizer(
   const decision = input.capabilityResolution.eligible.find(({ skill }) => (
     skill.id === policy.synthesizer_skill_id
   ));
-  if (!decision || decision.pending_inputs.length > 0) {
+  const promisedInputs = promisedInputRoles(input);
+  if (
+    !decision
+    || decision.pending_inputs.some(({ role }) => !promisedInputs.has(role))
+  ) {
     portfolioError('synthesizer_unavailable', [policy.synthesizer_skill_id]);
   }
   const composition = resolveSkillComposition(decision.skill);
@@ -402,7 +428,10 @@ function estimatedSelectionSteps(
   const sharedSavings = selectedSharedPrerequisites(selected, shareableKnowledgeBySkill)
     .filter(({ capabilityType }) => capabilityType === 'tool')
     .reduce((sum, prerequisite) => sum + Math.max(0, prerequisite.consumerSkillIds.length - 1), 0);
-  return total - sharedSavings;
+  const optionalToolOverhead = new Set(selected.flatMap(({ decision }) => (
+    decision.optional_tool_decisions.flatMap(({ tool_id, status }) => status === 'available' ? [tool_id] : [])
+  ))).size;
+  return total - sharedSavings + optionalToolOverhead;
 }
 
 export function portfolioActorValidationIssues(

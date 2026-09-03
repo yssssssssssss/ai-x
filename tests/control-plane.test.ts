@@ -1498,6 +1498,81 @@ test('rejects terminal evidence on nonterminal steps and adopts it only on succe
   });
 });
 
+test('dataset upload command is owner-bound, replayable, and fenced to the active confirmation Plan', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'dataset upload idempotency',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证 Dataset 上传命令' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:dataset-upload-plan',
+    pendingInputs: [],
+  });
+  const idempotencyKey = randomUUID();
+  const commandType = 'dataset_upload:user_research_dataset';
+  const requestHash = 'sha256:dataset-upload-request';
+  const reservation = await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  });
+  assert.equal(reservation.status, 'reserved');
+  if (reservation.status !== 'reserved') throw new Error('expected a reservation');
+
+  const pendingReplay = await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  });
+  assert.deepEqual(pendingReplay, { status: 'pending' });
+
+  const response = { datasetInputId: randomUUID(), rowCount: 2 };
+  await repository.completeDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    reservationToken: reservation.reservationToken,
+    response,
+  });
+  assert.deepEqual(await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  }), { status: 'replay', response });
+  assert.deepEqual(await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash: 'sha256:different',
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  }), { status: 'conflict' });
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'awaiting_confirmation');
+});
+
 test('round-trips the explicit pending-input value through gate records', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const task = await repository.createTask({

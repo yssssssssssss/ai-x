@@ -16,6 +16,7 @@ import {
   type PlanProgress,
   type PlanResponse,
   type Upload,
+  type DatasetUpload,
 } from '../api/client.ts';
 import {
   approvalSubmissionAllowed,
@@ -519,6 +520,7 @@ export function useTaskFlow() {
     userAnswers: Record<string, unknown>,
     pendingValues: Record<string, unknown> = {},
     uploads: Upload[] = [],
+    datasetUploads: DatasetUpload[] = [],
   ) {
     if (!candidatesResp || !selectedCandidate || stateVersion == null) return;
     if (planRecovery) {
@@ -551,6 +553,19 @@ export function useTaskFlow() {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
         if (pendingInput?.kind !== 'visual') continue;
         inputValues[role] = pendingInput.multiple ? values : values[0];
+      }
+      for (const upload of datasetUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
+        if (pendingInput?.kind !== 'dataset') continue;
+        const uploaded = await api.uploadControlDataset(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.file,
+          upload.metadata,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.datasetInputId;
       }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,

@@ -7,6 +7,7 @@ import {
   loadToolRegistry,
   getConfigRoot,
   hashFile,
+  skillDatasetInputIssue,
   skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
@@ -81,6 +82,7 @@ export class SkillLoader {
       const inputs = skill.inputs ?? [];
       const visualInputs = skill.visual_inputs ?? [];
       const multipleVisualInputs = skill.multiple_visual_inputs ?? [];
+      const datasetInputs = skill.dataset_inputs ?? [];
       const outputs = skill.outputs ?? [];
       const requiredTools = skill.required_tools ?? [];
       const optionalTools = skill.optional_tools ?? [];
@@ -92,6 +94,7 @@ export class SkillLoader {
           inputs: Array.isArray(inputs) ? inputs : [],
           visual_inputs: Array.isArray(visualInputs) ? visualInputs : [],
           multiple_visual_inputs: Array.isArray(multipleVisualInputs) ? multipleVisualInputs : [],
+          dataset_inputs: Array.isArray(datasetInputs) ? datasetInputs : [],
           outputs: Array.isArray(outputs) ? outputs : [],
           required_tools: Array.isArray(requiredTools) ? requiredTools : [],
           optional_tools: Array.isArray(optionalTools) ? optionalTools : [],
@@ -100,10 +103,12 @@ export class SkillLoader {
 
       const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
       const visualInputIssue = skillVisualInputIssue(skill);
+      const datasetInputIssue = skillDatasetInputIssue(skill);
       const optionalToolIssue = skillOptionalToolIssue(skill);
       if (
         unknownSkillRegistryFields(skill).length > 0
         || visualInputIssue !== null
+        || datasetInputIssue !== null
         || optionalToolIssue !== null
         || !Array.isArray(taskTypes)
         || !Array.isArray(inputs)
@@ -113,7 +118,6 @@ export class SkillLoader {
         || !Array.isArray(optionalTools)
         || taskTypes.length === 0
         || (!knowledgeBaseSkill && (inputs.length === 0 || outputs.length === 0 || requiredTools.length === 0))
-        || visualInputs.some((role) => !inputs.includes(role))
       ) {
         throw new Error(`active skill capability metadata invalid: ${skill.id}`);
       }
@@ -124,6 +128,7 @@ export class SkillLoader {
         inputs,
         visual_inputs: visualInputs,
         multiple_visual_inputs: multipleVisualInputs,
+        dataset_inputs: datasetInputs,
         outputs,
         required_tools: requiredTools,
         optional_tools: optionalTools,

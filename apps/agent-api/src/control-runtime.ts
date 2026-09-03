@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { pool } from '../../../database/db.ts';
 import {
   ControlPlaneAuthorizationError,
+  ControlPlaneConflictError,
   ControlPlaneRepository,
   type ControlArtifact,
 } from '../../../database/control-plane.ts';
@@ -88,6 +90,11 @@ import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
+import {
+  DatasetInputGateError,
+  DatasetInputGateStore,
+  type DatasetUploadResult,
+} from '../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
 import { LocalZeroMcpClient } from './integrations/zero/zero-mcp-client.ts';
@@ -96,6 +103,58 @@ import {
   type ZeroPublicationMcp,
 } from './integrations/zero/zero-publication-service.ts';
 
+
+function datasetUploadHash(input: {
+  taskId: string;
+  planVersionId: string;
+  role: string;
+  ownerUserId: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+  metadata: {
+    rowMeaning: string;
+    timeRange: string;
+    fieldNotes: Record<string, string>;
+    units: Record<string, string>;
+    sampling: string;
+    piiConfirmedAbsent: boolean;
+  };
+}): string {
+  const sortRecord = (value: Record<string, string>) => Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const request = JSON.stringify({
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    role: input.role,
+    ownerUserId: input.ownerUserId,
+    fileName: input.fileName,
+    mediaType: input.mediaType,
+    contentSha256: `sha256:${createHash('sha256').update(input.bytes).digest('hex')}`,
+    metadata: {
+      ...input.metadata,
+      fieldNotes: sortRecord(input.metadata.fieldNotes),
+      units: sortRecord(input.metadata.units),
+    },
+  });
+  return `sha256:${createHash('sha256').update(request).digest('hex')}`;
+}
+
+function datasetUploadReplay(value: unknown): DatasetUploadResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('dataset upload replay is malformed');
+  const result = value as Partial<DatasetUploadResult>;
+  if (
+    typeof result.datasetInputId !== 'string'
+    || typeof result.fileName !== 'string'
+    || typeof result.contentSha256 !== 'string'
+    || typeof result.byteSize !== 'number'
+    || typeof result.rowCount !== 'number'
+    || !Array.isArray(result.columns)
+    || result.columns.some((column) => typeof column !== 'string')
+  ) throw new Error('dataset upload replay is malformed');
+  return result as DatasetUploadResult;
+}
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
   skill: true,
@@ -371,6 +430,31 @@ export interface ControlRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadDataset(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+    metadata: {
+      rowMeaning: string;
+      timeRange: string;
+      fieldNotes: Record<string, string>;
+      units: Record<string, string>;
+      sampling: string;
+      piiConfirmedAbsent: boolean;
+    };
+  }): Promise<{
+    datasetInputId: string;
+    fileName: string;
+    contentSha256: string;
+    byteSize: number;
+    rowCount: number;
+    columns: string[];
+  }>;
 }
 
 export function visualAssetManifestStorageUri(storageUri: string): string | null {
@@ -732,6 +816,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     artifacts,
   });
   const visualInputGates = new VisualInputGateStore(artifacts);
+  const datasetInputGates = new DatasetInputGateStore(artifacts);
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -747,6 +832,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     standaloneHtmlBundleV1Enabled,
     visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
     visualInputGates,
+    datasetInputGates,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {
@@ -843,7 +929,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       lease,
       expectedModel: expectedActualModel,
     }),
-  }, planRevisionDriver, artifacts, visualInputGates);
+  }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates);
   const zeroPublicationEnabled = overrides.zeroPublicationEnabled
     ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
   const zeroPublication = zeroPublicationEnabled
@@ -885,6 +971,102 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     repository,
     artifacts,
     ...(zeroPublication ? { zeroPublication } : {}),
+    uploadDataset: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_confirmation'
+        || task.activePlanVersionId !== input.planVersionId
+      ) throw new ControlPlaneConflictError('dataset input task or active plan is unavailable');
+      const plan = await repository.getPlanVersionDetail(input.planVersionId);
+      if (!plan || plan.taskId !== task.id) throw new ControlPlaneConflictError('dataset input plan is unavailable');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      if (structuredTask.pii_detected === true) {
+        throw new DatasetInputGateError('Task is marked as containing PII', 'dataset_pii_detected');
+      }
+      const pending = parsePendingInputContracts(plan.pendingInputs).find(({ role }) => role === input.role);
+      if (!pending || pending.kind !== 'dataset' || pending.multiple) {
+        throw new DatasetInputGateError(`dataset input role ${input.role} is not pending on the active plan`);
+      }
+
+      const commandType = `dataset_upload:${input.role}`;
+      const requestHash = datasetUploadHash(input);
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') throw new ControlPlaneConflictError('dataset upload idempotency key conflicts');
+        if (reservation.status === 'replay') return datasetUploadReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') throw new ControlPlaneConflictError('dataset upload idempotency key conflicts');
+          if (waited.status === 'replay') return datasetUploadReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let prepared: Awaited<ReturnType<DatasetInputGateStore['prepareBinding']>> | null = null;
+      try {
+        const uploaded = await datasetInputGates.upload({
+          ...input,
+          taskSensitivity: structuredTask.sensitivity === 'public' || structuredTask.sensitivity === 'confidential'
+            ? structuredTask.sensitivity
+            : 'internal',
+        });
+        prepared = await datasetInputGates.prepareBinding({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: input.role,
+          ownerUserId: input.ownerUserId,
+          datasetInputId: uploaded.datasetInputId,
+        });
+        await repository.completeDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          response: uploaded,
+        });
+        return uploaded;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return datasetUploadReplay(completed.response);
+          }
+        }
+        if (prepared) {
+          await datasetInputGates.invalidate(prepared, 'dataset upload command did not commit');
+        }
+        throw error;
+      }
+    },
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);

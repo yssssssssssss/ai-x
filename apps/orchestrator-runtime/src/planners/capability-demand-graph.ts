@@ -94,6 +94,7 @@ function defaultDemandType(task: ResearchTaskV2): CapabilityDemandGraphV1['deman
   if (task.task_type === 'a11y_audit') return 'accessibility';
   if (task.task_type === 'voc_diagnosis') return 'voc';
   if (task.task_type === 'user_research_planning') return 'research_method';
+  if (task.task_type === 'industry_market_analysis') return 'market_landscape';
   return 'qualitative_insight';
 }
 
@@ -110,12 +111,16 @@ const EXPLICIT_CONTRIBUTION_RULES: ReadonlyArray<{
   type: CapabilityDemandGraphV1['demands'][number]['type'];
   pattern: RegExp;
   evidenceClass?: EvidenceClass;
+  requiredMaterialRole?: 'jd_screenshots';
 }> = [
   { type: 'market_landscape', pattern: /(?:市场|赛道|market\s+landscape)/iu },
   { type: 'competitive_analysis', pattern: /(?:竞品|竞争对手|competitive|competitor)/iu },
   { type: 'persona', pattern: /(?:persona|用户画像|用户分型)/iu },
-  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|支持动机|用户动机)/iu },
+  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|支持动机|用户动机|访问动机|用户任务|雇佣目标)/iu },
+  { type: 'journey', pattern: /(?:用户旅程|体验地图|端到端链路|用户路径|journey)/iu },
   { type: 'metrics', pattern: /(?:核心体验指标|体验指标|metrics?)/iu },
+  { type: 'design_audit', pattern: /(?:设计走查|启发式|频道现状诊断)/iu, requiredMaterialRole: 'jd_screenshots' },
+  { type: 'prioritization', pattern: /(?:优先级|先做|排序|priority|prioritization)/iu },
   { type: 'virtual_user_hypothesis', pattern: /(?:虚拟用户|合成模拟|synthetic\s+user|virtual\s+user)/iu, evidenceClass: 'simulation' },
 ];
 
@@ -125,8 +130,15 @@ function requestedContributionTypes(task: ResearchTaskV2): typeof EXPLICIT_CONTR
     ...task.scope,
     ...task.success_criteria.map(({ statement }) => statement),
     ...task.constraints.map(({ statement }) => statement),
+    task.industry_scope?.decision_goal ?? '',
+    task.industry_scope?.primary_focus ?? '',
+    ...(task.industry_scope?.secondary_focuses ?? []),
   ].join(' ');
-  return EXPLICIT_CONTRIBUTION_RULES.filter(({ pattern }) => pattern.test(text));
+  const availableMaterials = new Set(task.available_material_roles ?? []);
+  return EXPLICIT_CONTRIBUTION_RULES.filter(({ pattern, requiredMaterialRole }) => (
+    pattern.test(text)
+    && (!requiredMaterialRole || availableMaterials.has(requiredMaterialRole))
+  ));
 }
 
 /** Deterministic fallback used until a model-suggested graph passes the same validator. */
@@ -145,6 +157,9 @@ export function deriveCapabilityDemandGraph(
       requiredEvidenceClasses,
       requiredInputRoles: [
         'research_goal',
+        ...(task.task_type === 'industry_market_analysis' && type === 'design_audit'
+          ? ['jd_screenshots']
+          : []),
         ...(type === 'metrics' && isQuantitativeFactQuestion(question) ? ['analytics_dataset'] : []),
       ],
       priority: question.priority,
@@ -172,7 +187,10 @@ export function deriveCapabilityDemandGraph(
       requiredEvidenceClasses: requested.evidenceClass
         ? [requested.evidenceClass]
         : [...acceptedEvidenceClasses(targetQuestion)],
-      requiredInputRoles: ['research_goal'],
+      requiredInputRoles: [
+        'research_goal',
+        ...(requested.requiredMaterialRole ? [requested.requiredMaterialRole] : []),
+      ],
       priority: 'required',
     });
   }

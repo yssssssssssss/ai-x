@@ -6,6 +6,7 @@ import { CheckpointStore } from './checkpoint-store.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { ReceiptLLMClient } from './receipt-llm-client.ts';
 import { BrowserExecutionGate } from './browser-execution-gate.ts';
+import { O2JoyspaceReadAdapter } from './o2-joyspace-read-adapter.ts';
 import { PlaywrightPageCaptureAdapter } from './playwright-page-capture-adapter.ts';
 
 // Agent Runtime:封装 Claude/OpenAI/Pi/内部网关差异的薄壳。
@@ -77,7 +78,8 @@ function buildToolAdapter(channel: string, browserGate?: BrowserExecutionGate): 
   const fake = new FakeO2Adapter();
   const router = new ToolRouter();
   router.registerAs('fake', fake);
-  router.registerAs('o2', fake);
+  // 离线通道保持 fake；真实通道只开放 O2JoyspaceReadAdapter 内部白名单的 search/view。
+  router.registerAs('o2', channel === 'fake' ? fake : new O2JoyspaceReadAdapter());
   router.registerAs('internal_api', new HttpApiAdapter());
   router.registerAs('rest_json', new RestJsonAdapter());
   router.registerAs('tavily', channel === 'fake' ? fake : new TavilyAdapter());

@@ -44,6 +44,7 @@ skills:
     status: active
     task_types:
       - competitive_research
+      - industry_market_analysis
     inputs:
       - research_goal
     outputs:
@@ -62,7 +63,7 @@ skills:
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [competitive_analysis_report, research_strategy_report]
+      compatible_deliverables: [competitive_analysis_report, research_strategy_report, industry_market_analysis_report]
       contribution_types: [market_landscape, competitive_analysis]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
@@ -241,6 +242,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+      - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
@@ -250,7 +252,7 @@ skills:
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [plan, answer]
-      compatible_deliverables: [research_plan, research_strategy_report]
+      compatible_deliverables: [research_plan, research_strategy_report, industry_market_analysis_report]
       contribution_types: [metrics]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
@@ -310,12 +312,13 @@ skills:
     risk_level: low
     task_types:
       - competitive_research
+      - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
       modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
-      compatible_deliverables: [competitive_analysis_report, research_strategy_report]
+      compatible_deliverables: [competitive_analysis_report, research_strategy_report, industry_market_analysis_report]
       contribution_types: [competitive_analysis]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
@@ -424,7 +427,12 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+      - industry_market_analysis
+    inputs:
+      - research_goal
     output_schema: schemas/skill-result-envelope.schema.json
+    dataset_inputs:
+      - user_research_dataset
     required_tools:
       - tavily-web-search
     execution_mode: compiled
@@ -433,12 +441,12 @@ skills:
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [research_strategy_report]
+      compatible_deliverables: [research_strategy_report, industry_market_analysis_report]
       contribution_types: [persona]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
-      optional_input_roles: [user_materials, qualitative_insights]
+      optional_input_roles: [user_materials, qualitative_insights, user_research_dataset]
       shareable_prerequisites: [tavily-web-search]
   - id: generate-research-plan
     name: generate-research-plan
@@ -477,6 +485,7 @@ skills:
     status: active
     task_types:
       - research_synthesis
+      - industry_market_analysis
     inputs:
       - research_goal
     outputs:
@@ -488,7 +497,7 @@ skills:
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [research_strategy_report]
+      compatible_deliverables: [research_strategy_report, industry_market_analysis_report]
       contribution_types: [virtual_user_hypothesis]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: virtual-user-tool-v1
@@ -592,17 +601,18 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+      - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [research_strategy_report, voc_diagnosis_report, design_audit_report]
+      compatible_deliverables: [research_strategy_report, voc_diagnosis_report, design_audit_report, industry_market_analysis_report]
       contribution_types: [prioritization]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
-      required_input_roles: [issue_inventory]
-      optional_input_roles: [research_goal]
+      required_input_roles: [research_goal]
+      optional_input_roles: [issue_inventory]
   - id: jobs-to-be-done
     name: jobs-to-be-done
     path: knowledge-base/skills/jobs-to-be-done
@@ -626,6 +636,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+      - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
@@ -635,7 +646,7 @@ skills:
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [research_strategy_report]
+      compatible_deliverables: [research_strategy_report, industry_market_analysis_report]
       contribution_types: [jobs_to_be_done]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
@@ -666,12 +677,13 @@ skills:
     task_types:
       - user_research_planning
       - voc_diagnosis
+      - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
       modes: [standalone, contributor]
       supported_outcomes: [answer]
-      compatible_deliverables: [research_strategy_report, voc_diagnosis_report]
+      compatible_deliverables: [research_strategy_report, voc_diagnosis_report, industry_market_analysis_report]
       contribution_types: [journey]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
@@ -695,17 +707,73 @@ skills:
     risk_level: low
     task_types:
       - design_audit
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    visual_inputs:
+      - jd_screenshots
+    multiple_visual_inputs:
+      - jd_screenshots
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
       modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
-      compatible_deliverables: [design_audit_report, accessibility_audit_report]
+      compatible_deliverables: [design_audit_report, accessibility_audit_report, industry_market_analysis_report]
       contribution_types: [design_audit]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
-      optional_input_roles: [designImage, page_url]
+      optional_input_roles: [designImage, page_url, jd_screenshots]
+  - id: industry-market-analysis
+    name: Industry Market Analysis
+    path: skills/industry-market-analysis/SKILL.md
+    when_to_use: 对一个明确品类或频道完成行业、用户、供给、竞品、京东现状、机会、设计语言、品类资产与策略纵深链的综合分析。
+    owner: 体验设计与用研团队
+    risk_level: low
+    task_types:
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    visual_inputs:
+      - jd_screenshots
+      - competitor_screenshots
+    multiple_visual_inputs:
+      - jd_screenshots
+      - competitor_screenshots
+    dataset_inputs:
+      - user_research_dataset
+      - internal_metrics_dataset
+    outputs:
+      - industry_market_content_draft
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: schemas/skills/industry-market-content-draft-v1.schema.json
+    required_tools:
+      - tavily-web-search
+    optional_tools:
+      - joyspace-read
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/industry-market-analysis.yaml
+    status: active
+    composition:
+      modes: [standalone, synthesizer]
+      supported_outcomes: [answer]
+      compatible_deliverables: [industry_market_analysis_report]
+      contribution_types:
+        - market_landscape
+        - competitive_analysis
+        - persona
+        - jobs_to_be_done
+        - journey
+        - metrics
+        - design_audit
+        - prioritization
+        - strategy
+        - action_plan
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [jd_screenshots, competitor_screenshots, competitor_platform_names, user_research_dataset, internal_metrics_dataset]
+      shareable_prerequisites: [tavily-web-search]
   - id: solution-generation
     name: solution-generation
     path: knowledge-base/skills/solution-generation
