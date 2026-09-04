@@ -58,6 +58,9 @@ clicks/keystrokes unless the user explicitly requests Computer Use or UI
 operation for the current task. The presence of a running desktop app, an
 available Computer Use tool, or a potentially useful signed-in session is not
 authorization.
+- When a task requires opening or operating a browser, use the Ego Lite browser.
+Do not launch or use Google Chrome unless the user explicitly overrides this rule
+for the current task.
 - Diagnose the named system first. Do not inspect or modify adjacent tools merely
 because they could plausibly cause the symptom.
 - For troubleshooting, establish evidence before mutation. Make one minimal
