@@ -27,6 +27,7 @@ export function Stage2Plan({
     inputValues: Record<string, unknown>,
     uploads: Upload[],
     datasetUploads: DatasetUpload[],
+    waivedInputKeys: string[],
   ) => void;
   onRevise: (instruction: string) => void;
 }) {
@@ -40,9 +41,11 @@ export function Stage2Plan({
       : []
   )) ?? [];
   const portfolio = multiSkillPlanViewModel(plan.plan);
-  const orchestrationLabel = plan.plan.execution_contract_version === 'current-execution-plan-v3'
-    ? '多 Skill 协作'
-    : '单 Skill';
+  const orchestrationLabel = plan.plan.execution_contract_version === 'lightweight-execution-plan-v1'
+    ? plan.plan.mode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'
+    : plan.plan.execution_contract_version === 'current-execution-plan-v3'
+      ? '多 Skill 协作'
+      : '单 Skill';
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -51,6 +54,7 @@ export function Stage2Plan({
   const [datasetColumns, setDatasetColumns] = useState<Record<string, string[]>>({});
   const [datasetHeaderErrors, setDatasetHeaderErrors] = useState<Record<string, string | undefined>>({});
   const [values, setValues] = useState<Record<string, string>>({});
+  const [waivedInputKeys, setWaivedInputKeys] = useState<string[]>([]);
   const [revisionInstruction, setRevisionInstruction] = useState('');
 
   function edit(key: string, value: string) {
@@ -149,6 +153,7 @@ export function Stage2Plan({
       values,
       images,
       datasets,
+      waivedInputKeys,
     });
     setConfirmed(true);
     onConfirm(
@@ -156,12 +161,20 @@ export function Stage2Plan({
       payload.inputValues,
       payload.uploads,
       payload.datasetUploads,
+      payload.waivedInputKeys ?? [],
     );
   }
 
   const pending = plan.pendingUploads ?? [];
+  const lightweightInputs = plan.plan.resolved_inputs;
+  const pendingRequirementByKey = new Map(
+    lightweightInputs?.pending.map((item) => [item.requirement.key, item]) ?? [],
+  );
+  const waivedSet = new Set(waivedInputKeys);
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
   const missingInputs = pending.filter((input) => {
+    const requirement = pendingRequirementByKey.get(input.role)?.requirement;
+    if (requirement?.required === false && waivedSet.has(input.role)) return false;
     if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
     if (input.kind === 'value') {
       const raw = values[input.role] ?? '';
@@ -180,6 +193,24 @@ export function Stage2Plan({
     }
     return true;
   });
+
+  function optionalWaiver(role: string) {
+    const item = pendingRequirementByKey.get(role);
+    if (item?.requirement.required !== false) return null;
+    return (
+      <label style={{ display: 'flex', gap: 7, alignItems: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+        <input
+          type="checkbox"
+          checked={waivedSet.has(role)}
+          disabled={locked || confirmed}
+          onChange={(event) => setWaivedInputKeys((previous) => event.target.checked
+            ? [...new Set([...previous, role])]
+            : previous.filter((key) => key !== role))}
+        />
+        无法提供，确认以可见 Gap 继续
+      </label>
+    );
+  }
 
   return (
     <section className="stage-card">
@@ -271,18 +302,34 @@ export function Stage2Plan({
         </div>
       )}
 
+      {lightweightInputs && lightweightInputs.resolved.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>已解析输入（可通过重新生成计划纠正）</div>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {lightweightInputs.resolved.map((input) => (
+              <li key={input.key}>
+                {input.key} · {input.source} · 用于 {input.targetInvocationIds.join('、')}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {pending.some((input) => input.kind === 'value') && !locked && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入（必须填写）</div>
           {pending.filter((input) => input.kind === 'value').map((input) => (
             <label key={input.role} style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, fontSize: 13 }}>
               <span>
-                {input.label}
-                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {input.targets.map((target) => target.step_no).join('/')}</span>
+                {pendingRequirementByKey.get(input.role)?.requirement.question ?? input.label}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                  {' '}· {pendingRequirementByKey.get(input.role)?.requirement.required === false ? '可选' : '必需'}
+                  {' '}· 用于 {pendingRequirementByKey.get(input.role)?.targetInvocationIds.join('、') || `步骤 ${input.targets.map((target) => target.step_no).join('/')}`}
+                </span>
               </span>
               {input.multiple ? (
                 <textarea
-                  disabled={locked || confirmed}
+                  disabled={locked || confirmed || waivedSet.has(input.role)}
                   value={values[input.role] ?? ''}
                   onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
                   placeholder="每行填写一个值"
@@ -291,14 +338,15 @@ export function Stage2Plan({
                 />
               ) : (
                 <input
-                  required
-                  disabled={locked || confirmed}
+                  required={pendingRequirementByKey.get(input.role)?.requirement.required !== false}
+                  disabled={locked || confirmed || waivedSet.has(input.role)}
                   value={values[input.role] ?? ''}
                   onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
                   placeholder="请输入"
                   style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13 }}
                 />
               )}
+              {optionalWaiver(input.role)}
             </label>
           ))}
         </div>
@@ -306,16 +354,19 @@ export function Stage2Plan({
 
       {pending.some((input) => input.kind === 'dataset') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV（必须为匿名、UTF-8 数据）</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV（匿名、UTF-8 数据）</div>
           {pending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
             const selected = datasets[datasetInput.role];
             return (
               <div key={datasetInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
-                <span style={{ fontSize: 13 }}>{datasetInput.label}</span>
+                <span style={{ fontSize: 13 }}>
+                  {pendingRequirementByKey.get(datasetInput.role)?.requirement.question ?? datasetInput.label}
+                  {' '}· {pendingRequirementByKey.get(datasetInput.role)?.requirement.required === false ? '可选' : '必需'}
+                </span>
                 <input
                   type="file"
                   accept=".csv,text/csv"
-                  disabled={locked || confirmed}
+                  disabled={locked || confirmed || waivedSet.has(datasetInput.role)}
                   onChange={(event) => {
                     void pickDataset(datasetInput.role, event.currentTarget.files?.[0]);
                   }}
@@ -378,11 +429,12 @@ export function Stage2Plan({
                   <input
                     type="checkbox"
                     checked={selected?.metadata.piiConfirmedAbsent ?? false}
-                    disabled={!selected || locked || confirmed}
+                    disabled={!selected || locked || confirmed || waivedSet.has(datasetInput.role)}
                     onChange={(event) => editDatasetMetadata(datasetInput.role, 'piiConfirmedAbsent', event.target.checked)}
                   />
                   我确认文件已匿名化且不含姓名、手机号、地址、订单号等个人信息
                 </label>
+                {optionalWaiver(datasetInput.role)}
               </div>
             );
           })}
@@ -391,12 +443,15 @@ export function Stage2Plan({
 
       {pending.some((input) => input.kind === 'visual') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（必须上传；同一张图会自动用于所有需要它的步骤）</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（同一张图会自动用于所有需要它的 Skill）</div>
           {pending.filter((input) => input.kind === 'visual').map((pu) => (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                {pu.label}
-                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
+                {pendingRequirementByKey.get(pu.role)?.requirement.question ?? pu.label}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                  {' '}· {pendingRequirementByKey.get(pu.role)?.requirement.required === false ? '可选' : '必需'}
+                  {' '}· 用于 {pendingRequirementByKey.get(pu.role)?.targetInvocationIds.join('、') || `步骤 ${pu.targets.map((t) => t.step_no).join('/')}`}
+                </span>
               </span>
               {(images[pu.role] ?? []).map((dataUrl, index) => (
                 <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
@@ -405,11 +460,13 @@ export function Stage2Plan({
                 type="file"
                 accept="image/*"
                 multiple={pu.multiple}
+                disabled={locked || confirmed || waivedSet.has(pu.role)}
                 onChange={(event) => {
                   void pickImages(pu, Array.from(event.currentTarget.files ?? []));
                 }}
                 style={{ fontSize: 12, color: 'var(--text-dim)' }}
               />
+              {optionalWaiver(pu.role)}
             </div>
           ))}
         </div>

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReadableCurrentExecutionPlan } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  FinalReport,
+  ReadableExecutionPlan,
+  SkillReport,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import {
   api,
   type ClarificationRequiredResponse,
   type ClarifyControlTaskRequest,
   type ControlApprovalRequirement,
-  type ControlDeliverableResponse,
   type ControlExecutionResult,
   type ControlPlanRecovery,
   type ControlPlanCandidatesResponse,
@@ -71,7 +74,7 @@ function planView(
   response: ControlPlanCandidatesResponse,
   candidate: CurrentPlanCandidate,
 ): PlanResponse {
-  const readablePlan = candidate.plan as unknown as ReadableCurrentExecutionPlan;
+  const readablePlan = candidate.plan as ReadableExecutionPlan;
   return {
     conversationId: response.conversationId,
     taskId: response.task.id,
@@ -84,8 +87,12 @@ function planView(
       ...(readablePlan.execution_contract_version
         ? { execution_contract_version: readablePlan.execution_contract_version }
         : {}),
+      ...('mode' in readablePlan ? { mode: readablePlan.mode } : {}),
       ...(readablePlan.skill_invocations
         ? { skill_invocations: readablePlan.skill_invocations }
+        : {}),
+      ...('resolved_inputs' in readablePlan
+        ? { resolved_inputs: readablePlan.resolved_inputs }
         : {}),
       ...('capability_demand_graph' in readablePlan
         ? { capability_demand_graph: readablePlan.capability_demand_graph }
@@ -145,7 +152,8 @@ export function useTaskFlow() {
   const [exec, setExec] = useState<ControlExecutionResult | null>(null);
   const [executionSteps, setExecutionSteps] = useState<ExecLogRow[]>([]);
   const [executionPlanSteps, setExecutionPlanSteps] = useState<ExecutionPlanStepView[]>([]);
-  const [deliverable, setDeliverable] = useState<ControlDeliverableResponse | null>(null);
+  const [finalReport, setFinalReport] = useState<FinalReport | null>(null);
+  const [skillReports, setSkillReports] = useState<SkillReport[]>([]);
   const [reportState, setReportState] = useState<ReportState>('idle');
   const [deliverableError, setDeliverableError] = useState('');
   const [error, setError] = useState('');
@@ -170,8 +178,12 @@ export function useTaskFlow() {
     setReportState('loading');
     setDeliverableError('');
     try {
-      const response = await api.controlDeliverable(taskId);
-      setDeliverable(response);
+      const [loadedFinalReport, loadedSkillReports] = await Promise.all([
+        api.controlFinalReport(taskId),
+        api.controlSkillReports(taskId),
+      ]);
+      setFinalReport(loadedFinalReport);
+      setSkillReports(loadedSkillReports.reports);
       setReportState('ready');
     } catch (cause) {
       setDeliverableError(message(cause, '报告加载失败'));
@@ -202,7 +214,8 @@ export function useTaskFlow() {
     setPlan(selected && hydrated.candidatesResp ? planView(hydrated.candidatesResp, selected) : null);
     setExecutionSteps(restoredSteps);
     setExecutionPlanSteps(executionPlanStepsForTask(current));
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillReports([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -242,9 +255,13 @@ export function useTaskFlow() {
     if (hydrated.phase !== 'done') return;
     setReportState('loading');
     try {
-      const restoredDeliverable = await api.controlDeliverable(current.task.id);
+      const [restoredFinalReport, restoredSkillReports] = await Promise.all([
+        api.controlFinalReport(current.task.id),
+        api.controlSkillReports(current.task.id),
+      ]);
       if (generation !== restoreGeneration.current) return;
-      setDeliverable(restoredDeliverable);
+      setFinalReport(restoredFinalReport);
+      setSkillReports(restoredSkillReports.reports);
       setReportState('ready');
     } catch (cause) {
       if (generation !== restoreGeneration.current) return;
@@ -321,7 +338,8 @@ export function useTaskFlow() {
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillReports([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -353,7 +371,8 @@ export function useTaskFlow() {
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillReports([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -521,6 +540,7 @@ export function useTaskFlow() {
     pendingValues: Record<string, unknown> = {},
     uploads: Upload[] = [],
     datasetUploads: DatasetUpload[] = [],
+    waivedInputKeys: string[] = [],
   ) {
     if (!candidatesResp || !selectedCandidate || stateVersion == null) return;
     if (planRecovery) {
@@ -572,6 +592,7 @@ export function useTaskFlow() {
         planVersionId: selectedCandidate.planVersionId,
         confirmationAnswers: answers,
         inputValues,
+        waivedInputKeys,
         idempotencyKey: createRequestId(),
       });
       setStateVersion(confirmed.stateVersion);
@@ -703,7 +724,8 @@ export function useTaskFlow() {
     exec,
     executionSteps,
     executionPlanSteps,
-    deliverable,
+    finalReport,
+    skillReports,
     reportState,
     deliverableError,
     error,

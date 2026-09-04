@@ -156,6 +156,10 @@ export type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+export type {
+  FinalReport,
+  SkillReport,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 export type {
   SystemCapabilitiesResponse,
@@ -183,6 +187,10 @@ import type {
   SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  FinalReport,
+  SkillReport,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
@@ -440,6 +448,18 @@ export const api = {
     if (mediaType !== 'text/html') {
       throw new ApiError(502, '编辑摘要媒体类型无效');
     }
+    return { blob: await response.blob() };
+  },
+  controlFinalReport: (taskId: string) =>
+    req<FinalReport>(`/control-tasks/${encodeURIComponent(taskId)}/final-report`),
+  controlSkillReports: (taskId: string) =>
+    req<{ reports: SkillReport[] }>(`/control-tasks/${encodeURIComponent(taskId)}/skill-reports`),
+  controlFinalReportHtml: async (taskId: string): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/final-report.html`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'text/html') throw new ApiError(502, '最终 HTML 报告媒体类型无效');
     return { blob: await response.blob() };
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(

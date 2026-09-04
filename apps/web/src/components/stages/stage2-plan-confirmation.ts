@@ -60,6 +60,7 @@ export interface PlanConfirmationPayload {
   inputValues: Record<string, unknown>;
   uploads: Upload[];
   datasetUploads: DatasetUpload[];
+  waivedInputKeys?: string[];
 }
 
 export function buildPlanConfirmationPayload(input: {
@@ -68,10 +69,12 @@ export function buildPlanConfirmationPayload(input: {
   values: Readonly<Record<string, string>>;
   images: Readonly<Record<string, readonly string[]>>;
   datasets?: Readonly<Record<string, DatasetUpload | undefined>>;
+  waivedInputKeys?: readonly string[];
 }): PlanConfirmationPayload {
+  const waived = new Set(input.waivedInputKeys ?? []);
   const inputValues: Record<string, unknown> = {};
   for (const pendingInput of input.pending) {
-    if (pendingInput.kind !== 'value') continue;
+    if (pendingInput.kind !== 'value' || waived.has(pendingInput.role)) continue;
     const raw = input.values[pendingInput.role] ?? '';
     inputValues[pendingInput.role] = pendingInput.multiple
       ? raw.split('\n').map((item) => item.trim()).filter(Boolean)
@@ -81,13 +84,16 @@ export function buildPlanConfirmationPayload(input: {
     confirmationAnswers: { ...input.confirmationAnswers },
     inputValues,
     uploads: pendingImageUploads(
-      input.pending.filter((pendingInput) => pendingInput.kind === 'visual'),
+      input.pending.filter((pendingInput) => (
+        pendingInput.kind === 'visual' && !waived.has(pendingInput.role)
+      )),
       input.images,
     ),
     datasetUploads: input.pending.flatMap((pendingInput) => {
-      if (pendingInput.kind !== 'dataset') return [];
+      if (pendingInput.kind !== 'dataset' || waived.has(pendingInput.role)) return [];
       const upload = input.datasets?.[pendingInput.role];
       return upload ? [upload] : [];
     }),
+    ...(waived.size === 0 ? {} : { waivedInputKeys: [...waived] }),
   };
 }

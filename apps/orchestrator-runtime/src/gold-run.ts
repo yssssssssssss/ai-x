@@ -24,6 +24,7 @@ import {
   runCurrentRealSmoke,
   type SemanticGoldFixture,
   type SemanticGoldScenario,
+  type LegacySmokeReceipt,
   type SmokeReceipt,
 } from '../../../scripts/current-real-smoke.ts';
 
@@ -69,7 +70,13 @@ export function parseGoldCommand(args: string[]): GoldCommand {
   return { kind: 'collect', batchId: command };
 }
 
-export function assertGoldSmokeReceipt(receipt: SmokeReceipt, expectedScenarioId: string): void {
+export function assertGoldSmokeReceipt(
+  receipt: SmokeReceipt,
+  expectedScenarioId: string,
+): asserts receipt is LegacySmokeReceipt {
+  if ('contract' in receipt) {
+    throw new Error('Gold collection has not switched from ReportPackage to FinalReport');
+  }
   if (
     receipt.scenarioId !== expectedScenarioId
     || receipt.profile !== GOLD_PROFILE

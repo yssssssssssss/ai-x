@@ -5,10 +5,14 @@ import type {
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
+  LightweightExecutionPlanV1,
+  ReadableExecutionPlan,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+import { isLightweightExecutionPlanV1 } from '../../../../packages/api-contract/lightweight-orchestration.ts';
+import type {
   CurrentExecutionPlan,
   CurrentExecutionPlanV3,
   PendingInput,
-  ReadableCurrentExecutionPlan,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
@@ -21,20 +25,22 @@ import {
 } from '../planners/research-planning-service.ts';
 import {
   assertSingleSkillExecutionPlan,
+  compileLightweightExecutionPlan,
   PlanCompiler,
 } from '../planners/plan-compiler.ts';
 import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
 type ProvisionalExecutionPlan =
-  | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: '' })
-  | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: '' });
+  | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string })
+  | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: string })
+  | (Omit<LightweightExecutionPlanV1, 'task_id'> & { task_id?: string });
 
 interface PersistedPlanVersion {
   id: string;
   taskId: string;
   version: number;
   candidateId: PlanCandidate['id'];
-  plan: ReadableCurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   planHash: string;
   pendingInputs: PendingInput[];
 }
@@ -191,10 +197,15 @@ export class ControlPlanningService {
       if (orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      const lightweight = compileLightweightExecutionPlan({
+        plan: compiled.plan,
+        mode: orchestrationMode,
+        task: planningResult.structuredTask,
+      });
       return {
         candidateId: candidate.id,
-        plan: compiled.plan,
-        pendingInputs: compiled.pending_inputs,
+        plan: { ...lightweight.plan, task_id: '' },
+        pendingInputs: lightweight.pendingInputs,
       };
     });
   }
@@ -217,8 +228,11 @@ export class ControlPlanningService {
         rationale: candidate.rationale,
         tradeoffs: candidate.tradeoffs,
         planHash: stored.planHash,
-        plan: stored.plan as CurrentExecutionPlan,
+        plan: stored.plan,
         pendingInputs: stored.pendingInputs,
+        ...(isLightweightExecutionPlanV1(stored.plan)
+          ? { resolvedInputs: stored.plan.resolved_inputs }
+          : {}),
       };
     });
     return {

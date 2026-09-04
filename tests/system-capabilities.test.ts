@@ -30,7 +30,10 @@ test('system capabilities expose live contract and registry identities without l
       'current-execution-plan-v1',
       'current-execution-plan-v2',
       'current-execution-plan-v3',
+      'lightweight-execution-plan-v1',
     ]);
+    assert.deepEqual(body.skillReportVersions, ['skill-report-v1']);
+    assert.deepEqual(body.finalReportVersions, ['final-report-v1']);
     assert.equal(body.multiSkillPlanWriterEnabled, false);
     assert.equal(body.reportV3WriterEnabled, false);
     assert.equal(body.reportEditorialPlannerV1Enabled, false);

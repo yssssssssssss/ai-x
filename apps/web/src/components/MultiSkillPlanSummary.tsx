@@ -5,6 +5,32 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
   plan: FinalizedPlan;
   compact?: boolean;
 }) {
+  if (plan.execution_contract_version === 'lightweight-execution-plan-v1' && plan.mode === 'multi_skill') {
+    const invocations = plan.skill_invocations ?? [];
+    return (
+      <div
+        className={`multi-skill-plan-summary${compact ? ' is-compact' : ''}`}
+        aria-label="Multi-Skill 组合计划"
+        style={{ marginTop: 12, padding: compact ? '8px 10px' : '12px', border: '1px solid var(--border-soft)', borderRadius: 8, textAlign: 'left' }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
+          <strong>{invocations.length} 个 Skill</strong>
+          <span>1 次最终综合</span>
+          <span>{plan.steps.length} 个执行步骤</span>
+        </div>
+        {!compact ? (
+          <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
+            {invocations.map((invocation) => (
+              <li key={invocation.invocation_id} style={{ marginTop: 5, fontSize: 12 }}>
+                <strong>Contributor</strong>{' · '}{invocation.skill_id}
+                {' · '}{'required' in invocation && invocation.required === false ? 'Optional' : 'Required'}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
   const model = multiSkillPlanViewModel(plan);
   if (!model) return null;
   return (

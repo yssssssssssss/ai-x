@@ -363,6 +363,10 @@ export class VisualInputGateStore {
       }
       const pending = pendingByRole.get(gate.gateKey);
       if (!pending) throw new VisualInputGateError(`gate ${gate.gateKey} has no pending input`);
+      if (gate.decision === 'waived') {
+        gates.push(gate);
+        continue;
+      }
       if (pending.kind === 'dataset') {
         gates.push(gate);
         continue;

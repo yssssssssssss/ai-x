@@ -9,11 +9,12 @@ import {
   type ControlRequirementVersion,
   type OrchestrationModeV1,
 } from '../packages/api-contract/control-workflow.ts';
-import type {
-  CurrentExecutionPlan,
-  PendingInput,
-  ReadableCurrentExecutionPlan,
-} from '../packages/api-contract/research-deliverable.ts';
+import {
+  isLightweightExecutionPlanV1,
+  parseLightweightExecutionPlanV1,
+  type ReadableExecutionPlan,
+} from '../packages/api-contract/lightweight-orchestration.ts';
+import type { PendingInput } from '../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
   type CandidateProfile,
@@ -454,13 +455,17 @@ function currentPlanCandidateFromRow(
   }
   candidateActivatedNodes(plan);
   candidateRecommended(plan);
+  const executionPlan = plan as unknown as ReadableExecutionPlan;
   return {
     planVersionId: asString(row.id, 'id'),
     candidateId,
     ...candidateMetadata(plan),
     planHash,
-    plan: plan as unknown as CurrentExecutionPlan,
+    plan: executionPlan,
     pendingInputs: row.pending_inputs as PendingInput[],
+    ...(isLightweightExecutionPlanV1(executionPlan)
+      ? { resolvedInputs: parseLightweightExecutionPlanV1(executionPlan).resolved_inputs }
+      : {}),
   };
 }
 
@@ -694,7 +699,7 @@ export type ControlCandidateId = CandidateProfile;
 export interface ControlCandidatePlanVersionDetail
   extends Omit<ControlPlanVersionDetail, 'candidateId' | 'plan' | 'pendingInputs'> {
   candidateId: ControlCandidateId;
-  plan: ReadableCurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   pendingInputs: PendingInput[];
 }
 
@@ -743,7 +748,7 @@ export interface PersistClarificationCandidatesInput {
     title: string;
     rationale: string;
     tradeoffs: string;
-    plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+    plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
     pendingInputs: PendingInput[];
   }>;
   command: {
@@ -1133,7 +1138,7 @@ export class ControlPlaneRepository {
     orchestrationMode?: OrchestrationModeV1;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1209,7 +1214,7 @@ export class ControlPlaneRepository {
           taskId: asString(planRow.task_id, 'task_id'),
           version: asNumber(planRow.version, 'version'),
           candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
-          plan: planRow.plan_json as CurrentExecutionPlan,
+          plan: planRow.plan_json as ReadableExecutionPlan,
           planHash: asString(planRow.plan_hash, 'plan_hash'),
           pendingInputs: planRow.pending_inputs as PendingInput[],
         });
@@ -1227,7 +1232,7 @@ export class ControlPlaneRepository {
     structuredTask: unknown;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1310,7 +1315,7 @@ export class ControlPlaneRepository {
           taskId: asString(planRow.task_id, 'task_id'),
           version: asNumber(planRow.version, 'version'),
           candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
-          plan: planRow.plan_json as CurrentExecutionPlan,
+          plan: planRow.plan_json as ReadableExecutionPlan,
           planHash: asString(planRow.plan_hash, 'plan_hash'),
           pendingInputs: planRow.pending_inputs as PendingInput[],
         });
@@ -1495,7 +1500,7 @@ export class ControlPlaneRepository {
             taskId: asString(row.task_id, 'task_id'),
             version: asNumber(row.version, 'version'),
             candidateId: asString(row.candidate_id, 'candidate_id') as ControlCandidateId,
-            plan: row.plan_json as CurrentExecutionPlan,
+            plan: row.plan_json as ReadableExecutionPlan,
             planHash: asString(row.plan_hash, 'plan_hash'),
             pendingInputs: row.pending_inputs as PendingInput[],
           },
@@ -1539,7 +1544,7 @@ export class ControlPlaneRepository {
           rationale: candidate.rationale,
           tradeoffs: candidate.tradeoffs,
           planHash: stored.planHash,
-          plan: stored.plan as CurrentExecutionPlan,
+          plan: stored.plan as ReadableExecutionPlan,
           pendingInputs: stored.pendingInputs,
         })),
       };
@@ -2437,6 +2442,8 @@ export class ControlPlaneRepository {
              'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
              'cross_skill_review', 'contribution_ledger', 'contribution_summary',
              'research_contribution_bundle',
+             'skill_report', 'skill_report_markdown', 'final_report', 'final_report_markdown',
+             'final_report_html', 'report_sources',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,
@@ -4783,6 +4790,7 @@ export class ControlPlaneRepository {
     options: {
       status: 'completed' | 'completed_with_gaps';
       reportPackageArtifactId?: string;
+      finalReportArtifactId?: string;
     } = { status: 'completed' },
   ): Promise<ControlTask> {
     const outcome = await this.transaction(async (connection): Promise<ControlTask | null> => {
@@ -4797,6 +4805,9 @@ export class ControlPlaneRepository {
       );
       if (!lockedTask.rows[0]) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);
+      }
+      if (options.reportPackageArtifactId && options.finalReportArtifactId) {
+        throw new ControlPlaneConflictError('execution cannot complete with two terminal report roots');
       }
       if (options.reportPackageArtifactId) {
         const selectedPackage = await connection.query(
@@ -4845,6 +4856,56 @@ export class ControlPlaneRepository {
         ) {
           throw new ControlPlaneConflictError(
             `execution ${input.attemptId} does not have one unique sealed Report Package root`,
+          );
+        }
+      }
+      if (options.finalReportArtifactId) {
+        const selectedReport = await connection.query(
+          `SELECT id, storage_uri
+           FROM control_artifacts
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND attempt_id = $4
+             AND kind = 'final_report'
+             AND schema_version = 'final-report-v1'
+             AND state = 'SEALED'
+             AND content_sha256 IS NOT NULL
+             AND byte_size IS NOT NULL
+           FOR SHARE`,
+          [
+            options.finalReportArtifactId,
+            input.taskId,
+            input.planVersionId,
+            input.attemptId,
+          ],
+        );
+        const selectedRow = selectedReport.rows[0];
+        const storageUri = selectedRow ? asString(selectedRow.storage_uri, 'storage_uri') : '';
+        if (!selectedRow || !/(?:^|\/)reports\/final-report\.json$/u.test(storageUri)) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} FinalReport root is not a sealed fixed-path Artifact`,
+          );
+        }
+        const reportRoots = await connection.query(
+          `SELECT id
+           FROM control_artifacts
+           WHERE task_id = $1
+             AND plan_version_id = $2
+             AND attempt_id = $3
+             AND kind = 'final_report'
+             AND storage_uri = $4
+             AND state = 'SEALED'
+           ORDER BY id
+           FOR SHARE`,
+          [input.taskId, input.planVersionId, input.attemptId, storageUri],
+        );
+        if (
+          reportRoots.rows.length !== 1
+          || asString(reportRoots.rows[0]?.id, 'id') !== options.finalReportArtifactId
+        ) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} does not have one unique sealed FinalReport root`,
           );
         }
       }

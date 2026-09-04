@@ -13,6 +13,15 @@ import type {
   ControlModelCall,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
+import {
+  isLightweightExecutionPlanV1,
+  parseLightweightExecutionPlanV1,
+  parseSkillReport,
+  type LightweightSkillSnapshot,
+  type ResolvedPlanInputs,
+  type SkillReport,
+  type SourceReference,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import type {
   ContributionType,
   RequestedArtifact,
@@ -150,6 +159,16 @@ import {
   renderAndSealStandaloneHtml,
 } from '../report/report-v3-publication.ts';
 import {
+  createSkillReport,
+  finalizeMultiReport,
+  finalizeSingleReport,
+  LlmMultiReportSynthesizer,
+  LightweightReportArtifactService,
+  SKILL_REPORT_DRAFT_SCHEMA,
+  assertMarkdownReferences,
+  type SkillReportDraft,
+} from '../report/lightweight-reporting.ts';
+import {
   VisualAssetService,
   type VisualAssetResult,
 } from '../report/visual-asset-service.ts';
@@ -218,6 +237,14 @@ export interface EnginePlan {
   invocationPoliciesByStep: Map<number, InvocationExecutionPolicy[]>;
   invocationPoliciesById: Map<string, InvocationExecutionPolicy>;
   optionalInvocationStepNos: Set<number>;
+  lightweight?: {
+    mode: 'single_skill' | 'multi_skill';
+    snapshotsByStep: Map<number, {
+      invocationId: string;
+      snapshot: LightweightSkillSnapshot;
+    }>;
+    resolvedInputs: ResolvedPlanInputs;
+  };
 }
 
 interface FrozenSkillToolRoles {
@@ -229,6 +256,20 @@ interface ExecutionGap {
   key: string;
   stepNo: number;
   message: string;
+}
+
+function lightweightSkillOutcome(value: unknown): SkillOutputOutcome | null {
+  try {
+    const report = parseSkillReport(value);
+    if (report.status === 'needs_input') return null;
+    return {
+      status: report.status === 'completed_with_gaps' ? 'degraded' : 'succeeded',
+      limitations: [...report.gaps],
+      summary: report.title,
+    };
+  } catch {
+    return null;
+  }
 }
 
 interface PageFailureGap {
@@ -281,12 +322,13 @@ interface ToolSourceRef {
   originalIndex: number;
 }
 
-type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'research_contribution' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_report' | 'research_contribution' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
+  skill_report: 'skill-report-v1',
   research_contribution: 'research-contribution-artifact-v1',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
@@ -463,6 +505,7 @@ export interface LeaseExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  finalReportArtifactId?: string;
   crossSkillReviewArtifactId?: string;
   contributionLedgerArtifactId?: string;
   contributionSummaryArtifactId?: string;
@@ -688,6 +731,98 @@ function executionInputArtifacts(
       artifactId: output.artifact.id,
       contentSha256: output.artifact.contentSha256!,
     }));
+}
+
+function collectHttpsUrls(value: unknown, urls: Set<string>, depth = 0): void {
+  if (depth > 6 || urls.size >= 50) return;
+  if (typeof value === 'string') {
+    if (value.startsWith('https://')) {
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol === 'https:') urls.add(parsed.toString());
+      } catch {
+        // Invalid provider text is not promoted to a source URL.
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectHttpsUrls(item, urls, depth + 1);
+    return;
+  }
+  if (isRecord(value)) {
+    for (const child of Object.values(value)) collectHttpsUrls(child, urls, depth + 1);
+  }
+}
+
+function lightweightSourceReferences(input: {
+  step: EngineStep;
+  outputs: readonly EngineSealedStepOutput[];
+  resolvedInputs: ResolvedPlanInputs;
+  invocationId: string;
+}): SourceReference[] {
+  const sources: SourceReference[] = [];
+  for (const resolved of input.resolvedInputs.resolved) {
+    if (!resolved.targetInvocationIds.includes(input.invocationId)) continue;
+    sources.push({
+      id: `S-input-${resolved.key}`,
+      title: resolved.key,
+      type: 'user_input',
+    });
+  }
+  const allowedStepNos = new Set([
+    ...input.step.depends_on,
+    ...input.step.input_bindings.map(({ source_step_no }) => source_step_no),
+  ]);
+  for (const output of input.outputs) {
+    if (!allowedStepNos.has(output.stepNo)) continue;
+    if (output.actorType !== 'tool' && output.actorType !== 'knowledge') continue;
+    const urls = new Set<string>();
+    collectHttpsUrls(output.output, urls);
+    if (urls.size === 0) {
+      sources.push({
+        id: `S-step-${output.stepNo}`,
+        title: output.actorId,
+        type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
+      });
+      continue;
+    }
+    let index = 0;
+    for (const url of urls) {
+      index += 1;
+      sources.push({
+        id: `S-step-${output.stepNo}-${index}`,
+        title: `${output.actorId} ${index}`,
+        type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
+        url,
+      });
+    }
+  }
+  return sources;
+}
+
+function lightweightSkillPrompt(snapshot: LightweightSkillSnapshot): string {
+  return [
+    snapshot.body,
+    '',
+    '## 本次报告结构',
+    snapshot.report_template,
+    '',
+    '## 输出要求',
+    '- 只返回符合给定 JSON Schema 的对象。',
+    '- markdown 必须遵循报告结构，并使用 sourceCatalog 中已有的 [S-*] 引用。',
+    '- 不得新增 URL、来源 ID、事实或数字。',
+    '- 输入不足时使用 needs_input，并在 missingInputKeys 中列出冻结输入合同里的 key。',
+  ].join('\n');
+}
+
+function lightweightWaivedGaps(
+  resolvedInputs: ResolvedPlanInputs,
+  invocationId: string,
+): string[] {
+  return resolvedInputs.waived
+    .filter(({ targetInvocationIds }) => targetInvocationIds.includes(invocationId))
+    .map(({ key, reason }) => `${key}：${reason}`);
 }
 
 interface SkillExecutionFingerprint {
@@ -1030,6 +1165,9 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
+  const lightweightPlan = isLightweightExecutionPlanV1(value)
+    ? parseLightweightExecutionPlanV1(value)
+    : null;
   const steps = value.steps.map((item, index): EngineStep => {
     if (!isRecord(item)) throw new ExecutionAuthenticityError(`plan step ${index + 1} is malformed`);
     const stepNo = item.step_no;
@@ -1255,6 +1393,10 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   const invocationPoliciesByStep = new Map<number, InvocationExecutionPolicy[]>();
   const invocationPoliciesById = new Map<string, InvocationExecutionPolicy>();
   const optionalInvocationStepNos = new Set<number>();
+  const lightweightSnapshotsByStep = new Map<number, {
+    invocationId: string;
+    snapshot: LightweightSkillSnapshot;
+  }>();
   const rawInvocations = value.skill_invocations ?? [];
   if (!Array.isArray(rawInvocations)) {
     throw new ExecutionAuthenticityError('plan Skill invocations are malformed');
@@ -1268,6 +1410,44 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       || !Array.isArray(invocation.step_nos)
       || !invocation.step_nos.every((candidate) => Number.isInteger(candidate))
     ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
+
+    if (lightweightPlan) {
+      const frozen = lightweightPlan.skill_invocations[invocationIndex];
+      if (!frozen || frozen.invocation_id !== invocation.invocation_id || frozen.skill_id !== invocation.skill_id) {
+        throw new ExecutionAuthenticityError(`lightweight Skill invocation ${invocationIndex + 1} drifted`);
+      }
+      const policy: InvocationExecutionPolicy = {
+        invocationId: frozen.invocation_id,
+        skillId: frozen.skill_id,
+        role: 'contributor',
+        contributionTypes: [],
+        questionIds: [],
+        requestedArtifactTypes: [],
+        dependsOnInvocationIds: [...frozen.depends_on_invocation_ids],
+        required: frozen.required,
+        failurePolicy: frozen.failure_policy,
+      };
+      if (invocationPoliciesById.has(policy.invocationId)) {
+        throw new ExecutionAuthenticityError(`plan Skill invocation ${policy.invocationId} is duplicated`);
+      }
+      invocationPoliciesById.set(policy.invocationId, policy);
+      for (const candidateStepNo of frozen.step_nos) {
+        const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
+        if (!invocationStep) {
+          throw new ExecutionAuthenticityError(`lightweight Skill invocation ${policy.invocationId} references a missing step`);
+        }
+        const policies = invocationPoliciesByStep.get(candidateStepNo) ?? [];
+        policies.push(policy);
+        invocationPoliciesByStep.set(candidateStepNo, policies);
+        if (invocationStep.actor_type === 'skill' && invocationStep.actor_id === frozen.skill_id) {
+          lightweightSnapshotsByStep.set(candidateStepNo, {
+            invocationId: frozen.invocation_id,
+            snapshot: frozen.snapshot,
+          });
+        }
+      }
+      continue;
+    }
 
     if (portfolioPlan) {
       if (
@@ -1376,6 +1556,15 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
     invocationPoliciesByStep,
     invocationPoliciesById,
     optionalInvocationStepNos,
+    ...(lightweightPlan
+      ? {
+          lightweight: {
+            mode: lightweightPlan.mode,
+            snapshotsByStep: lightweightSnapshotsByStep,
+            resolvedInputs: lightweightPlan.resolved_inputs,
+          },
+        }
+      : {}),
   };
 }
 interface ReviewCoverageIds {
@@ -1494,6 +1683,42 @@ function overlayPendingInputs(
       );
     }
     const gate = matchingGates[0]!;
+    const pendingState = plan.lightweight?.resolvedInputs.pending
+      .find(({ requirement }) => requirement.key === pendingInput.role);
+    const pendingRequirement = pendingState?.requirement;
+    if (gate.decision === 'waived') {
+      if (
+        gate.requiredAuthority !== 'owner'
+        || gate.actorRole !== 'owner'
+        || gate.actorUserId !== ownerUserId
+        || !pendingRequirement
+        || pendingRequirement.required
+        || !isRecord(gate.value)
+      ) {
+        throw new ExecutionAuthenticityError(`waived input gate for ${pendingInput.role} is invalid`);
+      }
+      const reason = gate.value.reason;
+      if (typeof reason !== 'string' || !reason.trim()) {
+        throw new ExecutionAuthenticityError(`waived input gate for ${pendingInput.role} has no reason`);
+      }
+      plan.lightweight!.resolvedInputs.pending = plan.lightweight!.resolvedInputs.pending
+        .filter(({ requirement }) => requirement.key !== pendingInput.role);
+      plan.lightweight!.resolvedInputs.waived.push({
+        key: pendingInput.role,
+        targetInvocationIds: [...pendingState!.targetInvocationIds],
+        reason,
+      });
+      for (const target of pendingInput.targets) {
+        const step = plan.steps.find((candidate) => candidate.step_no === target.step_no);
+        if (!step || step.actor_id !== target.tool_id || !Object.hasOwn(step.input, target.field)) {
+          throw new ExecutionAuthenticityError(
+            `pending input target ${target.step_no}/${target.field} does not match the active plan`,
+          );
+        }
+        step.input[target.field] = null;
+      }
+      continue;
+    }
     if (
       gate.requiredAuthority !== 'owner'
       || gate.decision !== 'provided'
@@ -1502,6 +1727,18 @@ function overlayPendingInputs(
       || !Object.hasOwn(gate, 'value')
     ) {
       throw new ExecutionAuthenticityError(`input gate for pending role ${pendingInput.role} is invalid`);
+    }
+    if (plan.lightweight && pendingState) {
+      plan.lightweight.resolvedInputs.pending = plan.lightweight.resolvedInputs.pending
+        .filter(({ requirement }) => requirement.key !== pendingInput.role);
+      plan.lightweight.resolvedInputs.resolved.push({
+        key: pendingInput.role,
+        valueRef: typeof gate.evidenceRef === 'string'
+          ? gate.evidenceRef
+          : `gate:${pendingInput.role}`,
+        source: typeof gate.evidenceRef === 'string' ? 'upload' : 'conversation',
+        targetInvocationIds: [...pendingState.targetInvocationIds],
+      });
     }
     for (const target of pendingInput.targets) {
       const targetKey = `${target.step_no}\u0000${target.field}`;
@@ -1972,7 +2209,12 @@ export class LeaseExecutionEngine {
         input.lease.planVersionId,
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
-      if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
+      if (isLightweightExecutionPlanV1(planVersion.plan)) {
+        const lightweightPlan = parseLightweightExecutionPlanV1(planVersion.plan);
+        if (lightweightPlan.task_id !== task.id || lightweightPlan.mode !== task.orchestrationMode) {
+          throw new ExecutionAuthenticityError('lightweight Plan task or mode binding is invalid');
+        }
+      } else if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
         assertCompiledSkillPlan(
           planVersion.plan as unknown as CurrentExecutionPlan,
           this.dependencies.skillLoader,
@@ -2188,9 +2430,16 @@ export class LeaseExecutionEngine {
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         let skillDegradedPolicy: 'gap' | 'block' | undefined;
         let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
+        const lightweightSkill = plan.lightweight?.snapshotsByStep.get(step.step_no);
+        const lightweightResolvedInputs = plan.lightweight?.resolvedInputs;
         try {
           frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
-          skillDegradedPolicy = frozenSkillExecution?.degradedPolicy
+          const lightweightPolicy = lightweightSkill
+            ? (plan.invocationPoliciesByStep.get(step.step_no) ?? [])
+                .find(({ invocationId }) => invocationId === lightweightSkill.invocationId)
+            : undefined;
+          skillDegradedPolicy = lightweightPolicy?.failurePolicy
+            ?? frozenSkillExecution?.degradedPolicy
             ?? (step.actor_type === 'skill'
               ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
               : undefined);
@@ -2212,16 +2461,23 @@ export class LeaseExecutionEngine {
                 reusableArtifactValue,
               );
             }
-            const resealed = await this.dependencies.artifacts.writeJson({
-              taskId: input.lease.taskId,
-              planVersionId: input.lease.planVersionId,
-              attemptId: input.lease.attemptId,
-              kind: checkpoint.kind,
-              relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
-              value: reusableArtifactValue,
-              schemaVersion: checkpoint.schemaVersion,
-              activeLease: input.lease,
-            });
+            const reusableLightweightReport = checkpoint.kind === 'skill_report'
+              ? await new LightweightReportArtifactService(this.dependencies.artifacts).sealSkillReport({
+                  activeLease: input.lease,
+                  report: parseSkillReport(reusableArtifactValue),
+                })
+              : undefined;
+            const resealed = reusableLightweightReport?.jsonArtifact
+              ?? await this.dependencies.artifacts.writeJson({
+                taskId: input.lease.taskId,
+                planVersionId: input.lease.planVersionId,
+                attemptId: input.lease.attemptId,
+                kind: checkpoint.kind,
+                relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
+                value: reusableArtifactValue,
+                schemaVersion: checkpoint.schemaVersion,
+                activeLease: input.lease,
+              });
             if (resealed.state !== 'SEALED' || !resealed.contentSha256) {
               throw new ExecutionAuthenticityError(`reusable step Artifact ${resealed.id} was not sealed`);
             }
@@ -2240,7 +2496,9 @@ export class LeaseExecutionEngine {
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
             let reusedSkillOutcome = step.actor_type === 'skill'
-              ? evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
+              ? lightweightSkill
+                ? lightweightSkillOutcome(verified.output)
+                : evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
               : null;
             if (
               step.actor_type === 'skill'
@@ -2399,6 +2657,8 @@ export class LeaseExecutionEngine {
               expectedModel: input.expectedModel,
               optionalTool: false,
               frozenSkillExecution,
+              lightweightSkill,
+              lightweightResolvedInputs,
               onSkillPrepared: (fingerprint) => {
                 preparedSkillFingerprint = fingerprint;
               },
@@ -2410,7 +2670,9 @@ export class LeaseExecutionEngine {
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           let result = sanitizeStepResult(actorResult);
           skillOutcome = step.actor_type === 'skill'
-            ? evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
+            ? lightweightSkill
+              ? lightweightSkillOutcome(result.output)
+              : evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
             : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
             && isRecord(result.output)
@@ -2423,7 +2685,7 @@ export class LeaseExecutionEngine {
                 isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
               )
             : undefined;
-          const contributionPolicy = step.actor_type === 'skill'
+          const contributionPolicy = !plan.lightweight && step.actor_type === 'skill'
             ? invocationPolicies.find(({ role, skillId }) => (
                 role === 'contributor' && skillId === step.actor_id
               ))
@@ -2450,17 +2712,29 @@ export class LeaseExecutionEngine {
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           const artifactValue = result.artifactValue ?? result.output;
-          const artifact = await this.dependencies.artifacts.writeJson({
-            taskId: input.lease.taskId,
-            planVersionId: input.lease.planVersionId,
-            attemptId: input.lease.attemptId,
-            kind: result.kind,
-            relativePath: `steps/${step.step_no}-${result.kind}.json`,
-            value: artifactValue,
-            schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
-            activeLease: input.lease,
-          });
-          if (publicationGroup) publicationGroup.track(artifact.id);
+          const lightweightPublication = result.kind === 'skill_report'
+            ? await new LightweightReportArtifactService(this.dependencies.artifacts).sealSkillReport({
+                activeLease: input.lease,
+                report: parseSkillReport(artifactValue),
+              })
+            : undefined;
+          const artifact = lightweightPublication?.jsonArtifact
+            ?? await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: result.kind,
+              relativePath: `steps/${step.step_no}-${result.kind}.json`,
+              value: artifactValue,
+              schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
+              activeLease: input.lease,
+            });
+          if (lightweightPublication) {
+            publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
+            publicationGroup
+              .track(lightweightPublication.jsonArtifact.id)
+              .track(lightweightPublication.markdownArtifact.id);
+          } else if (publicationGroup) publicationGroup.track(artifact.id);
           else unpublishedArtifactId = artifact.id;
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
@@ -2883,21 +3157,39 @@ export class LeaseExecutionEngine {
               : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
           if (step.actor_type === 'skill') {
-            failedSkillProvenance = await this.failedSkillProvenance({
-              step,
-              lease: input.lease,
-              resolvedInput,
-              producedOutputHash: error instanceof SkillOutputSchemaError
-                ? error.outputHash
-                : producedSkillOutputHash,
-              schemaHashes: error instanceof SkillOutputSchemaError
-                ? error.schemaHashes
-                : undefined,
-              preparedFingerprint: preparedSkillFingerprint,
-              ...(error instanceof SkillOutputSchemaError
-                ? { modelReceipt: error.modelReceipt }
-                : {}),
-            });
+            failedSkillProvenance = lightweightSkill
+              ? {
+                  kind: 'lightweight_skill_execution',
+                  ...(preparedSkillFingerprint ?? {
+                    skillBodyHash: lightweightSkill.snapshot.body_hash,
+                    inputSchemaHash: lightweightSkill.snapshot.input_requirements_hash,
+                    outputSchemaHash: lightweightSkill.snapshot.output_schema_hash,
+                    payloadSchemaHash: null,
+                    skillReferenceHashes: [{
+                      path: 'report-template.md',
+                      hash: lightweightSkill.snapshot.report_template_hash,
+                    }],
+                    inputArtifacts: executionInputArtifacts(outputs, step),
+                    inputHash: hashJson(resolvedInput),
+                    executionPromptHash: null,
+                  }),
+                  status: 'failed',
+                }
+              : await this.failedSkillProvenance({
+                  step,
+                  lease: input.lease,
+                  resolvedInput,
+                  producedOutputHash: error instanceof SkillOutputSchemaError
+                    ? error.outputHash
+                    : producedSkillOutputHash,
+                  schemaHashes: error instanceof SkillOutputSchemaError
+                    ? error.schemaHashes
+                    : undefined,
+                  preparedFingerprint: preparedSkillFingerprint,
+                  ...(error instanceof SkillOutputSchemaError
+                    ? { modelReceipt: error.modelReceipt }
+                    : {}),
+                });
           }
           const optionalInvocationPolicy = plan.optionalInvocationStepNos.has(step.step_no)
             ? invocationPolicies.find(({ failurePolicy }) => failurePolicy === 'gap')
@@ -3491,6 +3783,104 @@ export class LeaseExecutionEngine {
     }
 
     try {
+      if (plan.lightweight) {
+      const reports = outputs
+        .filter((output) => output.kind === 'skill_report' && output.actorType === 'skill')
+        .sort((left, right) => left.stepNo - right.stepNo)
+        .map((output) => parseSkillReport(output.output));
+      const expectedReportCount = plan.lightweight.snapshotsByStep.size;
+      if (reports.length !== expectedReportCount) {
+        throw new ExecutionAuthenticityError(
+          `lightweight execution produced ${reports.length} SkillReports, expected ${expectedReportCount}`,
+        );
+      }
+      const needsInput = reports.filter(({ status }) => status === 'needs_input');
+      if (needsInput.length > 0) {
+        const missingInputKeys = [...new Set(needsInput.flatMap(({ missingInputKeys }) => missingInputKeys ?? []))];
+        const failure = {
+          kind: 'skill_needs_input',
+          retryable: false,
+          requiresReplan: true,
+          allowedActions: ['replan', 'abort'],
+          missingInputKeys,
+          message: `Skill requires additional input: ${missingInputKeys.join(', ')}`,
+        };
+        const failedStepNo = plan.steps.length + 1;
+        await this.dependencies.repository.recordExecutionStep({
+          ...input.lease,
+          stepNo: failedStepNo,
+          stepName: 'resolve additional Skill input',
+          actorType: 'system',
+          actorId: 'input-resolution',
+          state: 'failed',
+          failure,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+        });
+        await this.dependencies.repository.pauseExecution({
+          taskId: input.lease.taskId,
+          attemptId: input.lease.attemptId,
+          expectedVersion: active.stateVersion,
+          reason: 'skill_needs_input',
+        });
+        return {
+          status: 'paused',
+          attemptId: input.lease.attemptId,
+          evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+          failedStepNo,
+          failure,
+        };
+      }
+      const verifiedSources = reports.flatMap(({ sources }) => sources);
+      const executionGaps = [...gaps.values()]
+        .sort((left, right) => left.stepNo - right.stepNo)
+        .map(({ message }) => message);
+      const finalReport = plan.lightweight.mode === 'single_skill'
+        ? finalizeSingleReport({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            report: reports[0]!,
+            verifiedSources,
+            extraGaps: executionGaps,
+          })
+        : (await finalizeMultiReport({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            title: researchGoal || '综合报告',
+            requirement: task.structuredTask,
+            reports,
+            verifiedSources,
+            synthesizer: new LlmMultiReportSynthesizer(this.llm, {
+              attemptId: input.lease.attemptId,
+              stepNo: plan.steps.length + 1,
+              expectedModel: input.expectedModel,
+            }),
+            extraGaps: executionGaps,
+          })).report;
+      const sealed = await new LightweightReportArtifactService(
+        this.dependencies.artifacts,
+      ).sealFinalReport({
+        activeLease: input.lease,
+        report: finalReport,
+      });
+      chartPublication?.commit();
+      chartPublication = undefined;
+      const status = finalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      await this.dependencies.repository.completeExecution(input.lease, {
+        status,
+        finalReportArtifactId: sealed.jsonArtifact.id,
+      });
+        return {
+          status,
+          attemptId: input.lease.attemptId,
+          evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+          finalReportArtifactId: sealed.jsonArtifact.id,
+          gapCount: finalReport.gaps.length,
+        };
+      }
+
       if (deliverableId === 'design_audit_report') {
         const materializer = this.dependencies.visualInputMaterializer!;
         await this.withLeaseHeartbeat(input.lease, () => materializer.annotateDesignFindings!({
@@ -4095,14 +4485,15 @@ export class LeaseExecutionEngine {
         const expectedKinds: Record<EngineStep['actor_type'], StepArtifactKind> = {
           knowledge: 'knowledge_output',
           tool: 'tool_output',
-          skill: 'skill_output',
+          skill: plan.lightweight ? 'skill_report' : 'skill_output',
           llm: 'llm_output',
           reviewer: 'review_output',
         };
         for (const step of plan.steps) {
           const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
           const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
-          const contributorOutput = step.actor_type === 'skill'
+          const contributorOutput = !plan.lightweight
+            && step.actor_type === 'skill'
             && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
               role === 'contributor' && skillId === step.actor_id
             ));
@@ -4281,7 +4672,8 @@ export class LeaseExecutionEngine {
       }
 
       const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
-      const contributorOutput = step.actor_type === 'skill'
+      const contributorOutput = !plan.lightweight
+        && step.actor_type === 'skill'
         && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
           role === 'contributor' && skillId === step.actor_id
         ));
@@ -4289,7 +4681,7 @@ export class LeaseExecutionEngine {
         ? 'tool_output'
         : step.actor_type === 'knowledge'
           ? 'knowledge_output'
-          : contributorOutput ? 'research_contribution' : 'skill_output';
+          : contributorOutput ? 'research_contribution' : plan.lightweight ? 'skill_report' : 'skill_output';
       if (
         !artifact
         || artifact.state !== 'SEALED'
@@ -4604,6 +4996,22 @@ export class LeaseExecutionEngine {
         : null;
     }
     if (input.step.actor_type !== 'skill') return null;
+    const lightweightSkill = input.plan.lightweight?.snapshotsByStep.get(input.step.step_no);
+    if (lightweightSkill && input.plan.lightweight) {
+      const snapshot = lightweightSkill.snapshot;
+      const expectedReferenceHashes = [{
+        path: 'report-template.md',
+        hash: snapshot.report_template_hash,
+      }];
+      return prior.skillBodyHash === snapshot.body_hash
+        && prior.inputSchemaHash === snapshot.input_requirements_hash
+        && prior.outputSchemaHash === snapshot.output_schema_hash
+        && prior.payloadSchemaHash === null
+        && isDeepStrictEqual(prior.skillReferenceHashes, expectedReferenceHashes)
+        && prior.inputHash === hashJson(resolvedInput)
+        ? prior
+        : null;
+    }
     resolvedInput = await this.restoreReusableSynthesizerInput({
       step: input.step,
       plan: input.plan,
@@ -4663,6 +5071,12 @@ export class LeaseExecutionEngine {
       for (const step of plan.steps) validateStepInputBindings(step, stepNos);
       for (const step of plan.steps) {
         if (step.actor_type === 'skill') {
+          if (plan.lightweight) {
+            if (!plan.lightweight.snapshotsByStep.has(step.step_no)) {
+              return new ExecutionAuthenticityError(`lightweight Skill ${step.actor_id} has no frozen snapshot`);
+            }
+            continue;
+          }
           const skill = this.dependencies.skillLoader.getSkill(step.actor_id);
           if (!skill) return new ExecutionAuthenticityError(`skill ${step.actor_id} is not active`);
           this.dependencies.skillLoader.loadSkillBody(step.actor_id);
@@ -4831,6 +5245,11 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     optionalTool: boolean;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
+    lightweightSkill?: {
+      invocationId: string;
+      snapshot: LightweightSkillSnapshot;
+    };
+    lightweightResolvedInputs?: ResolvedPlanInputs;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
@@ -5316,6 +5735,107 @@ export class LeaseExecutionEngine {
     };
   }
 
+  private async runLightweightSkill(input: {
+    step: EngineStep;
+    lease: ControlExecutionLease;
+    researchGoal: string;
+    resolvedInput: Record<string, unknown>;
+    outputs: EngineSealedStepOutput[];
+    expectedModel: string;
+    cancellationSignal?: AbortSignal;
+    lightweightSkill: {
+      invocationId: string;
+      snapshot: LightweightSkillSnapshot;
+    };
+    lightweightResolvedInputs?: ResolvedPlanInputs;
+    onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
+  }): Promise<StepResult> {
+    if (!input.lightweightResolvedInputs) {
+      throw new ExecutionAuthenticityError('lightweight Skill input bindings are unavailable');
+    }
+    const { invocationId, snapshot } = input.lightweightSkill;
+    if (snapshot.skill_id !== input.step.actor_id) {
+      throw new ExecutionAuthenticityError(`lightweight Skill snapshot ${snapshot.skill_id} does not match ${input.step.actor_id}`);
+    }
+    const sources = lightweightSourceReferences({
+      step: input.step,
+      outputs: input.outputs,
+      resolvedInputs: input.lightweightResolvedInputs,
+      invocationId,
+    });
+    const deterministicGaps = lightweightWaivedGaps(
+      input.lightweightResolvedInputs,
+      invocationId,
+    );
+    const context = {
+      researchGoal: input.researchGoal,
+      resolvedInput: compactLlmInput(input.resolvedInput),
+      priorOutputs: verifiedPriorOutputs(input.outputs, input.step),
+      sourceCatalog: sources,
+      waivedInputs: deterministicGaps,
+    };
+    const prompt = lightweightSkillPrompt(snapshot);
+    const fingerprint: SkillExecutionFingerprint = {
+      skillBodyHash: snapshot.body_hash,
+      inputSchemaHash: snapshot.input_requirements_hash,
+      outputSchemaHash: snapshot.output_schema_hash,
+      payloadSchemaHash: null,
+      skillReferenceHashes: [{ path: 'report-template.md', hash: snapshot.report_template_hash }],
+      inputArtifacts: executionInputArtifacts(input.outputs, input.step),
+      inputHash: hashJson(input.resolvedInput),
+      executionPromptHash: hashPrompt(prompt, context, `skill-report:${input.step.actor_id}`),
+    };
+    input.onSkillPrepared?.(fingerprint);
+    const generated = await this.llm.generateStructured<SkillReportDraft>({
+      prompt,
+      schema: SKILL_REPORT_DRAFT_SCHEMA,
+      schemaName: `skill:${input.step.actor_id}`,
+      context,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+      receipt: {
+        stage: 'skill',
+        attemptId: input.lease.attemptId,
+        stepNo: input.step.step_no,
+        contextManifestHash: hashJson(context),
+        expectedModel: input.expectedModel,
+      },
+    });
+    if (!generated.receiptId) {
+      throw new MissingModelReceiptError(new Error('successful lightweight Skill call has no receipt ID'));
+    }
+    this.dependencies.validator.validateSchemaOrThrow(
+      SKILL_REPORT_DRAFT_SCHEMA,
+      generated.data,
+      `skill:${input.step.actor_id}`,
+    );
+    const allowedInputKeys = new Set(snapshot.input_requirements.map(({ key }) => key));
+    if (
+      generated.data.missingInputKeys?.some((key) => !allowedInputKeys.has(key))
+    ) {
+      throw new LLMInvocationError('schema', false, null, 'Skill requested an unknown input key');
+    }
+    const report = createSkillReport({
+      skillId: input.step.actor_id,
+      invocationId,
+      draft: generated.data,
+      sources,
+      deterministicGaps,
+    });
+    assertMarkdownReferences(report.markdown, sources);
+    return {
+      output: report,
+      kind: 'skill_report',
+      outputHash: hashJson(report),
+      skillProvenance: {
+        ...fingerprint,
+        outputHash: hashJson(report),
+        promptHash: generated.promptHash,
+        traceId: generated.traceId,
+        modelReceiptId: generated.receiptId,
+      },
+    };
+  }
+
   private async runSkill(input: {
     step: EngineStep;
     lease: ControlExecutionLease;
@@ -5325,10 +5845,18 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     cancellationSignal?: AbortSignal;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
+    lightweightSkill?: {
+      invocationId: string;
+      snapshot: LightweightSkillSnapshot;
+    };
+    lightweightResolvedInputs?: ResolvedPlanInputs;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('skill LLM provider is not eligible as real');
+    }
+    if (input.lightweightSkill) {
+      return this.runLightweightSkill({ ...input, lightweightSkill: input.lightweightSkill });
     }
     const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);

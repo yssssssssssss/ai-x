@@ -1,14 +1,25 @@
 import {
   FINAL_REPORT_VERSION,
+  SKILL_REPORT_VERSION,
   parseFinalReport,
   parseSkillReport,
+  skillReportPath,
   type FinalReport,
   type SourceReference,
   type SkillReport,
 } from '../../../../packages/api-contract/lightweight-orchestration.ts';
+import type {
+  ControlArtifact,
+  ControlExecutionLease,
+} from '../../../../database/control-plane.ts';
+import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../control/artifact-publication-group.ts';
+import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 
-const CITATION = /\[(S-[A-Za-z0-9._:-]+)\]/gu;
+const CITATION = /\[(S(?:-|\d)[A-Za-z0-9._:-]*)\]/gu;
 const URL_IN_TEXT = /https?:\/\/[^\s<>)\]]+/gu;
 const MARKDOWN_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gu;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
@@ -23,6 +34,58 @@ export class LightweightReportError extends Error {
 export interface MultiSynthesisInput {
   requirement: unknown;
   reports: SkillReport[];
+}
+
+export interface SkillReportDraft {
+  title: string;
+  status: SkillReport['status'];
+  markdown: string;
+  gaps: string[];
+  missingInputKeys?: string[];
+}
+
+export const SKILL_REPORT_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'status', 'markdown', 'gaps'],
+  properties: {
+    title: { type: 'string', minLength: 1 },
+    status: { enum: ['completed', 'completed_with_gaps', 'needs_input'] },
+    markdown: { type: 'string', minLength: 1 },
+    gaps: { type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true },
+    missingInputKeys: {
+      type: 'array',
+      items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
+      minItems: 1,
+      uniqueItems: true,
+    },
+  },
+} as const;
+
+export function createSkillReport(input: {
+  skillId: string;
+  invocationId: string;
+  draft: SkillReportDraft;
+  sources: SourceReference[];
+  deterministicGaps?: string[];
+}): SkillReport {
+  const gaps = [...new Set([...input.draft.gaps, ...(input.deterministicGaps ?? [])])];
+  const status = input.draft.status === 'needs_input'
+    ? 'needs_input'
+    : gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+  return parseSkillReport({
+    version: SKILL_REPORT_VERSION,
+    skillId: input.skillId,
+    invocationId: input.invocationId,
+    title: input.draft.title,
+    status,
+    markdown: input.draft.markdown,
+    sources: input.sources,
+    gaps,
+    ...(status === 'needs_input'
+      ? { missingInputKeys: input.draft.missingInputKeys }
+      : {}),
+  });
 }
 
 export interface MultiReportSynthesizer {
@@ -125,7 +188,7 @@ export function assertMarkdownReferences(
     [...byId.values()].flatMap(({ url }) => url === undefined ? [] : [url]),
   );
   for (const match of markdown.matchAll(URL_IN_TEXT)) {
-    const url = match[0].replace(/[.,;:!?]+$/u, '');
+    const url = match[0].replace(/[.,;:!?。，；：！？]+$/u, '');
     if (!allowedUrls.has(url)) {
       throw new LightweightReportError(`Markdown references unverified URL ${url}`);
     }
@@ -176,7 +239,7 @@ function finalSkillReferences(reports: readonly SkillReport[]): FinalReport['ski
       skillId: report.skillId,
       invocationId: report.invocationId,
       status: report.status,
-      path: `skill-results/${report.invocationId}.json`,
+      path: skillReportPath(report.invocationId),
     };
   });
 }
@@ -187,6 +250,7 @@ export function finalizeSingleReport(input: {
   attemptId: string;
   report: SkillReport;
   verifiedSources: readonly SourceReference[];
+  extraGaps?: readonly string[];
 }): FinalReport {
   const report = parseSkillReport(input.report);
   if (report.status === 'needs_input') {
@@ -194,6 +258,7 @@ export function finalizeSingleReport(input: {
   }
   const verifiedById = sourceMap(input.verifiedSources);
   assertReportSources(report, verifiedById);
+  const gaps = mergeGaps([report], input.extraGaps);
   const finalReport: FinalReport = {
     version: FINAL_REPORT_VERSION,
     taskId: input.taskId,
@@ -201,9 +266,9 @@ export function finalizeSingleReport(input: {
     attemptId: input.attemptId,
     mode: 'single_skill',
     title: report.title,
-    markdown: appendDeterministicAppendices(report.markdown, report.sources, report.gaps),
+    markdown: appendDeterministicAppendices(report.markdown, report.sources, gaps),
     sources: [...report.sources],
-    gaps: [...report.gaps],
+    gaps,
     skillReports: finalSkillReferences([report]),
   };
   return parseFinalReport(finalReport);
@@ -233,6 +298,7 @@ export async function finalizeMultiReport(input: {
   reports: SkillReport[];
   verifiedSources: readonly SourceReference[];
   synthesizer: MultiReportSynthesizer;
+  extraGaps?: readonly string[];
 }): Promise<{ report: FinalReport; synthesis: 'completed' | 'fallback' }> {
   if (input.reports.length === 0) throw new LightweightReportError('Multi report has no Skill reports');
   const reports = input.reports.map(parseSkillReport);
@@ -257,7 +323,7 @@ export async function finalizeMultiReport(input: {
     markdown = synthesisFallback(reports);
     extraGaps.push('自动综合未完成；当前最终报告按 Skill 原始报告分组展示。');
   }
-  const gaps = mergeGaps(reports, extraGaps);
+  const gaps = mergeGaps(reports, [...(input.extraGaps ?? []), ...extraGaps]);
   const finalReport: FinalReport = {
     version: FINAL_REPORT_VERSION,
     taskId: input.taskId,
@@ -271,6 +337,149 @@ export async function finalizeMultiReport(input: {
     skillReports: finalSkillReferences(reports),
   };
   return { report: parseFinalReport(finalReport), synthesis };
+}
+
+export interface SealedSkillReport {
+  report: SkillReport;
+  jsonArtifact: ControlArtifact;
+  markdownArtifact: ControlArtifact;
+}
+
+export interface SealedFinalReport {
+  report: FinalReport;
+  jsonArtifact: ControlArtifact;
+  markdownArtifact: ControlArtifact;
+  htmlArtifact: ControlArtifact;
+  sourcesArtifact: ControlArtifact;
+}
+
+export class LightweightReportArtifactService {
+  constructor(private readonly artifacts: ControlArtifactStore) {}
+
+  async sealSkillReport(input: {
+    activeLease: ControlExecutionLease;
+    report: SkillReport;
+  }): Promise<SealedSkillReport> {
+    const report = parseSkillReport(input.report);
+    const publication = new ArtifactPublicationGroup(this.artifacts);
+    try {
+      const jsonArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'skill_report',
+        relativePath: skillReportPath(report.invocationId),
+        value: report,
+        schemaVersion: SKILL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(jsonArtifact.id);
+      const markdownArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'skill_report_markdown',
+        relativePath: skillReportPath(report.invocationId, 'md'),
+        content: report.markdown,
+        mediaType: 'text/markdown; charset=utf-8',
+        maxByteSize: MAX_HTML_BYTES,
+        schemaVersion: SKILL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(markdownArtifact.id);
+      publication.commit();
+      return { report, jsonArtifact, markdownArtifact };
+    } catch (error) {
+      try {
+        await publication.compensate('SkillReport publication did not complete');
+      } catch (compensationError) {
+        if (compensationError instanceof ArtifactInvalidationError) {
+          throw new ArtifactInvalidationError(
+            compensationError.failedArtifactIds,
+            compensationError.invalidationReason,
+            [error, ...compensationError.failures],
+          );
+        }
+        throw compensationError;
+      }
+      throw error;
+    }
+  }
+
+  async sealFinalReport(input: {
+    activeLease: ControlExecutionLease;
+    report: FinalReport;
+  }): Promise<SealedFinalReport> {
+    const report = parseFinalReport(input.report);
+    const html = renderFinalReportHtml(report);
+    const publication = new ArtifactPublicationGroup(this.artifacts);
+    try {
+      const markdownArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report_markdown',
+        relativePath: 'reports/report.md',
+        content: report.markdown,
+        mediaType: 'text/markdown; charset=utf-8',
+        maxByteSize: MAX_HTML_BYTES,
+        schemaVersion: FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(markdownArtifact.id);
+      const htmlArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report_html',
+        relativePath: 'reports/report.html',
+        content: html,
+        mediaType: 'text/html; charset=utf-8',
+        maxByteSize: MAX_HTML_BYTES,
+        schemaVersion: FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(htmlArtifact.id);
+      const sourcesArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'report_sources',
+        relativePath: 'reports/sources.json',
+        value: report.sources,
+        schemaVersion: 'source-reference-list-v1',
+        activeLease: input.activeLease,
+      });
+      publication.track(sourcesArtifact.id);
+      const jsonArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report',
+        relativePath: 'reports/final-report.json',
+        value: report,
+        schemaVersion: FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(jsonArtifact.id);
+      publication.commit();
+      return { report, jsonArtifact, markdownArtifact, htmlArtifact, sourcesArtifact };
+    } catch (error) {
+      try {
+        await publication.compensate('FinalReport publication did not complete');
+      } catch (compensationError) {
+        if (compensationError instanceof ArtifactInvalidationError) {
+          throw new ArtifactInvalidationError(
+            compensationError.failedArtifactIds,
+            compensationError.invalidationReason,
+            [error, ...compensationError.failures],
+          );
+        }
+        throw compensationError;
+      }
+      throw error;
+    }
+  }
 }
 
 function escapeHtml(value: string): string {

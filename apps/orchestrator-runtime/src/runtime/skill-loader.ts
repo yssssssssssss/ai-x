@@ -85,6 +85,11 @@ export class SkillLoader {
 
   listCapabilitySkills(): CapabilitySkillRegistryEntry[] {
     return loadSkillRegistry().skills.map((skill): CapabilitySkillRegistryEntry => {
+      const {
+        input_requirements: _inputRequirements,
+        report_template: _reportTemplate,
+        ...capabilitySkill
+      } = skill;
       const taskTypes = skill.task_types ?? [];
       const inputs = skill.inputs ?? [];
       const visualInputs = skill.visual_inputs ?? [];
@@ -95,7 +100,7 @@ export class SkillLoader {
       const optionalTools = skill.optional_tools ?? [];
       if (skill.status !== 'active') {
         return {
-          ...skill,
+          ...capabilitySkill,
           status: skill.status,
           task_types: Array.isArray(taskTypes) ? taskTypes : [],
           inputs: Array.isArray(inputs) ? inputs : [],
@@ -129,7 +134,7 @@ export class SkillLoader {
         throw new Error(`active skill capability metadata invalid: ${skill.id}`);
       }
       return {
-        ...skill,
+        ...capabilitySkill,
         status: 'active',
         task_types: taskTypes,
         inputs,
@@ -188,14 +193,37 @@ export class SkillLoader {
   loadLightweightSnapshot(id: string): LightweightSkillSnapshot {
     const entry = this.getSkill(id);
     if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
-    if (!entry.input_requirements || !entry.report_template) {
-      throw new Error(`skill ${id} has no lightweight input/report contract`);
+    const fallbackRoles = [
+      ...(entry.composition?.required_input_roles ?? entry.inputs ?? []),
+      ...(entry.composition?.optional_input_roles ?? []),
+    ];
+    const requiredRoles = new Set(entry.composition?.required_input_roles ?? entry.inputs ?? []);
+    const inputRequirements: SkillInputRequirement[] = entry.input_requirements
+      ? parseSkillInputRequirements(entry.input_requirements)
+      : [...new Set(fallbackRoles)].map((key) => {
+          const kind = entry.dataset_inputs?.includes(key)
+            ? 'dataset' as const
+            : entry.visual_inputs?.includes(key) ? 'visual' as const : 'value' as const;
+          return {
+            key,
+            kind,
+            label: key,
+            description: `${entry.name} 所需的 ${key} 输入。`,
+            required: requiredRoles.has(key),
+            multiple: entry.multiple_visual_inputs?.includes(key) === true,
+            acceptedSources: kind === 'value'
+              ? ['conversation', 'upload', 'database'] as const
+              : ['upload', 'database'] as const,
+            question: `请提供 ${entry.name} 所需的 ${key}。`,
+          };
+        });
+    if (inputRequirements.length === 0) {
+      throw new Error(`skill ${id} has no declared input requirements`);
     }
     const body = this.loadSkillBody(id);
-    const inputRequirements: SkillInputRequirement[] = parseSkillInputRequirements(
-      entry.input_requirements,
-    );
-    const reportTemplate = readFileSync(join(getConfigRoot(), entry.report_template), 'utf8');
+    const reportTemplate = entry.report_template
+      ? readFileSync(join(getConfigRoot(), entry.report_template), 'utf8')
+      : '# {{title}}\n\n## 结论\n\n## 分析结果\n\n## 建议\n\n## 限制和待验证内容\n';
     if (!reportTemplate.trim()) throw new Error(`skill ${id} report template is empty`);
     const digest = (value: string): string => `sha256:${createHash('sha256').update(value).digest('hex')}`;
     const execution = this.loadSkillExecution(id);

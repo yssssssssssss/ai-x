@@ -18,7 +18,7 @@
 新建或明确 Replan 的轻量 Task 写入：
 
 ```text
-executionContractVersion = lightweight-execution-plan-v1
+execution_contract_version = lightweight-execution-plan-v1
 ```
 
 只有该判别项可以进入轻量执行、恢复和报告读取路径。不得按日期、Task mode、文件是否存在或旧 Artifact 内容推断。历史 CurrentExecutionPlan v2/v3 不转换、不迁移，也不得进入轻量路径。

@@ -1,6 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  LIGHTWEIGHT_EXECUTION_PLAN_VERSION,
+  isLightweightExecutionPlanV1,
+  parseLightweightExecutionPlanV1,
+  type LightweightExecutionPlanV1,
+  type LightweightSkillInvocation,
+  type ReadableExecutionPlan,
+  type ResolvedPlanInputs,
+  type SkillInputRequirement,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import type {
   CurrentCapabilityApproval,
   CurrentCapabilityDecisions,
@@ -37,8 +47,9 @@ import {
   loadToolRegistry,
   type ToolRegistryEntry,
 } from '../runtime/config-loader.ts';
+import { resolvePlanInputs } from '../input-resolution/resolved-plan-inputs.ts';
 import { SchemaValidator } from '../schema/validator.ts';
-import type { SkillLoader } from '../runtime/skill-loader.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 import { resolveCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
 import {
   assertCompiledSkillPlan,
@@ -383,6 +394,217 @@ export function normalizeCurrentExecutionPlanOptionalFields(
     capability_decisions: freezeCapabilityDecisions(plan.capability_decisions),
     capability_gaps: structuredClone(plan.capability_gaps ?? []),
   };
+}
+
+function materializedRequirementValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return value !== undefined && value !== null;
+}
+
+function lightweightStepClosure(
+  steps: readonly CurrentPlanStep[],
+  invocationIds: ReadonlySet<string>,
+): Set<number> {
+  const byNo = new Map(steps.map((step) => [step.step_no, step]));
+  const retained = new Set(
+    steps
+      .filter((step) => step.skill_invocation_id && invocationIds.has(step.skill_invocation_id))
+      .map((step) => step.step_no),
+  );
+  const visit = (stepNo: number): void => {
+    const step = byNo.get(stepNo);
+    if (!step) fail('candidate_schema_invalid', 'lightweight_dependency', String(stepNo));
+    for (const dependency of [
+      ...step.depends_on,
+      ...step.input_bindings.map(({ source_step_no }) => source_step_no),
+    ]) {
+      if (retained.has(dependency)) continue;
+      retained.add(dependency);
+      visit(dependency);
+    }
+  };
+  for (const stepNo of [...retained]) visit(stepNo);
+  return retained;
+}
+
+function lightweightPendingInputs(plan: LightweightExecutionPlanV1): PendingInput[] {
+  const stepByInvocation = new Map(plan.skill_invocations.map((invocation) => [
+    invocation.invocation_id,
+    [...plan.steps].reverse().find((step) => (
+      step.skill_invocation_id === invocation.invocation_id
+      && step.actor_type === 'skill'
+      && step.actor_id === invocation.skill_id
+    ))!,
+  ]));
+  return plan.resolved_inputs.pending.map(({ requirement, targetInvocationIds }) => ({
+    kind: requirement.kind,
+    role: requirement.key,
+    label: requirement.label,
+    multiple: requirement.multiple,
+    targets: targetInvocationIds.map((invocationId) => {
+      const step = stepByInvocation.get(invocationId);
+      if (!step) fail('candidate_schema_invalid', 'lightweight_pending_target', invocationId);
+      return {
+        step_no: step.step_no,
+        tool_id: step.actor_id,
+        field: requirement.key,
+        multiple: requirement.multiple,
+      };
+    }),
+  }));
+}
+
+export function compileLightweightExecutionPlan(input: {
+  plan: ReadableCurrentExecutionPlan;
+  mode: 'single_skill' | 'multi_skill';
+  task: ResearchTaskV2;
+  skillLoader?: SkillLoader;
+}): {
+  plan: LightweightExecutionPlanV1;
+  pendingInputs: PendingInput[];
+  resolvedInputs: ResolvedPlanInputs;
+} {
+  const skillLoader = input.skillLoader ?? new SkillLoader();
+  const sourceInvocations = input.plan.skill_invocations ?? [];
+  const retainedInvocations = sourceInvocations.filter((invocation) => (
+    !('role' in invocation) || invocation.role === 'contributor'
+  ));
+  if (retainedInvocations.length === 0) {
+    fail('candidate_schema_invalid', 'lightweight_skill_invocations');
+  }
+  if (input.mode === 'single_skill' && retainedInvocations.length !== 1) {
+    fail('candidate_schema_invalid', 'lightweight_single_skill_invocations');
+  }
+  const retainedIds = new Set(retainedInvocations.map(({ invocation_id }) => invocation_id));
+  const retainedStepNos = lightweightStepClosure(input.plan.steps, retainedIds);
+  const sourceSteps = input.plan.steps
+    .filter(({ step_no }) => retainedStepNos.has(step_no))
+    .sort((left, right) => left.step_no - right.step_no);
+  const stepNoMap = new Map(sourceSteps.map((step, index) => [step.step_no, index + 1]));
+  const steps: CurrentPlanStep[] = sourceSteps.map((source, index) => {
+    const step = structuredClone(source) as CurrentPlanStep & {
+      shared_stage_key?: string;
+      shared_by_invocation_ids?: string[];
+      share_fingerprint?: string;
+    };
+    delete step.shared_stage_key;
+    delete step.shared_by_invocation_ids;
+    delete step.share_fingerprint;
+    step.step_no = index + 1;
+    step.depends_on = source.depends_on
+      .filter((dependency) => stepNoMap.has(dependency))
+      .map((dependency) => stepNoMap.get(dependency)!);
+    step.input_bindings = source.input_bindings
+      .filter(({ source_step_no }) => stepNoMap.has(source_step_no))
+      .map((binding) => ({ ...binding, source_step_no: stepNoMap.get(binding.source_step_no)! }));
+    return step;
+  });
+  const invocations: LightweightSkillInvocation[] = retainedInvocations.map((source) => {
+    const snapshot = skillLoader.loadLightweightSnapshot(source.skill_id);
+    const sourceRecord = source as unknown as Record<string, unknown>;
+    const dependencyIds = Array.isArray(sourceRecord.depends_on_invocation_ids)
+      ? sourceRecord.depends_on_invocation_ids.filter(
+          (id): id is string => typeof id === 'string' && retainedIds.has(id),
+        )
+      : [];
+    const required = typeof sourceRecord.required === 'boolean' ? sourceRecord.required : true;
+    const failurePolicy = sourceRecord.failure_policy === 'gap' ? 'gap' : 'block';
+    return {
+      invocation_id: source.invocation_id,
+      skill_id: source.skill_id,
+      depends_on_invocation_ids: dependencyIds,
+      step_nos: source.step_nos
+        .filter((stepNo) => stepNoMap.has(stepNo))
+        .map((stepNo) => stepNoMap.get(stepNo)!),
+      required,
+      failure_policy: failurePolicy,
+      snapshot,
+    };
+  });
+  const taskRecord = input.task as unknown as Record<string, unknown>;
+  const requirementKinds = new Map<string, SkillInputRequirement['kind']>();
+  for (const invocation of invocations) {
+    for (const requirement of invocation.snapshot.input_requirements) {
+      requirementKinds.set(requirement.key, requirement.kind);
+    }
+  }
+  const available = [...requirementKinds].flatMap(([key, kind]) => (
+    materializedRequirementValue(taskRecord[key])
+      ? [{
+          key,
+          kind,
+          valueRef: `requirement:/${key}`,
+          source: 'conversation' as const,
+          authorized: true,
+        }]
+      : []
+  ));
+  const executionBoundKeys = new Set<string>();
+  for (const step of steps) {
+    for (const binding of step.input_bindings) {
+      const match = /^\/([^/]+)$/u.exec(binding.target_pointer);
+      if (match) executionBoundKeys.add(match[1]!);
+    }
+  }
+  const resolvedInputs = resolvePlanInputs({
+    invocations,
+    available,
+    executionBoundKeys: [...executionBoundKeys],
+  });
+  const valueByKey = new Map(
+    resolvedInputs.resolved.map(({ key }) => [key, structuredClone(taskRecord[key])]),
+  );
+  for (const invocation of invocations) {
+    const outputStep = [...steps].reverse().find((step) => (
+      step.skill_invocation_id === invocation.invocation_id
+      && step.actor_type === 'skill'
+      && step.actor_id === invocation.skill_id
+    ));
+    if (!outputStep) fail('candidate_schema_invalid', 'lightweight_output_step', invocation.invocation_id);
+    for (const requirement of invocation.snapshot.input_requirements) {
+      if (valueByKey.has(requirement.key)) {
+        outputStep.input[requirement.key] = structuredClone(valueByKey.get(requirement.key));
+      } else if (!Object.hasOwn(outputStep.input, requirement.key)) {
+        outputStep.input[requirement.key] = null;
+      }
+    }
+  }
+  const keptSkillIds = new Set(invocations.map(({ skill_id }) => skill_id));
+  const capabilityDecisions = {
+    eligible: input.plan.capability_decisions.eligible.filter(({ skill }) => (
+      typeof skill.id === 'string' && keptSkillIds.has(skill.id)
+    )),
+    rejected: input.plan.capability_decisions.rejected,
+  };
+  const keptToolIds = new Set(capabilityDecisions.eligible.flatMap(({ skill }) => [
+    ...skill.required_tools,
+    ...(skill.optional_tools ?? []),
+  ]));
+  const capabilityGaps = (input.plan.capability_gaps ?? []).filter(({ capability_id }) => (
+    keptToolIds.has(capability_id)
+  ));
+  const plan = parseLightweightExecutionPlanV1({
+    task_id: input.plan.task_id || 'pending-task',
+    execution_contract_version: LIGHTWEIGHT_EXECUTION_PLAN_VERSION,
+    mode: input.mode,
+    deliverable_type: input.plan.deliverable_type,
+    evidence_requirements: structuredClone(input.plan.evidence_requirements),
+    problem_graph: structuredClone(input.plan.problem_graph),
+    problem_graph_provenance: structuredClone(input.plan.problem_graph_provenance),
+    capability_decisions: structuredClone(capabilityDecisions),
+    capability_gaps: structuredClone(capabilityGaps),
+    steps,
+    candidate_metadata: structuredClone(input.plan.candidate_metadata),
+    ...(input.plan.planning_provenance
+      ? { planning_provenance: structuredClone(input.plan.planning_provenance) }
+      : {}),
+    activated_nodes: [...input.plan.activated_nodes],
+    skill_invocations: invocations,
+    resolved_inputs: resolvedInputs,
+  });
+  const pendingInputs = lightweightPendingInputs(plan);
+  return { plan, pendingInputs, resolvedInputs };
 }
 
 function capabilityGaps(
@@ -1332,8 +1554,18 @@ export function validateCurrentPlanRevision(input: {
   pending_inputs: unknown;
   task_id: string;
   candidate_id: PlanCandidate['id'];
-}, validator = new SchemaValidator()): ReadableCurrentExecutionPlan {
+}, validator = new SchemaValidator()): ReadableExecutionPlan {
   validator.validateOrThrow('research-task-v2', input.task);
+  if (isLightweightExecutionPlanV1(input.plan)) {
+    const plan = parseLightweightExecutionPlanV1(input.plan);
+    if (plan.task_id !== input.task_id) {
+      fail('candidate_schema_invalid', 'task_id', plan.task_id, input.task_id);
+    }
+    if (!isDeepStrictEqual(lightweightPendingInputs(plan), input.pending_inputs)) {
+      fail('candidate_schema_invalid', 'pending_inputs_mismatch');
+    }
+    return plan;
+  }
   validator.validateOrThrow('current-execution-plan', input.plan);
   const task = input.task as ResearchTaskV2;
   if (

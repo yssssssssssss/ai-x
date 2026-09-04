@@ -10,6 +10,14 @@ import {
   type ControlArtifact,
 } from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
+import {
+  isLightweightExecutionPlanV1,
+  parseFinalReport,
+  parseLightweightExecutionPlanV1,
+  parseSkillReport,
+  type FinalReport,
+  type SkillReport,
+} from '../../../packages/api-contract/lightweight-orchestration.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
@@ -35,6 +43,7 @@ import {
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import {
   assertSingleSkillExecutionPlan,
+  compileLightweightExecutionPlan,
   PlanCompiler,
 } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
 import {
@@ -307,6 +316,19 @@ function assertRevisionSourceContract(input: {
   deliverableSelection: { deliverableId: string; evidenceRequirements: EvidenceRequirement[] };
   validator: SchemaValidator;
 }): void {
+  if (isLightweightExecutionPlanV1(input.activePlan.plan)) {
+    const plan = parseLightweightExecutionPlanV1(input.activePlan.plan);
+    parsePendingInputContracts(input.activePlan.pendingInputs);
+    if (
+      plan.deliverable_type !== input.deliverableSelection.deliverableId
+      || !isDeepStrictEqual(plan.evidence_requirements, input.deliverableSelection.evidenceRequirements)
+    ) {
+      throw new Error(
+        `active plan ${input.activePlan.id} does not match the current Deliverable Registry contract`,
+      );
+    }
+    return;
+  }
   let plan = input.activePlan.plan;
   try {
     input.validator.validateOrThrow('current-execution-plan', plan);
@@ -414,6 +436,16 @@ export interface ControlRuntime {
   artifacts: ControlArtifactStore;
   zeroPublication?: ZeroPublicationService;
   annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
+  getFinalReport(taskId: string, ownerUserId: string): Promise<{
+    artifact: ControlArtifact;
+    report: FinalReport;
+  } | null>;
+  getSkillReports(taskId: string, ownerUserId: string): Promise<SkillReport[] | null>;
+  readFinalReportHtml(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
     taskId: string;
@@ -751,6 +783,48 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ?? await fixedReportPackageV2Root(binding)
       ?? await fixedReportPackageV1Root(binding);
   };
+  const fixedLightweightArtifact = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }, expected: {
+    kind: 'final_report' | 'final_report_html' | 'skill_report';
+    schemaVersion: string;
+    relativePath?: string;
+  }): Promise<ControlArtifact | null> => {
+    const candidates = (await repository.listArtifactsForAttempt({
+      ...binding,
+      kinds: [expected.kind],
+    })).filter((artifact) => (
+      artifact.state === 'SEALED'
+      && artifact.schemaVersion === expected.schemaVersion
+      && (!expected.relativePath || artifact.storageUri.endsWith(`/${expected.relativePath}`))
+    ));
+    if (candidates.length > 1 && expected.relativePath) {
+      throw new HtmlBundleIntegrityError();
+    }
+    return candidates[0] ?? null;
+  };
+  const readLightweightFinalReport = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<{ artifact: ControlArtifact; report: FinalReport } | null> => {
+    const artifact = await fixedLightweightArtifact(binding, {
+      kind: 'final_report',
+      schemaVersion: 'final-report-v1',
+      relativePath: 'reports/final-report.json',
+    });
+    if (!artifact) return null;
+    const stored = await artifacts.readVerifiedJson<unknown>(artifact.id);
+    const report = parseFinalReport(stored.value);
+    if (
+      report.taskId !== binding.taskId
+      || report.planVersionId !== binding.planVersionId
+      || report.attemptId !== binding.attemptId
+    ) throw new Error('FinalReport binding is invalid');
+    return { artifact: stored.artifact, report };
+  };
   const readFrozenReportPackage = async (input: {
     artifact: ControlArtifact;
     taskId: string;
@@ -918,17 +992,29 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (task.orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      const lightweight = compileLightweightExecutionPlan({
+        plan: compiled.plan,
+        mode: task.orchestrationMode,
+        task: structuredTask,
+        skillLoader,
+      });
       return {
-        plan: { ...compiled.plan, task_id: task.id },
-        pendingInputs: compiled.pending_inputs,
+        plan: { ...lightweight.plan, task_id: task.id },
+        pendingInputs: lightweight.pendingInputs,
       };
     },
   };
   const workflow = new TaskWorkflowService(repository, {
-    execute: ({ lease }) => engine.execute({
-      lease,
-      expectedModel: expectedActualModel,
-    }),
+    async execute({ lease }) {
+      const activePlan = await repository.getPlanVersionDetail(lease.planVersionId);
+      if (!activePlan || !isLightweightExecutionPlanV1(activePlan.plan)) {
+        throw new Error('only lightweight-execution-plan-v1 can enter the current execution path');
+      }
+      return engine.execute({
+        lease,
+        expectedModel: expectedActualModel,
+      });
+    },
   }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates);
   const zeroPublicationEnabled = overrides.zeroPublicationEnabled
     ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
@@ -1068,6 +1154,65 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       }
     },
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
+    async getFinalReport(taskId, ownerUserId) {
+      const task = await repository.getTaskDetail(taskId);
+      if (
+        !task
+        || task.ownerUserId !== ownerUserId
+        || task.conversationOwnerUserId !== ownerUserId
+        || (task.state !== 'completed' && task.state !== 'completed_with_gaps')
+        || !task.activePlanVersionId
+        || !task.currentAttemptId
+      ) return null;
+      return readLightweightFinalReport({
+        taskId: task.id,
+        planVersionId: task.activePlanVersionId,
+        attemptId: task.currentAttemptId,
+      });
+    },
+    async getSkillReports(taskId, ownerUserId) {
+      const final = await this.getFinalReport(taskId, ownerUserId);
+      if (!final) return null;
+      const artifactsForAttempt = await repository.listArtifactsForAttempt({
+        taskId: final.report.taskId,
+        planVersionId: final.report.planVersionId,
+        attemptId: final.report.attemptId,
+        kinds: ['skill_report'],
+      });
+      const reports: SkillReport[] = [];
+      for (const reference of final.report.skillReports) {
+        const candidates = artifactsForAttempt.filter((artifact) => (
+          artifact.state === 'SEALED'
+          && artifact.schemaVersion === 'skill-report-v1'
+          && artifact.storageUri.endsWith(`/${reference.path}`)
+        ));
+        if (candidates.length !== 1) throw new Error(`SkillReport ${reference.invocationId} root is invalid`);
+        const stored = await artifacts.readVerifiedJson<unknown>(candidates[0]!.id);
+        const report = parseSkillReport(stored.value);
+        if (
+          report.skillId !== reference.skillId
+          || report.invocationId !== reference.invocationId
+          || report.status !== reference.status
+        ) throw new Error(`SkillReport ${reference.invocationId} binding is invalid`);
+        reports.push(report);
+      }
+      return reports;
+    },
+    async readFinalReportHtml(input) {
+      const final = await this.getFinalReport(input.taskId, input.ownerUserId);
+      if (!final || final.report.attemptId !== input.attemptId) return null;
+      const artifact = await fixedLightweightArtifact({
+        taskId: final.report.taskId,
+        planVersionId: final.report.planVersionId,
+        attemptId: final.report.attemptId,
+      }, {
+        kind: 'final_report_html',
+        schemaVersion: 'final-report-v1',
+        relativePath: 'reports/report.html',
+      });
+      if (!artifact) return null;
+      return (await artifacts.readVerifiedBoundText(artifact.id)).content;
+    },
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
       if (

@@ -1,14 +1,16 @@
+import type {
+  ReadableExecutionPlan,
+  ResolvedPlanInputs,
+} from './lightweight-orchestration.ts';
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   ContributionLedgerV1,
   ContributionSummaryV1,
   CrossSkillReviewV1,
-  CurrentExecutionPlan,
   CurrentExecutionPlanV3,
   EvidenceManifest,
   LegacyResearchDeliverableEnvelope,
   PendingInput,
-  ReadableCurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
 } from './research-deliverable.ts';
@@ -102,17 +104,16 @@ export interface CurrentPlanCandidate {
   rationale: string;
   tradeoffs: string;
   planHash: string;
-  plan: CurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   pendingInputs: PendingInput[];
+  resolvedInputs?: ResolvedPlanInputs;
 }
 
 export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
   plan: CurrentExecutionPlanV3;
 }
 
-export interface ReadableCurrentPlanCandidate extends Omit<CurrentPlanCandidate, 'plan'> {
-  plan: ReadableCurrentExecutionPlan;
-}
+export type ReadableCurrentPlanCandidate = CurrentPlanCandidate;
 
 export interface ControlPlanCandidatesResponse {
   kind: 'current';
@@ -152,6 +153,7 @@ export interface ConfirmControlPlanRequest {
   planVersionId: string;
   confirmationAnswers: Record<string, unknown>;
   inputValues: Record<string, unknown>;
+  waivedInputKeys?: string[];
   idempotencyKey: string;
 }
 
@@ -223,6 +225,7 @@ export interface ControlExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  finalReportArtifactId?: string;
   crossSkillReviewArtifactId?: string;
   contributionLedgerArtifactId?: string;
   contributionSummaryArtifactId?: string;

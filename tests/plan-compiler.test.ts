@@ -3,6 +3,10 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
+import type {
+  LightweightExecutionPlanV1,
+  ReadableExecutionPlan,
+} from '../packages/api-contract/lightweight-orchestration.ts';
 import type { CandidateProfile, PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -937,7 +941,7 @@ interface CurrentResearchPlanningFixture {
 
 interface PreparedCandidate {
   candidateId: PlanCandidate['id'];
-  plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: '' };
+  plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
   pendingInputs: PendingInput[];
 }
 
@@ -1012,7 +1016,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
             taskId: input.taskId,
             version: index + 1,
             candidateId: candidate.candidateId,
-            plan: { ...candidate.plan, task_id: input.taskId } as ReadableCurrentExecutionPlan,
+            plan: { ...candidate.plan, task_id: input.taskId } as unknown as ReadableExecutionPlan,
             planHash: `sha256:${String(index + 1).repeat(64)}`,
             pendingInputs: candidate.pendingInputs,
           })),
@@ -1027,7 +1031,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
   };
 }
 
-test('Current planning persists only compiled graph, capability decisions, exact steps, and pending inputs', async () => {
+test('Current planning persists the lightweight Plan, frozen snapshot, and pending input bindings', async () => {
   const result = currentPlanningResult();
   const harness = planningServiceHarness(result);
   await harness.service.planExistingTask({
@@ -1040,14 +1044,19 @@ test('Current planning persists only compiled graph, capability decisions, exact
 
   assert.equal(harness.repositoryCalls(), 1);
   for (const candidate of harness.persistedCandidates()) {
-    assert.deepEqual(candidate.plan.problem_graph, result.problemGraph);
-    assert.deepEqual(candidate.plan.problem_graph_provenance, result.problemGraphProvenance);
-    assert.deepEqual(candidate.plan.capability_decisions, result.capabilityResolution);
-    assert.deepEqual(candidate.plan.steps.map((item) => item.step_no), [1, 2]);
+    const plan = candidate.plan as LightweightExecutionPlanV1;
+    assert.deepEqual(plan.problem_graph, result.problemGraph);
+    assert.deepEqual(plan.problem_graph_provenance, result.problemGraphProvenance);
+    assert.equal(plan.execution_contract_version, 'lightweight-execution-plan-v1');
+    assert.equal(plan.mode, 'single_skill');
+    assert.equal(plan.skill_invocations.length, 1);
+    assert.equal(plan.skill_invocations[0]?.skill_id, eligibleSkill.id);
+    assert.match(plan.skill_invocations[0]?.snapshot.report_template_hash ?? '', /^sha256:/u);
+    assert.deepEqual(plan.steps.map((item) => item.step_no), [1, 2]);
     assert.deepEqual(candidate.pendingInputs[0]?.targets, [{
       step_no: 2,
       tool_id: eligibleSkill.id,
-      field: 'competitor_screenshots',
+      field: 'public_evidence',
       multiple: true,
     }]);
   }

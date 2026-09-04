@@ -434,7 +434,7 @@ export class DatasetInputGateStore {
     const resolved: ResolvedDatasetInput[] = [];
     const gates = await Promise.all(input.gates.map(async (gate) => {
       const pending = pendingByRole.get(gate.gateKey);
-      if (!pending) return structuredClone(gate);
+      if (!pending || gate.decision === 'waived') return structuredClone(gate);
       if (gate.value !== null && gate.value !== undefined) {
         throw new DatasetInputGateError(`dataset gate ${gate.gateKey} must not contain an inline value`);
       }

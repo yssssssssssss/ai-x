@@ -191,25 +191,33 @@ class OfflineEligibleRealLLM implements LLMClient {
     let data: unknown;
     if (options.schemaName.startsWith('skill:')) {
       this.skillContexts.push(structuredClone(options.context ?? {}));
-      data = {
-        version: 'skill-output-v2',
-        status: 'succeeded',
-        summary: '基于公开来源完成宠物辅食竞品分析。',
-        findings: [{ id: 'finding-1', statement: '公开资料支持竞品场景定位差异。', confidence: 0.9 }],
-        assumptions: [],
-        limitations: [],
-        recommendations: ['按宠物类型与使用场景细分研究样本。'],
-        payload: {
-          comparison_matrix: [{
-            competitor: '公开竞品 A',
-            dimension: '产品定位',
-            assessment: '公开来源支持其宠物辅食场景定位',
-            source: 'tool_result',
-          }],
-          differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
-          sources: [evidenceUrl],
-        },
-      };
+      const properties = (options.schema as { properties?: Record<string, unknown> }).properties;
+      data = properties?.markdown
+        ? {
+            title: '宠物辅食竞品分析',
+            status: 'completed',
+            markdown: `# 宠物辅食竞品分析\n\n公开资料支持竞品场景定位差异 [S-step-1-1]。`,
+            gaps: [],
+          }
+        : {
+            version: 'skill-output-v2',
+            status: 'succeeded',
+            summary: '基于公开来源完成宠物辅食竞品分析。',
+            findings: [{ id: 'finding-1', statement: '公开资料支持竞品场景定位差异。', confidence: 0.9 }],
+            assumptions: [],
+            limitations: [],
+            recommendations: ['按宠物类型与使用场景细分研究样本。'],
+            payload: {
+              comparison_matrix: [{
+                competitor: '公开竞品 A',
+                dimension: '产品定位',
+                assessment: '公开来源支持其宠物辅食场景定位',
+                source: 'tool_result',
+              }],
+              differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
+              sources: [evidenceUrl],
+            },
+          };
     } else if (options.schemaName === 'research-task-v2') {
       data = {
         version: 'research-task-v2',
@@ -1298,9 +1306,8 @@ test('GET /api/control-tasks/:id rejects an invalid awaiting clarification paylo
   }
 });
 
-test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
+test('production control runtime completes a lightweight Single report without the legacy report chain', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
-  const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
   const llm = new OfflineEligibleRealLLM(['revise', 'pass', 'revise', 'block']);
@@ -1382,7 +1389,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   for (const candidate of planned.candidates) {
     assert.deepEqual(
       candidate.plan.steps.map((step) => step.actor_type),
-      ['tool', 'skill', 'llm', 'reviewer'],
+      ['tool', 'skill'],
     );
   }
   const speed = planned.candidates.find((candidate) => candidate.candidateId === 'speed');
@@ -1429,7 +1436,7 @@ test('production control runtime returns the revised final deliverable ID for pa
       expectedVersion: selected.stateVersion,
       planVersionId: speed.planVersionId,
       confirmationAnswers: {},
-      inputValues: { business_domain: suppliedBusinessDomain },
+      inputValues: {},
     },
     `confirm-${randomUUID()}`,
   );
@@ -1445,20 +1452,19 @@ test('production control runtime returns the revised final deliverable ID for pa
        WHERE task_id = $1 AND plan_version_id = $2 AND gate_type = 'input'`,
       [planned.task.id, speed.planVersionId],
     );
-    assert.deepEqual(persistedInputGate.rows, [{
-      gate_key: 'business_domain',
-      value_json: suppliedBusinessDomain,
-    }]);
+    assert.deepEqual(persistedInputGate.rows, []);
   } finally {
     inputGateConnection.release();
   }
 
+  const executeKey = `execute-${randomUUID()}`;
+  const executeBody = { expectedVersion: confirmed.stateVersion, planVersionId: speed.planVersionId };
   const executeResponse = await postJson(
     baseUrl,
     `/api/control-tasks/${planned.task.id}/execute`,
     ownerToken,
-    { expectedVersion: confirmed.stateVersion, planVersionId: speed.planVersionId },
-    `execute-${randomUUID()}`,
+    executeBody,
+    executeKey,
   );
   if (executeResponse.status !== 200) {
     const failedTask = await repository.getTaskDetail(planned.task.id);
@@ -1476,56 +1482,76 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(execution.executionDisabled, false);
   assert.equal(execution.state, 'completed', JSON.stringify(execution));
   assert.equal(execution.status, 'completed', JSON.stringify(execution));
-  assert.match(execution.deliverableArtifactId, /^[0-9a-f-]{36}$/);
+  assert.ok(execution.finalReportArtifactId);
+  assert.ok(execution.evidenceManifestArtifactId);
+  assert.match(execution.finalReportArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
-  assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
-  assert.match(execution.reportPackageArtifactId, /^[0-9a-f-]{36}$/);
-
-  const completedResumeResponse = await postJson(
+  assert.equal(execution.deliverableArtifactId, undefined);
+  assert.equal(execution.reportReviewArtifactId, undefined);
+  assert.equal(execution.reportPackageArtifactId, undefined);
+  const replayResponse = await postJson(
     baseUrl,
-    `/api/control-tasks/${planned.task.id}/resume`,
+    `/api/control-tasks/${planned.task.id}/execute`,
     ownerToken,
-    { expectedVersion: execution.stateVersion, action: 'retry' },
-    `completed-resume-${randomUUID()}`,
+    executeBody,
+    executeKey,
   );
-  assert.equal(completedResumeResponse.status, 409, await completedResumeResponse.clone().text());
+  assert.equal(replayResponse.status, 200, await replayResponse.clone().text());
+  const replayedExecution = await replayResponse.json() as ExecutionResponse;
+  assert.equal(replayedExecution.finalReportArtifactId, execution.finalReportArtifactId);
+  assert.equal(replayedExecution.attemptId, execution.attemptId);
 
-  const ownerDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
+  const finalResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/final-report`,
     { headers: { authorization: `Bearer ${ownerToken}` } },
   );
-  assert.equal(ownerDeliverableResponse.status, 200);
-  const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
-  assertRecord(ownerDeliverableBody);
-  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
-  const envelope = ownerDeliverableBody.deliverable;
-  assertRecord(envelope);
-  assert.equal(envelope.taskId, planned.task.id);
-  assert.equal(envelope.deliverableType, 'research_plan');
-  assert.equal(envelope.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
-  const reportReview = ownerDeliverableBody.reportReview;
-  assertRecord(reportReview);
-  assert.equal(reportReview.verdict, 'pass');
-  assert.equal(reportReview.revisionRound, 1);
-  assert.equal(reportReview.taskId, planned.task.id);
-  assert.equal(reportReview.planVersionId, speed.planVersionId);
-  assert.equal(reportReview.attemptId, execution.attemptId);
-  assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
-  assert.equal(Object.hasOwn(ownerDeliverableBody, 'reportDocument'), false);
-  assert.equal(Object.hasOwn(ownerDeliverableBody, 'visualAssetManifests'), false);
-  assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
-  assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
+  assert.equal(finalResponse.status, 200, await finalResponse.clone().text());
+  const finalReport = await finalResponse.json() as {
+    version: string;
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    mode: string;
+    markdown: string;
+    skillReports: Array<{ invocationId: string; path: string }>;
+  };
+  assert.equal(finalReport.version, 'final-report-v1');
+  assert.equal(finalReport.taskId, planned.task.id);
+  assert.equal(finalReport.planVersionId, speed.planVersionId);
+  assert.equal(finalReport.attemptId, execution.attemptId);
+  assert.equal(finalReport.mode, 'single_skill');
+  assert.equal(finalReport.skillReports.length, 1);
+  assert.match(finalReport.markdown, /^# 宠物辅食竞品分析/u);
 
-  const foreignDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
-    { headers: { authorization: `Bearer ${foreignToken}` } },
-  );
-  assert.equal(foreignDeliverableResponse.status, 404);
-  const missingDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${randomUUID()}/deliverable`,
+  const skillReportsResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/skill-reports`,
     { headers: { authorization: `Bearer ${ownerToken}` } },
   );
-  assert.equal(missingDeliverableResponse.status, 404);
+  assert.equal(skillReportsResponse.status, 200, await skillReportsResponse.clone().text());
+  const skillReports = await skillReportsResponse.json() as {
+    reports: Array<{ version: string; invocationId: string; markdown: string }>;
+  };
+  assert.equal(skillReports.reports.length, 1);
+  assert.equal(skillReports.reports[0]?.version, 'skill-report-v1');
+  assert.equal(skillReports.reports[0]?.invocationId, finalReport.skillReports[0]?.invocationId);
+  assert.ok(finalReport.markdown.startsWith(skillReports.reports[0]?.markdown ?? 'missing'));
+
+  const htmlResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/final-report.html`,
+    { headers: { authorization: `Bearer ${ownerToken}` } },
+  );
+  assert.equal(htmlResponse.status, 200, await htmlResponse.clone().text());
+  assert.equal(htmlResponse.headers.get('content-type'), 'text/html; charset=utf-8');
+  const html = await htmlResponse.text();
+  assert.match(html, /Content-Security-Policy/u);
+  assert.doesNotMatch(html, /<script|<iframe|<form|onload=/u);
+
+  for (const route of ['final-report', 'skill-reports', 'final-report.html']) {
+    const foreign = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}/${route}`, {
+      headers: { authorization: `Bearer ${foreignToken}` },
+    });
+    assert.equal(foreign.status, 404);
+  }
 
   const steps = await repository.listExecutionSteps(execution.attemptId);
   assert.deepEqual(
@@ -1533,333 +1559,35 @@ test('production control runtime returns the revised final deliverable ID for pa
     [
       { actorType: 'tool', state: 'succeeded' },
       { actorType: 'skill', state: 'succeeded' },
-      { actorType: 'llm', state: 'succeeded' },
-      { actorType: 'reviewer', state: 'succeeded' },
     ],
   );
   assert.equal(steps[0]?.toolProvenance?.executionMode, 'real');
-  assert.equal(llm.skillContexts.length, 1);
-  const skillContext = llm.skillContexts[0] as {
-    input?: unknown;
-    prior_outputs?: Array<{
-      stepNo?: unknown;
-      actorId?: unknown;
-      kind?: unknown;
-      output?: { results?: Array<{ url?: unknown }> };
-      artifact?: { state?: unknown };
-    }>;
-  };
-  assert.deepEqual(skillContext.input, { business_domain: suppliedBusinessDomain });
-  assert.equal(skillContext.prior_outputs?.length, 1);
-  assert.equal(skillContext.prior_outputs?.[0]?.stepNo, 1);
-  assert.equal(skillContext.prior_outputs?.[0]?.actorId, 'tavily-web-search');
-  assert.equal(skillContext.prior_outputs?.[0]?.kind, 'tool_output');
-  assert.equal(skillContext.prior_outputs?.[0]?.output?.results?.[0]?.url, evidenceUrl);
-  assert.equal(skillContext.prior_outputs?.[0]?.artifact?.state, 'SEALED');
-  assert.equal(steps[0]?.toolProvenance?.implementationId, tavily.implementationId);
   assert.equal(tavily.calls, 1);
+  assert.equal(llm.skillContexts.length, 1);
 
-  const modelReceipts = await repository.listModelCalls(execution.attemptId);
-  assert.deepEqual(modelReceipts.map(({ stage, status }) => ({ stage, status })), [
-    { stage: 'skill', status: 'succeeded' },
-    { stage: 'llm', status: 'succeeded' },
-    { stage: 'reviewer', status: 'succeeded' },
-    { stage: 'deliverable', status: 'succeeded' },
-    { stage: 'deliverable_review', status: 'succeeded' },
-    { stage: 'deliverable', status: 'succeeded' },
-    { stage: 'deliverable_review', status: 'succeeded' },
-  ]);
-  for (const receipt of modelReceipts) {
-    assert.equal(receipt.provider, llm.identity.provider);
-    assert.equal(receipt.endpointHost, llm.identity.endpointHost);
-    assert.equal(receipt.requestedModel, llm.identity.requestedModel);
-    assert.equal(receipt.actualModel, llm.identity.requestedModel);
-    assert.match(receipt.promptHash, /^sha256:/);
-    assert.ok(receipt.traceId);
-    assert.ok(receipt.tokens);
-  }
-  const skillReceipt = modelReceipts.find((receipt) => receipt.stage === 'skill');
-  const succeededSkillStep = steps.find((step) => step.actorType === 'skill');
-  assert.ok(skillReceipt);
-  assert.ok(succeededSkillStep);
-  assert.equal(succeededSkillStep?.skillProvenance?.modelReceiptId, skillReceipt.id);
-
-  const failedSkillProvenance = {
-    skillBodyHash: 'sha256:failed-api-skill-body',
-    inputSchemaHash: 'sha256:failed-api-input-schema',
-    outputSchemaHash: 'sha256:failed-api-output-schema',
-    inputHash: 'sha256:failed-api-input',
-    outputHash: null,
-    promptHash: 'sha256:failed-api-prompt',
-    traceId: 'trace-failed-api-skill',
-    modelReceiptId: skillReceipt.id,
-    outputArtifactId: null,
-    status: 'failed',
-  };
-  const failedStepConnection = await scopedDatabase.connect();
-  try {
-    await failedStepConnection.query(
-      `INSERT INTO control_execution_steps
-         (attempt_id, step_no, step_name, actor_type, actor_id, state,
-          skill_provenance, failure_json, started_at, finished_at)
-       VALUES ($1, 99, 'failed skill provenance exposure', 'skill',
-               'competitive-web-research', 'failed', $2, $3, $4, $5)`,
-      [
-        execution.attemptId,
-        JSON.stringify(failedSkillProvenance),
-        JSON.stringify({ kind: 'fixture_failure', retryable: false }),
-        new Date('2026-08-14T00:00:00Z'),
-        new Date('2026-08-14T00:00:01Z'),
-      ],
-    );
-  } finally {
-    failedStepConnection.release();
-  }
-
-  const executionRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
-    headers: { authorization: `Bearer ${ownerToken}` },
+  const artifactsForAttempt = await repository.listArtifactsForAttempt({
+    taskId: planned.task.id,
+    planVersionId: speed.planVersionId,
+    attemptId: execution.attemptId,
   });
-  assert.equal(executionRefreshResponse.status, 200, await executionRefreshResponse.clone().text());
-  const executionRefresh = await executionRefreshResponse.json() as CurrentTaskReadResponse;
-  assert.deepEqual(
-    executionRefresh.executionSteps
-      .filter((step) => step.actorType === 'skill')
-      .map((step) => ({ state: step.state, skillProvenance: step.skillProvenance })),
-    [
-      { state: 'succeeded', skillProvenance: succeededSkillStep.skillProvenance },
-      { state: 'failed', skillProvenance: failedSkillProvenance },
-    ],
-  );
-
-  const connection = await scopedDatabase.connect();
-  try {
-    const terminalArtifacts = await connection.query(
-      `SELECT id, kind, state, storage_uri, schema_version, created_at
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN (
-         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'report_package', 'execution_summary'
-       )
-       ORDER BY kind, created_at, id`,
-      [execution.attemptId],
-    );
-    assert.deepEqual(
-      terminalArtifacts.rows.map((row) => ({ kind: row.kind, state: row.state })),
-      [
-        { kind: 'deliverable', state: 'SEALED' },
-        { kind: 'deliverable', state: 'SEALED' },
-        { kind: 'evidence_manifest', state: 'SEALED' },
-        { kind: 'report_package', state: 'SEALED' },
-        { kind: 'report_review', state: 'SEALED' },
-        { kind: 'report_review', state: 'SEALED' },
-      ],
-    );
-    const deliverableArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
-    assert.equal(deliverableArtifacts.length, 2);
-    assert.equal(new Set(deliverableArtifacts.map((row) => row.id)).size, 2);
-    assert.ok(deliverableArtifacts.some((row) => row.id === execution.deliverableArtifactId));
-    assert.equal(
-      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
-      execution.deliverableArtifactId,
-    );
-    assert.notEqual(
-      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
-      execution.deliverableArtifactId,
-    );
-    assert.equal(
-      terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
-      execution.evidenceManifestArtifactId,
-    );
-    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
-    assert.equal(reviewArtifacts.length, 2);
-    assert.equal(
-      reviewArtifacts.find((row) => String(row.storage_uri).endsWith('/reports/review-r1.json'))?.id,
-      execution.reportReviewArtifactId,
-    );
-    const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
-      artifactId: execution.reportPackageArtifactId,
-      attemptId: execution.attemptId,
-    });
-    assert.equal(verifiedReportPackage.value.taskId, planned.task.id);
-    assert.equal(verifiedReportPackage.value.planVersionId, speed.planVersionId);
-    assert.equal(verifiedReportPackage.value.deliverableArtifactId, execution.deliverableArtifactId);
-    assert.equal(verifiedReportPackage.value.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
-    assert.equal(verifiedReportPackage.value.reportReviewArtifactId, execution.reportReviewArtifactId);
-    assert.equal(verifiedReportPackage.value.presentationMode, 'current_text');
-    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, undefined);
-    const reportPackageStorageUri = verifiedReportPackage.artifact.storageUri;
-    const originalReportPackageContent = readFileSync(reportPackageStorageUri, 'utf8');
-    try {
-      writeFileSync(reportPackageStorageUri, '{}');
-      await assert.rejects(() => new ReportPackageArtifactService(artifacts).verify({
-        artifactId: execution.reportPackageArtifactId,
-        attemptId: execution.attemptId,
-      }), /Report Package|artifact|size|checksum|integrity/i);
-    } finally {
-      writeFileSync(reportPackageStorageUri, originalReportPackageContent);
-    }
-
-    const referencedArtifacts = await connection.query(
-      `SELECT id, kind, storage_uri, content_sha256
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('tool_output', 'evidence_manifest', 'report_review')`,
-      [execution.attemptId],
-    );
-    const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
-    const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
-    const reviewArtifact = referencedArtifacts.rows.find((row) => row.id === execution.reportReviewArtifactId);
-    assert.ok(toolArtifact);
-    assert.ok(manifestArtifact);
-    assert.ok(reviewArtifact);
-    const toolStorageUri = String(toolArtifact.storage_uri);
-    const manifestStorageUri = String(manifestArtifact.storage_uri);
-    const originalToolContent = readFileSync(toolStorageUri, 'utf8');
-    const originalManifestContent = readFileSync(manifestStorageUri, 'utf8');
-    const reviewStorageUri = String(reviewArtifact.storage_uri);
-    const originalReviewContent = readFileSync(reviewStorageUri, 'utf8');
-    const originalManifestHash = String(manifestArtifact.content_sha256);
-    const ownerDeliverableUrl = `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`;
-    const revalidationFailures: string[] = [];
-    const expectOwnerReadRejected = async (mutation: string): Promise<void> => {
-      const response = await fetch(ownerDeliverableUrl, {
-        headers: { authorization: `Bearer ${ownerToken}` },
-      });
-      if (response.status === 200) revalidationFailures.push(mutation);
-    };
-
-    try {
-      writeFileSync(toolStorageUri, JSON.stringify({ tampered: true }));
-      await expectOwnerReadRejected('referenced Tool Artifact content');
-    } finally {
-      writeFileSync(toolStorageUri, originalToolContent);
-    }
-
-    try {
-      writeFileSync(reviewStorageUri, JSON.stringify({ tampered: true }));
-      await expectOwnerReadRejected('Report Review Artifact content');
-    } finally {
-      writeFileSync(reviewStorageUri, originalReviewContent);
-    }
-
-    const mutateManifestEntry = async (
-      mutation: string,
-      mutate: (entry: Record<string, unknown>) => void,
-    ): Promise<void> => {
-      const manifestValue: unknown = JSON.parse(originalManifestContent);
-      assertRecord(manifestValue);
-      assert.ok(Array.isArray(manifestValue.entries));
-      const entry = manifestValue.entries[0];
-      assertRecord(entry);
-      mutate(entry);
-      const mutatedContent = JSON.stringify(manifestValue, null, 2);
-      const mutatedHash = `sha256:${createHash('sha256').update(mutatedContent).digest('hex')}`;
-      try {
-        writeFileSync(manifestStorageUri, mutatedContent);
-        await connection.query(
-          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
-          [manifestArtifact.id, mutatedHash],
-        );
-        await expectOwnerReadRejected(mutation);
-      } finally {
-        writeFileSync(manifestStorageUri, originalManifestContent);
-        await connection.query(
-          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
-          [manifestArtifact.id, originalManifestHash],
-        );
-      }
-    };
-
-    await mutateManifestEntry('Evidence JSON pointer', (entry) => {
-      entry.jsonPointer = '/output/results/999';
-    });
-    await mutateManifestEntry('Evidence Artifact hash', (entry) => {
-      entry.artifactContentSha256 = `sha256:${'0'.repeat(64)}`;
-    });
-    assert.deepEqual(revalidationFailures, []);
-  } finally {
-    connection.release();
-  }
-
-  const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
-    originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
-    conversationId,
-    orchestrationMode: 'single_skill',
-  });
-  assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
-  const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
-  const pausedSpeed = pausedPlanned.candidates.find((candidate) => candidate.candidateId === 'speed');
-  assert.ok(pausedSpeed);
-  const pausedSelectResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/select`,
-    ownerToken,
-    { expectedVersion: pausedPlanned.task.stateVersion, planVersionId: pausedSpeed.planVersionId },
-    `paused-select-${randomUUID()}`,
-  );
-  assert.equal(pausedSelectResponse.status, 200, await pausedSelectResponse.clone().text());
-  const pausedSelected = await pausedSelectResponse.json() as { stateVersion: number };
-  const pausedConfirmResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/confirm`,
-    ownerToken,
-    {
-      expectedVersion: pausedSelected.stateVersion,
-      planVersionId: pausedSpeed.planVersionId,
-      confirmationAnswers: {},
-      inputValues: { business_domain: suppliedBusinessDomain },
-    },
-    `paused-confirm-${randomUUID()}`,
-  );
-  assert.equal(pausedConfirmResponse.status, 200, await pausedConfirmResponse.clone().text());
-  const pausedConfirmed = await pausedConfirmResponse.json() as { stateVersion: number };
-  const pausedExecuteResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/execute`,
-    ownerToken,
-    { expectedVersion: pausedConfirmed.stateVersion, planVersionId: pausedSpeed.planVersionId },
-    `paused-execute-${randomUUID()}`,
-  );
-  assert.equal(pausedExecuteResponse.status, 200, await pausedExecuteResponse.clone().text());
-  const pausedExecution = await pausedExecuteResponse.json() as ExecutionResponse;
-  assert.equal(pausedExecution.status, 'paused');
-  assert.equal(pausedExecution.state, 'paused');
-  assert.equal(pausedExecution.reviewStatus, 'paused');
-
-  const pausedConnection = await scopedDatabase.connect();
-  try {
-    const terminalArtifacts = await pausedConnection.query(
-      `SELECT id, kind, storage_uri
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('deliverable', 'report_review')
-       ORDER BY kind, created_at`,
-      [pausedExecution.attemptId],
-    );
-    const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
-    assert.equal(pausedDeliverables.length, 2);
-    assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
-    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
-    assert.equal(reviewArtifacts.length, 2);
-    const finalReviewArtifact = reviewArtifacts.find((row) => (
-      String(row.storage_uri).endsWith('/reports/review-r1.json')
-    ));
-    assert.ok(finalReviewArtifact);
-    assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
-    const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
-    assertRecord(finalReview);
-    assert.equal(finalReview.revisionRound, 1);
-    assert.equal(finalReview.verdict, 'block');
-    assert.equal(finalReview.deliverableArtifactId, pausedExecution.deliverableArtifactId);
-    assert.ok(pausedDeliverables.some((row) => row.id === pausedExecution.deliverableArtifactId));
-    assert.equal(
-      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
-      pausedExecution.deliverableArtifactId,
-    );
-    assert.notEqual(
-      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
-      pausedExecution.deliverableArtifactId,
-    );
-  } finally {
-    pausedConnection.release();
-  }
+  const kinds = new Set(artifactsForAttempt.map(({ kind }) => kind));
+  for (const expected of [
+    'skill_report',
+    'skill_report_markdown',
+    'final_report',
+    'final_report_markdown',
+    'final_report_html',
+    'report_sources',
+  ]) assert.equal(kinds.has(expected), true, expected);
+  for (const removed of [
+    'deliverable',
+    'report_review',
+    'report_document',
+    'report_package',
+    'cross_skill_review',
+    'contribution_ledger',
+    'contribution_summary',
+  ]) assert.equal(kinds.has(removed), false, removed);
 });
 
 test('production plan stream stops at the explicit direction gate before planning work', async () => {

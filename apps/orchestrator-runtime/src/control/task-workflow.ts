@@ -20,6 +20,11 @@ import {
   type ControlExecutionResult,
   type DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import {
+  isLightweightExecutionPlanV1,
+  parseFinalReport,
+  parseLightweightExecutionPlanV1,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
 import { parseReportPackageV2, parseReportPackageV3 } from '../../../../packages/api-contract/report-package.ts';
@@ -82,6 +87,7 @@ export interface WorkflowExecutionDriver {
     evidenceManifestArtifactId?: string;
     reportReviewArtifactId?: string;
     reportPackageArtifactId?: string;
+    finalReportArtifactId?: string;
     crossSkillReviewArtifactId?: string;
     contributionLedgerArtifactId?: string;
     contributionSummaryArtifactId?: string;
@@ -270,7 +276,10 @@ function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): {
     return remapped;
   };
   let remappedSkillInvocations: Array<Record<string, unknown>> | undefined;
-  if (plan.execution_contract_version === 'current-execution-plan-v2') {
+  if (
+    plan.execution_contract_version === 'current-execution-plan-v2'
+    || plan.execution_contract_version === 'lightweight-execution-plan-v1'
+  ) {
     if (!Array.isArray(plan.skill_invocations)) {
       throw new TaskWorkflowGateError(['plan.skill_invocations']);
     }
@@ -408,6 +417,43 @@ export class TaskWorkflowService {
     attemptId: string;
     status: 'completed' | 'completed_with_gaps' | 'paused';
   }): Promise<Partial<ControlExecutionResult>> {
+    const selectedFinalReport = await this.repository.findSealedArtifact({
+      taskId: input.taskId,
+      attemptId: input.attemptId,
+      kind: 'final_report',
+    });
+    if (selectedFinalReport) {
+      if (!this.terminalArtifacts) {
+        throw new ControlPlaneConflictError('terminal Artifact reader is required to recover lightweight execution');
+      }
+      const verified = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedFinalReport.id);
+      const report = parseFinalReport(verified.value);
+      if (
+        verified.artifact.id !== selectedFinalReport.id
+        || verified.artifact.state !== 'SEALED'
+        || verified.artifact.kind !== 'final_report'
+        || verified.artifact.schemaVersion !== 'final-report-v1'
+        || verified.artifact.taskId !== input.taskId
+        || verified.artifact.planVersionId !== input.planVersionId
+        || verified.artifact.attemptId !== input.attemptId
+        || report.taskId !== input.taskId
+        || report.planVersionId !== input.planVersionId
+        || report.attemptId !== input.attemptId
+        || basename(verified.artifact.storageUri) !== 'final-report.json'
+      ) {
+        throw new ControlPlaneConflictError('terminal FinalReport Artifact cannot reconstruct execution result');
+      }
+      const evidenceManifest = await this.repository.findSealedArtifact({
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        kind: 'evidence_manifest',
+      });
+      return {
+        finalReportArtifactId: selectedFinalReport.id,
+        ...(evidenceManifest ? { evidenceManifestArtifactId: evidenceManifest.id } : {}),
+        gapCount: report.gaps.length,
+      };
+    }
     const selectedReview = await this.repository.findSealedArtifact({
       taskId: input.taskId,
       attemptId: input.attemptId,
@@ -605,6 +651,7 @@ export class TaskWorkflowService {
     actor: WorkflowActor;
     confirmationAnswers: Record<string, unknown>;
     inputValues: Record<string, unknown>;
+    waivedInputKeys?: string[];
   }): Promise<CommandResult> {
     const hash = requestHash(input);
     const replay = await this.replay<CommandResult>(input.taskId, 'confirmation', input.idempotencyKey, hash);
@@ -641,17 +688,33 @@ export class TaskWorkflowService {
       .filter((key) => !confirmationKeys.has(key));
     const pendingInputs = pendingInputRequirements(plan);
     const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
+    const lightweightPlan = isLightweightExecutionPlanV1(plan.plan)
+      ? parseLightweightExecutionPlanV1(plan.plan)
+      : null;
+    const pendingRequirements = new Map(
+      lightweightPlan?.resolved_inputs.pending.map(({ requirement }) => [requirement.key, requirement]) ?? [],
+    );
+    const waivedInputKeys = input.waivedInputKeys ?? [];
+    const waivedInputs = new Set(waivedInputKeys);
+    const invalidWaivers = waivedInputKeys.filter((key, index) => (
+      waivedInputKeys.indexOf(key) !== index
+      || Object.prototype.hasOwnProperty.call(input.inputValues, key)
+      || !requiredInputRoles.has(key)
+      || pendingRequirements.get(key)?.required !== false
+    ));
     const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
     const missingInputs = [...requiredInputRoles].filter((key) => (
-      !Object.prototype.hasOwnProperty.call(input.inputValues, key)
-      || input.inputValues[key] === undefined
+      (!Object.prototype.hasOwnProperty.call(input.inputValues, key)
+        || input.inputValues[key] === undefined)
+      && !waivedInputs.has(key)
     ));
-    if (missingAnswers.length || extraAnswers.length || missingInputs.length || extraInputs.length) {
+    if (missingAnswers.length || extraAnswers.length || missingInputs.length || extraInputs.length || invalidWaivers.length) {
       throw new TaskWorkflowGateError([
         ...missingAnswers,
         ...extraAnswers.map((key) => `confirmation:${key}`),
         ...missingInputs,
         ...extraInputs,
+        ...invalidWaivers.map((key) => `waived:${key}`),
       ]);
     }
     if (containsInlineImageData(input.confirmationAnswers)) {
@@ -669,6 +732,7 @@ export class TaskWorkflowService {
     const plainInputs = new Map<string, PublishedVisualInputGate & { kind: 'value' }>();
     try {
       for (const pending of pendingInputs) {
+        if (waivedInputs.has(pending.role)) continue;
         const value = input.inputValues[pending.role];
         if (pending.kind === 'dataset') {
           if (typeof value !== 'string' || !value.trim()) {
@@ -804,6 +868,14 @@ export class TaskWorkflowService {
             idempotencyKey: `${input.idempotencyKey}:input:${role}`,
           };
         }),
+        ...waivedInputKeys.map((key) => ({
+          gateType: 'input' as const,
+          gateKey: key,
+          requiredAuthority: 'owner',
+          decision: 'waived',
+          value: { reason: 'user_confirmed_unavailable' },
+          idempotencyKey: `${input.idempotencyKey}:input:${key}`,
+        })),
       ];
       const nextState = requiredApprovals(task, plan).length ? 'awaiting_approval' as const : 'ready' as const;
       const transitioned = await this.repository.completeConfirmationCommand({
@@ -1275,6 +1347,7 @@ export class TaskWorkflowService {
         ...(driven.evidenceManifestArtifactId === undefined ? {} : { evidenceManifestArtifactId: driven.evidenceManifestArtifactId }),
         ...(driven.reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId: driven.reportReviewArtifactId }),
         ...(driven.reportPackageArtifactId === undefined ? {} : { reportPackageArtifactId: driven.reportPackageArtifactId }),
+        ...(driven.finalReportArtifactId === undefined ? {} : { finalReportArtifactId: driven.finalReportArtifactId }),
         ...(driven.crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId: driven.crossSkillReviewArtifactId }),
         ...(driven.contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId: driven.contributionLedgerArtifactId }),
         ...(driven.contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId: driven.contributionSummaryArtifactId }),

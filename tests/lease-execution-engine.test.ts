@@ -49,7 +49,11 @@ import {
   type ReportReviewArtifact,
   type ReportReviewDimension,
 } from '../packages/api-contract/control-workflow.ts';
-import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import {
+  compileLightweightExecutionPlan,
+  PlanCompiler,
+} from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import { parseFinalReport } from '../packages/api-contract/lightweight-orchestration.ts';
 import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
 import type { SkillPortfolioDecision } from '../apps/orchestrator-runtime/src/planners/capability-portfolio-resolver.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
@@ -898,6 +902,48 @@ class RealSchemaFixtureLLM extends MockLLMClient {
   }
 }
 
+class LightweightReportLLM extends RealSchemaFixtureLLM {
+  synthesisCalls = 0;
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.schemaName.startsWith('skill:')) {
+      this.prompts.push({
+        schemaName: options.schemaName,
+        prompt: options.prompt,
+        ...(options.context ? { context: options.context } : {}),
+      });
+      return {
+        data: {
+          title: 'Lightweight Skill report',
+          status: 'completed',
+          markdown: '# Lightweight Skill report\n\nVerified finding [S-step-1-1].',
+          gaps: [],
+        } as T,
+        promptHash: 'sha256:lightweight-skill',
+        modelName: 'pinned-model',
+        modelVersion: 'pinned-model',
+        traceId: 'trace-lightweight-skill',
+        receiptId: randomUUID(),
+        tokens: { prompt: 1, completion: 1, total: 2 },
+      };
+    }
+    return super.generateStructured<T>(options);
+  }
+
+  override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    this.synthesisCalls += 1;
+    return {
+      text: '# Lightweight synthesis\n\nCombined finding [S-step-1-1].',
+      promptHash: 'sha256:lightweight-synthesis',
+      modelName: 'pinned-model',
+      modelVersion: 'pinned-model',
+      traceId: 'trace-lightweight-synthesis',
+      receiptId: randomUUID(),
+      tokens: { prompt: 1, completion: 1, total: 2 },
+    };
+  }
+}
+
 class NarrativelyRedactedSynthesisLLM extends RealSchemaFixtureLLM {
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
@@ -1513,6 +1559,9 @@ async function claimedExecution(
     taskType: 'competitive_research',
     structuredTask,
     state: 'ready',
+    ...(planExtras.execution_contract_version === 'lightweight-execution-plan-v1'
+      ? { orchestrationMode: planExtras.mode as 'single_skill' | 'multi_skill' }
+      : {}),
   });
   const plan = await repository.createPlanVersion({
     taskId: task.id,
@@ -1600,10 +1649,11 @@ function buildEngine(
   reportReview?: TestReportReview,
   skillLoader: SkillLoader = new SkillLoader(),
   toolExecutionDeadlineMs?: number,
+  artifactStore?: ControlArtifactStore,
 ): LeaseExecutionEngine {
   return new DeliverableAwareLeaseExecutionEngine({
     repository,
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    artifacts: artifactStore ?? new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     tools,
     llm,
     deliverables,
@@ -1648,6 +1698,182 @@ async function expireLease(
   await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
 }
 
+
+test('lightweight Single seals the original Skill Markdown without a final synthesis call', async () => {
+  const fixture = productionPortfolioFixture();
+  const lightweight = compileLightweightExecutionPlan({
+    plan: fixture.plan,
+    mode: 'single_skill',
+    task: fixture.task,
+  });
+  lightweight.plan.resolved_inputs.waived.push(...lightweight.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  lightweight.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = lightweight.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+    [],
+  );
+  const llm = new LightweightReportLLM();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(llm.synthesisCalls, 0);
+  assert.equal(deliverables.calls.length, 0);
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<unknown>(result.finalReportArtifactId!);
+  const report = parseFinalReport(stored.value);
+  assert.equal(report.mode, 'single_skill');
+  assert.equal(report.skillReports.length, 1);
+  assert.ok(report.markdown.startsWith('# Lightweight Skill report'));
+});
+
+test('lightweight report retry reuses sealed Tool and SkillReport outputs', async () => {
+  const fixture = productionPortfolioFixture();
+  const lightweight = compileLightweightExecutionPlan({
+    plan: fixture.plan,
+    mode: 'single_skill',
+    task: fixture.task,
+  });
+  lightweight.plan.resolved_inputs.waived.push(...lightweight.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  lightweight.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = lightweight.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+    [],
+  );
+  const firstTool = new CountingRealTavilyAdapter();
+  const firstLlm = new LightweightReportLLM();
+  const failedStore = new FailingFinalReportHtmlArtifactStore({
+    root: artifactRoot,
+    registry: first.repository,
+  });
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(firstTool),
+    firstLlm,
+    new RecordingDeliverablesFake(),
+    undefined,
+    new SkillLoader(),
+    undefined,
+    failedStore,
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused', JSON.stringify(firstResult));
+  assert.equal(firstTool.calls, 1);
+  assert.equal(firstLlm.prompts.filter(({ schemaName }) => schemaName.startsWith('skill:')).length, 1);
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new LightweightReportLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+  assert.equal(retryResult.status, 'completed_with_gaps', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(retryLlm.prompts.filter(({ schemaName }) => schemaName.startsWith('skill:')).length, 0);
+  assert.equal(retryLlm.synthesisCalls, 0);
+  const retryArtifacts = await first.repository.listArtifactsForAttempt({
+    taskId: retryLease.taskId,
+    planVersionId: retryLease.planVersionId,
+    attemptId: retryLease.attemptId,
+  });
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'skill_report'), true);
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'skill_report_markdown'), true);
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'final_report'), true);
+});
+
+test('lightweight Multi executes Contributor SkillReports and seals one FinalReport without the legacy report chain', async () => {
+  const fixture = productionPortfolioFixture();
+  const lightweight = compileLightweightExecutionPlan({
+    plan: fixture.plan,
+    mode: 'multi_skill',
+    task: fixture.task,
+  });
+  lightweight.plan.resolved_inputs.waived.push(...lightweight.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  lightweight.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = lightweight.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+    [],
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new LightweightReportLLM();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.synthesisCalls, 1);
+  assert.equal(deliverables.calls.length, 0);
+  assert.ok(result.finalReportArtifactId);
+  const artifacts = await repository.listArtifactsForAttempt({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+  });
+  assert.deepEqual(
+    artifacts.filter(({ kind }) => [
+      'skill_report',
+      'skill_report_markdown',
+      'final_report',
+      'final_report_markdown',
+      'final_report_html',
+      'report_sources',
+    ].includes(kind)).map(({ kind }) => kind).sort(),
+    [
+      'final_report',
+      'final_report_html',
+      'final_report_markdown',
+      'report_sources',
+      'skill_report',
+      'skill_report_markdown',
+    ],
+  );
+  assert.equal(artifacts.some(({ kind }) => kind === 'report_review' || kind === 'report_package'), false);
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<unknown>(result.finalReportArtifactId!);
+  const report = parseFinalReport(stored.value);
+  assert.equal(report.mode, 'multi_skill');
+  assert.equal(report.skillReports.length, 1);
+  assert.match(report.markdown, /Lightweight synthesis/u);
+});
 
 test('Plan v3 executes a real shared Tool, seals a Contributor and Bundle, then runs the Synthesizer', async () => {
   const fixture = productionPortfolioFixture();
@@ -8163,6 +8389,18 @@ test('one production Tool collector Manifest can satisfy every configured requir
     }
   }
 });
+
+class FailingFinalReportHtmlArtifactStore extends ControlArtifactStore {
+  private failed = false;
+
+  override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
+    if (!this.failed && input.kind === 'final_report_html') {
+      this.failed = true;
+      throw new Error('fixture FinalReport HTML write failed');
+    }
+    return super.writeText(input);
+  }
+}
 
 class FailingStandaloneHtmlArtifactStore extends ControlArtifactStore {
   override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {

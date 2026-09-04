@@ -7,6 +7,8 @@ export interface SystemCapabilitiesResponse {
     configurationHash: string;
   };
   planContractVersions: string[];
+  skillReportVersions: string[];
+  finalReportVersions: string[];
   multiSkillPlanWriterEnabled: boolean;
   reportV3WriterEnabled: boolean;
   reportEditorialPlannerV1Enabled: boolean;

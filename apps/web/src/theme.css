@@ -1394,3 +1394,31 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .execution-flow-summary { align-items: flex-start; }
   .execution-flow-mode { margin-left: 0; }
 }
+
+.lightweight-report .report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.lightweight-report-document {
+  width: 100%;
+  min-height: 720px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.lightweight-report-markdown {
+  margin: 12px 0 0;
+  padding: 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-card-hi);
+  color: var(--text);
+  font: 13px/1.65 var(--mono);
+}

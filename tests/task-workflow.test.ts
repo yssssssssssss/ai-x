@@ -11,6 +11,9 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
+import type {
+  LightweightExecutionPlanV1,
+} from '../packages/api-contract/lightweight-orchestration.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -600,6 +603,86 @@ test('malformed persisted workflow gate fails closed during confirmation', async
       inputValues: {},
     }),
     TaskWorkflowGateError,
+  );
+});
+
+test('lightweight confirmation records an explicit optional-input waiver', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const invocationId = 'competitive-web-research:1';
+  const step = currentStep({
+    actor_type: 'skill',
+    actor_id: 'competitive-web-research',
+    input: { public_evidence: null },
+    skill_invocation_id: invocationId,
+  });
+  const snapshot = new SkillLoader().loadLightweightSnapshot('competitive-web-research');
+  const base = currentPlan('', 'lightweight-waiver', [step]);
+  const plan: LightweightExecutionPlanV1 = {
+    ...base,
+    execution_contract_version: 'lightweight-execution-plan-v1',
+    mode: 'single_skill',
+    skill_invocations: [{
+      invocation_id: invocationId,
+      skill_id: 'competitive-web-research',
+      depends_on_invocation_ids: [],
+      step_nos: [1],
+      required: true,
+      failure_policy: 'block',
+      snapshot,
+    }],
+    resolved_inputs: {
+      resolved: [],
+      pending: [{
+        requirement: snapshot.input_requirements.find(({ key }) => key === 'public_evidence')!,
+        targetInvocationIds: [invocationId],
+      }],
+      waived: [],
+    },
+  };
+  const pendingInputs = [{
+    kind: 'value' as const,
+    role: 'public_evidence',
+    label: '竞品公开资料',
+    multiple: true,
+    targets: [{
+      step_no: 1,
+      tool_id: 'competitive-web-research',
+      field: 'public_evidence',
+      multiple: true,
+    }],
+  }];
+  const created = await createCandidateTask(repository, 'lightweight-waiver', {
+    candidateId: 'speed',
+    plan: plan as unknown as CurrentExecutionPlan,
+    pendingInputs,
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'lightweight-waiver-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates[0]!.id,
+  });
+  const confirmed = await workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'lightweight-waiver-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+    waivedInputKeys: ['public_evidence'],
+  });
+  assert.equal(confirmed.state, 'ready');
+  assert.deepEqual(
+    (await repository.listGateRecords(created.task.id, selection.planVersionId))
+      .map(({ gateKey, decision, value }) => ({ gateKey, decision, value })),
+    [{
+      gateKey: 'public_evidence',
+      decision: 'waived',
+      value: { reason: 'user_confirmed_unavailable' },
+    }],
   );
 });
 

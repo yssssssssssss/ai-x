@@ -6,6 +6,7 @@ import type {
   ControlTaskResponse,
   PlanControlTaskRequest,
 } from '../packages/api-contract/control-workflow.ts';
+import type { LightweightExecutionPlanV1 } from '../packages/api-contract/lightweight-orchestration.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
@@ -535,34 +536,30 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   ));
 
   for (const [index, candidate] of persisted.candidates.entries()) {
+    const plan = candidate.plan as unknown as LightweightExecutionPlanV1;
     assert.deepEqual(Object.keys(candidate).sort(), ['candidateId', 'pendingInputs', 'plan']);
-    assert.equal(candidate.plan.deliverable_type, 'research_plan');
-    assert.deepEqual(candidate.plan.evidence_requirements, evidencePolicy);
-    assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps.map((step, stepIndex) => ({
-      ...step,
-      step_no: stepIndex + 1,
-      ...(step.actor_type === 'skill'
-        ? { skill_invocation_id: `${step.actor_id}:${stepIndex + 1}` }
-        : {}),
-    })));
-    assert.equal(candidate.plan.execution_contract_version, 'current-execution-plan-v2');
-    assert.deepEqual(candidate.plan.skill_invocations, [{
-      invocation_id: 'competitive-web-research:2',
-      skill_id: 'competitive-web-research',
-      execution_mode: 'legacy_single_call',
-      step_nos: [2],
-    }]);
-    assert.deepEqual(candidate.plan.problem_graph, planningResult.problemGraph);
-    assert.deepEqual(candidate.plan.capability_decisions, planningResult.capabilityResolution);
-    assert.deepEqual(candidate.plan.candidate_metadata, {
+    assert.equal(plan.deliverable_type, 'research_plan');
+    assert.deepEqual(plan.evidence_requirements, evidencePolicy);
+    assert.deepEqual(plan.steps.map(({ step_no }) => step_no), [1, 2]);
+    assert.equal(plan.execution_contract_version, 'lightweight-execution-plan-v1');
+    assert.equal(plan.mode, 'single_skill');
+    assert.equal(plan.skill_invocations.length, 1);
+    assert.equal(plan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
+    assert.equal(plan.skill_invocations[0]?.skill_id, 'competitive-web-research');
+    assert.match(plan.skill_invocations[0]?.snapshot.body_hash ?? '', /^sha256:/u);
+    assert.deepEqual(plan.resolved_inputs.resolved.map(({ key }) => key), ['research_goal']);
+    assert.deepEqual(plan.resolved_inputs.pending.map(({ requirement }) => requirement.key), ['public_evidence']);
+    assert.deepEqual(plan.problem_graph, planningResult.problemGraph);
+    assert.deepEqual(plan.capability_decisions.eligible.map(({ skill }) => skill.id), ['competitive-web-research']);
+    assert.deepEqual(plan.candidate_metadata, {
       title: planningResult.candidates[index]?.title,
       rationale: planningResult.candidates[index]?.rationale,
       tradeoffs: planningResult.candidates[index]?.tradeoffs,
       recommended: planningResult.candidates[index]?.recommended,
     });
-    assert.deepEqual(candidate.plan.planning_provenance, planningResult.planningProvenance);
-    assert.deepEqual(candidate.plan.activated_nodes, planningResult.activatedNodes);
-    assert.deepEqual(candidate.pendingInputs, []);
+    assert.deepEqual(plan.planning_provenance, planningResult.planningProvenance);
+    assert.deepEqual(plan.activated_nodes, planningResult.activatedNodes);
+    assert.deepEqual(candidate.pendingInputs.map(({ role }) => role), ['public_evidence']);
   }
 
   assert.equal(response.kind, 'current');
@@ -596,7 +593,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
       tradeoffs: candidate.tradeoffs,
       planHash: repositoryPlanHashes[candidate.id],
       plan: repositoryCandidates[index]?.plan,
-      pendingInputs: [],
+      pendingInputs: repositoryCandidates[index]?.pendingInputs,
     })),
   );
 });

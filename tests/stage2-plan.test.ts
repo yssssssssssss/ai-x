@@ -75,6 +75,29 @@ test('Stage2 confirmation payload includes only declared pending inputs and no w
   assert.equal(JSON.stringify(payload).includes('scoring_weights'), false);
 });
 
+test('Stage2 confirmation omits explicitly waived optional inputs', () => {
+  const payload = buildPlanConfirmationPayload({
+    confirmationAnswers: {},
+    pending: [{
+      kind: 'value',
+      role: 'user_materials',
+      label: '用户材料',
+      multiple: true,
+      targets: [{ step_no: 2, tool_id: 'generate-persona', field: 'user_materials', multiple: true }],
+    }],
+    values: { user_materials: '' },
+    images: {},
+    waivedInputKeys: ['user_materials'],
+  });
+  assert.deepEqual(payload, {
+    confirmationAnswers: {},
+    inputValues: {},
+    uploads: [],
+    datasetUploads: [],
+    waivedInputKeys: ['user_materials'],
+  });
+});
+
 test('Stage2 parses quoted UTF-8 CSV headers and scopes field metadata to the selected columns', () => {
   const columns = parseDatasetColumns('\uFEFFsample_id,"quote,raw",score\r\nu1,"价格,太复杂",3\r\n');
   assert.deepEqual(columns, ['sample_id', 'quote,raw', 'score']);

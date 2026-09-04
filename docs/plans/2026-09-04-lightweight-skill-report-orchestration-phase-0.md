@@ -67,32 +67,33 @@ Phase 0 保持轻量边界，不增加多版本 Reader、错误码目录、审�
 
 ```ts
 interface LightweightSkillSnapshot {
-  skillId: string;
+  skill_id: string;
   body: string;
-  bodyHash: string;
-  inputRequirements: SkillInputRequirement[];
-  inputRequirementsHash: string;
-  reportTemplate: string;
-  reportTemplateHash: string;
-  executionContractHash?: string;
+  body_hash: string;
+  input_requirements: SkillInputRequirement[];
+  input_requirements_hash: string;
+  output_schema_hash: string;
+  report_template: string;
+  report_template_hash: string;
+  execution_contract_hash?: string;
 }
 
 interface LightweightSkillInvocation {
-  invocationId: string;
-  skillId: string;
-  dependsOnInvocationIds: string[];
-  stepNos: number[];
+  invocation_id: string;
+  skill_id: string;
+  depends_on_invocation_ids: string[];
+  step_nos: number[];
   required: boolean;
-  failurePolicy: 'block' | 'gap';
+  failure_policy: 'block' | 'gap';
   snapshot: LightweightSkillSnapshot;
 }
 
 interface LightweightExecutionPlanV1 {
-  executionContractVersion: 'lightweight-execution-plan-v1';
-  taskId: string;
+  execution_contract_version: 'lightweight-execution-plan-v1';
+  task_id: string;
   mode: 'single_skill' | 'multi_skill';
-  invocations: LightweightSkillInvocation[];
-  resolvedInputs: ResolvedPlanInputs;
+  skill_invocations: LightweightSkillInvocation[];
+  resolved_inputs: ResolvedPlanInputs;
   steps: CurrentPlanStep[];
 }
 ```
@@ -227,7 +228,7 @@ interface FinalReport {
 
 ### 5.1 Single Skill
 
-选择 `competitive-analysis`：
+选择 `competitive-web-research`（竞品分析的 Web 纵切实现）：
 
 - Registry 状态为 active，支持 `standalone` 和 answer；
 - 已有 `references/competitive-analysis-skeleton.md`，可以直接作为报告语义结构，不需要发明通用模板；
@@ -248,7 +249,7 @@ competitive-analysis
 
 选择 3 个 Contributor：
 
-1. `competitive-analysis`：市场与竞品判断；
+1. `competitive-web-research`：市场与竞品判断；
 2. `generate-persona`：Persona 与用户分型；
 3. `jobs-to-be-done`：核心 Job、需求层次与机会点。
 
@@ -263,7 +264,7 @@ competitive-analysis
 Multi 验收路径：
 
 ```text
-competitive-analysis ─┐
+competitive-web-research ─┐
 generate-persona ─────┼→ SkillReport[] → 一次综合 LLM → FinalReport
 jobs-to-be-done ──────┘
 ```

@@ -13,6 +13,9 @@ import {
   TaskWorkflowService,
   type WorkflowPlanRevisionDriver,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
+import {
+  parseLightweightExecutionPlanV1,
+} from '../packages/api-contract/lightweight-orchestration.ts';
 import { MockLLMClient } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
@@ -600,29 +603,28 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal(persisted.candidateId, 'speed');
   assert.equal((persisted.plan as Record<string, unknown>).deliverable_type, 'research_plan');
   assert.deepEqual((persisted.plan as Record<string, unknown>).evidence_requirements, evidenceRequirements);
-  assert.deepEqual(persisted.pendingInputs, []);
-  assert.deepEqual((persisted.plan as Record<string, unknown>).candidate_metadata, {
+  const lightweightPlan = parseLightweightExecutionPlanV1(persisted.plan);
+  assert.deepEqual(
+    (persisted.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+    ['public_evidence'],
+  );
+  assert.deepEqual(lightweightPlan.candidate_metadata, {
     title: 'speed',
     rationale: 'speed',
     tradeoffs: 'speed',
     recommended: false,
   });
   assert.deepEqual(
-    (persisted.plan as Record<string, unknown>).planning_provenance,
+    lightweightPlan.planning_provenance,
     planningResult(instruction).planningProvenance,
   );
-  assert.deepEqual((persisted.plan as Record<string, unknown>).activated_nodes, ['D3_method_selection']);
-  assert.equal(
-    (persisted.plan as Record<string, unknown>).execution_contract_version,
-    'current-execution-plan-v2',
-  );
-  assert.deepEqual((persisted.plan as Record<string, unknown>).skill_invocations, [{
-    invocation_id: 'competitive-web-research:2',
-    skill_id: 'competitive-web-research',
-    execution_mode: 'legacy_single_call',
-    step_nos: [2],
-  }]);
-  const steps = (persisted.plan as { steps: Array<Record<string, unknown>> }).steps;
+  assert.deepEqual(lightweightPlan.activated_nodes, ['D3_method_selection']);
+  assert.equal(lightweightPlan.execution_contract_version, 'lightweight-execution-plan-v1');
+  assert.equal(lightweightPlan.mode, 'single_skill');
+  assert.equal(lightweightPlan.skill_invocations.length, 1);
+  assert.equal(lightweightPlan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
+  assert.equal(lightweightPlan.skill_invocations[0]?.skill_id, 'competitive-web-research');
+  const steps = lightweightPlan.steps;
   assert.equal(steps.length, 2);
   assert.equal(steps[0]?.step_name, 'speed search');
   assert.equal(steps[0]?.step_no, 1);
@@ -797,7 +799,10 @@ test('production runtime replaces legacy value and visual pending-input plans wi
     const persisted = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(persisted);
     new SchemaValidator().validateOrThrow('current-execution-plan', persisted.plan);
-    assert.deepEqual(persisted.pendingInputs, []);
+    assert.deepEqual(
+      (persisted.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.equal(persisted.candidateId, activePlan.candidateId);
     assert.notEqual(persisted.id, activePlan.id);
     const preservedLegacy = await repository.getPlanVersionDetail(activePlan.id);
@@ -1007,7 +1012,10 @@ test('migration 009 quarantines a legacy active plan and leaves it reachable thr
     const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(currentPlan);
     new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
-    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.deepEqual(
+      (currentPlan.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.notEqual(currentPlan.id, activePlan.id);
 
     const versionAfterRevision = (await repository.getTaskDetail(seeded.created.task.id))!.stateVersion;
@@ -1599,7 +1607,10 @@ test('migration 009 makes every malformed PendingInput quarantine recoverable th
     const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(currentPlan);
     new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
-    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.deepEqual(
+      (currentPlan.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.equal(await repository.isPlanPendingInputQuarantined(currentPlan.id), false);
     assert.equal(
       await repository.isPlanPendingInputQuarantined(fixture.planVersionId),

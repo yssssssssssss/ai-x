@@ -1,5 +1,6 @@
 import type {
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   CurrentPlanStep,
 } from './research-deliverable.ts';
 
@@ -128,6 +129,11 @@ export interface LightweightExecutionPlanV1 extends Omit<
   resolved_inputs: ResolvedPlanInputs;
 }
 
+export type ReadableExecutionPlan =
+  | CurrentExecutionPlan
+  | CurrentExecutionPlanV3
+  | LightweightExecutionPlanV1;
+
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const INPUT_SOURCES = new Set<string>(SKILL_INPUT_SOURCES);
 const INPUT_KINDS = new Set<string>(['value', 'visual', 'dataset']);
@@ -135,7 +141,7 @@ const REPORT_SOURCE_TYPES = new Set<string>(['user_input', 'knowledge', 'tool_re
 const SKILL_REPORT_STATUSES = new Set<string>(['completed', 'completed_with_gaps', 'needs_input']);
 const COMPLETED_SKILL_REPORT_STATUSES = new Set<string>(['completed', 'completed_with_gaps']);
 const MODES = new Set<string>(['single_skill', 'multi_skill']);
-const SAFE_REPORT_PATH = /^skill-results\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u;
+const SAFE_REPORT_PATH = /^skill-results\/[A-Za-z0-9][A-Za-z0-9._%+-]*\.json$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
 
 function fail(contract: string, field: string): never {
@@ -187,6 +193,11 @@ function optionalUniqueStrings(value: unknown, contract: string, field: string):
   const parsed = value.map((item, index) => nonBlank(item, contract, `${field}[${index}]`));
   if (new Set(parsed).size !== parsed.length) fail(contract, field);
   return parsed;
+}
+
+function isSameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.every((value) => right.includes(value));
 }
 
 function hash(value: unknown, contract: string, field: string): string {
@@ -352,6 +363,14 @@ export function parseSkillReport(value: unknown): SkillReport {
   };
 }
 
+export function skillReportPath(invocationId: string, extension: 'json' | 'md' = 'json'): string {
+  const encoded = encodeURIComponent(invocationId);
+  if (!encoded || encoded.includes('/') || encoded === '.' || encoded === '..') {
+    throw new Error('SkillReport invocationId cannot form a safe relative path');
+  }
+  return `skill-results/${encoded}.${extension}`;
+}
+
 export function parseFinalReport(value: unknown): FinalReport {
   const contract = 'FinalReport';
   const root = record(value, contract);
@@ -434,6 +453,21 @@ export function isLightweightExecutionPlanV1(value: unknown): value is Lightweig
 export function parseLightweightExecutionPlanV1(value: unknown): LightweightExecutionPlanV1 {
   const contract = 'LightweightExecutionPlanV1';
   const root = record(value, contract);
+  exactKeys(root, [
+    'task_id',
+    'execution_contract_version',
+    'mode',
+    'deliverable_type',
+    'evidence_requirements',
+    'problem_graph',
+    'problem_graph_provenance',
+    'capability_decisions',
+    'steps',
+    'candidate_metadata',
+    'activated_nodes',
+    'skill_invocations',
+    'resolved_inputs',
+  ], ['capability_gaps', 'planning_provenance'], contract, 'value');
   if (root.execution_contract_version !== LIGHTWEIGHT_EXECUTION_PLAN_VERSION) fail(contract, 'execution_contract_version');
   if (typeof root.mode !== 'string' || !MODES.has(root.mode)) fail(contract, 'mode');
   canonicalId(root.task_id, contract, 'task_id');
@@ -477,13 +511,59 @@ export function parseLightweightExecutionPlanV1(value: unknown): LightweightExec
     }
   }
   if (root.mode === 'single_skill' && invocations.length !== 1) fail(contract, 'skill_invocations');
-  parseResolvedPlanInputs(root.resolved_inputs);
-  const steps = root.steps as CurrentPlanStep[];
-  const stepNos = steps.map((step) => step?.step_no);
+  const resolvedInputs = parseResolvedPlanInputs(root.resolved_inputs);
+  const steps = root.steps.map((value, index) => {
+    const step = record(value, contract, `steps[${index}]`);
+    if (
+      !Number.isInteger(step.step_no)
+      || typeof step.actor_type !== 'string'
+      || typeof step.actor_id !== 'string'
+    ) fail(contract, `steps[${index}]`);
+    return step as unknown as CurrentPlanStep;
+  });
+  const stepNos = steps.map((step) => step.step_no);
   if (!stepNos.every((stepNo, index) => stepNo === index + 1)) fail(contract, 'steps.step_no');
   const knownStepNos = new Set(stepNos);
+  const requirements = new Map<string, { requirement: SkillInputRequirement; targetInvocationIds: string[] }>();
   for (const invocation of invocations) {
     if (invocation.step_nos.some((stepNo) => !knownStepNos.has(stepNo))) fail(contract, 'skill_invocations.step_nos');
+    if (!steps.some((step) => (
+      invocation.step_nos.includes(step.step_no)
+      && step.actor_type === 'skill'
+      && step.actor_id === invocation.skill_id
+      && step.skill_invocation_id === invocation.invocation_id
+    ))) fail(contract, `skill_invocations.${invocation.invocation_id}.output_step`);
+    for (const requirement of invocation.snapshot.input_requirements) {
+      const existing = requirements.get(requirement.key);
+      if (existing) existing.targetInvocationIds.push(invocation.invocation_id);
+      else requirements.set(requirement.key, {
+        requirement,
+        targetInvocationIds: [invocation.invocation_id],
+      });
+    }
   }
-  return structuredClone(root) as unknown as LightweightExecutionPlanV1;
+  const assertTargets = (key: string, actual: readonly string[]): void => {
+    const expected = requirements.get(key)?.targetInvocationIds;
+    if (!expected || !isSameStringSet(expected, actual)) fail(contract, `resolved_inputs.${key}.targetInvocationIds`);
+  };
+  for (const item of resolvedInputs.resolved) assertTargets(item.key, item.targetInvocationIds);
+  for (const item of resolvedInputs.pending) {
+    assertTargets(item.requirement.key, item.targetInvocationIds);
+    const declared = requirements.get(item.requirement.key)?.requirement;
+    if (!declared || JSON.stringify(declared) !== JSON.stringify(item.requirement)) {
+      fail(contract, `resolved_inputs.${item.requirement.key}.requirement`);
+    }
+  }
+  for (const item of resolvedInputs.waived) {
+    assertTargets(item.key, item.targetInvocationIds);
+    if (requirements.get(item.key)?.requirement.required !== false) {
+      fail(contract, `resolved_inputs.${item.key}.waived`);
+    }
+  }
+  return {
+    ...(structuredClone(root) as unknown as LightweightExecutionPlanV1),
+    skill_invocations: invocations,
+    resolved_inputs: resolvedInputs,
+    steps,
+  };
 }

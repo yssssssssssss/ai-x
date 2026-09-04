@@ -7,6 +7,10 @@ import {
   type PlanProgress,
   type ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
+import {
+  type FinalReport,
+  type SkillReport,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
@@ -61,6 +65,16 @@ export interface ControlTasksRuntime {
   repository: ControlPlaneRepository;
   workflow: TaskWorkflowService;
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+  getFinalReport?(taskId: string, ownerUserId: string): Promise<{
+    artifact: { id: string };
+    report: FinalReport;
+  } | null>;
+  getSkillReports?(taskId: string, ownerUserId: string): Promise<SkillReport[] | null>;
+  readFinalReportHtml?(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null>;
   readVisualAsset?(input: {
     taskId: string;
     assetId: string;
@@ -646,6 +660,82 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
+  router.get('/:id/skill-reports', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getSkillReports) {
+      res.status(409).json({ error: 'Skill 报告不可用' });
+      return;
+    }
+    try {
+      const reports = await runtime.getSkillReports(req.params.id, actor.userId);
+      if (!reports) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.json({ reports });
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getFinalReport) {
+      res.status(409).json({ error: '最终报告不可用' });
+      return;
+    }
+    try {
+      const result = await runtime.getFinalReport(req.params.id, actor.userId);
+      if (!result) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.json(result.report);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report.html', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getFinalReport || !runtime.readFinalReportHtml) {
+      res.status(409).json({ error: '最终 HTML 报告不可用' });
+      return;
+    }
+    try {
+      const final = await runtime.getFinalReport(req.params.id, actor.userId);
+      if (!final) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      const html = await runtime.readFinalReportHtml({
+        taskId: req.params.id,
+        attemptId: final.report.attemptId,
+        ownerUserId: actor.userId,
+      });
+      if (!html) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': 'inline; filename="report.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Type': 'text/html; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(html);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
   router.get('/:id/assets/:assetId', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
@@ -968,10 +1058,14 @@ router.post('/:id/confirm', async (req, res) => {
   const planVersionId = string(body?.planVersionId);
   const confirmationAnswers = record(body?.confirmationAnswers);
   const inputValues = record(body?.inputValues);
+  const waivedInputKeys = Array.isArray(body?.waivedInputKeys)
+    && body.waivedInputKeys.every((key) => typeof key === 'string' && key.trim())
+    ? body.waivedInputKeys as string[]
+    : body?.waivedInputKeys === undefined ? [] : null;
   if (!actor) return;
   if (!await ensureOwnedTask(runtime, req, res, actor)) return;
-  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputValues) {
-    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputValues 必填' });
+  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputValues || !waivedInputKeys) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputValues 必填，waivedInputKeys 必须是字符串数组' });
     return;
   }
   try {
@@ -983,6 +1077,7 @@ router.post('/:id/confirm', async (req, res) => {
       actor,
       confirmationAnswers,
       inputValues,
+      waivedInputKeys,
     }));
   } catch (error) {
     responseError(res, error);

@@ -25,7 +25,7 @@ import { Stage2Candidates } from '../components/stages/Stage2Candidates.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
-import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
+import { LightweightStage4Report } from '../components/stages/LightweightStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
 import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
 import { Labs } from './Labs.tsx';
@@ -84,11 +84,11 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     selectedCandidateId,
     plan,
     originalInput,
-    orchestrationMode,
     exec,
     executionSteps,
     executionPlanSteps,
-    deliverable,
+    finalReport,
+    skillReports,
     reportState,
     deliverableError,
     error,
@@ -170,7 +170,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
       ) : (
       <main className="workbench-main">
         <div className="workbench-scroll">
-          <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
+          <div className={`chat-column${finalReport ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' ? (
               <Welcome onPick={flow.submitInput} />
             ) : phase === 'loading-task' ? (
@@ -237,7 +237,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {(phase === 'executing' || phase === 'reviewing' || phase === 'composing-report') && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase={phase}
+                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                      />
                     )}
                     <RunningTaskNotice
                       phase={phase}
@@ -250,7 +255,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'paused' && exec && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="paused" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="paused"
+                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                      />
                     )}
                     <FailureActionCard
                       stepNo={exec.failedStepNo}
@@ -265,7 +275,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'done' && exec && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="done" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="done"
+                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                      />
                     )}
                     {error && <ErrorCard msg={error} />}
                     {exec.status === 'completed_with_gaps' && (
@@ -275,11 +290,11 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                     {reportState === 'report-loading-error' && (
                       <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
                     )}
-                    {deliverable && (
-                      <CurrentStage4Report
-                        report={deliverable}
-                        taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
-                        orchestrationMode={orchestrationMode ?? undefined}
+                    {finalReport && currentTaskId && (
+                      <LightweightStage4Report
+                        taskId={currentTaskId}
+                        finalReport={finalReport}
+                        skillReports={skillReports}
                       />
                     )}
                   </>
@@ -287,7 +302,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'failed' && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="failed" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="failed"
+                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                      />
                     )}
                     <TerminalTaskNotice
                       state="failed"
@@ -298,7 +318,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'cancelled' && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="cancelled" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="cancelled"
+                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                      />
                     )}
                     <AbortedNotice />
                   </>
