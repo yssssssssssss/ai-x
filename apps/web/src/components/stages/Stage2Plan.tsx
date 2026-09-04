@@ -317,7 +317,7 @@ export function Stage2Plan({
 
       {pending.some((input) => input.kind === 'value') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入（必须填写）</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入</div>
           {pending.filter((input) => input.kind === 'value').map((input) => (
             <label key={input.role} style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, fontSize: 13 }}>
               <span>

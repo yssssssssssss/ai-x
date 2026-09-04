@@ -47,13 +47,12 @@ const TERMINAL_ARTIFACT_KINDS = new Set([
   'contribution_ledger',
   'contribution_summary',
   'research_contribution_bundle',
-  'skill_report_markdown',
   'final_report',
   'final_report_markdown',
   'final_report_html',
   'report_sources',
 ]);
-const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['knowledge_output', 'tool_output', 'skill_output', 'skill_report', 'research_contribution', 'llm_output', 'review_output']);
+const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['knowledge_output', 'tool_output', 'skill_output', 'skill_report', 'skill_report_markdown', 'research_contribution', 'llm_output', 'review_output']);
 const VISUAL_COMPOSITE_ARTIFACT_KINDS = new Set([
   'visual_asset',
   'visual_asset_manifest',
@@ -197,6 +196,9 @@ export class ControlPlaneExecutionRecoveryStore implements ExecutionRecoveryStor
         ...(step.outputArtifactId ? [step.outputArtifactId] : []),
         ...(typeof step.skillProvenance?.sourceArtifactId === 'string'
           ? [step.skillProvenance.sourceArtifactId]
+          : []),
+        ...(typeof step.skillProvenance?.markdownArtifactId === 'string'
+          ? [step.skillProvenance.markdownArtifactId]
           : []),
       ]);
   }

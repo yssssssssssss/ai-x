@@ -1,6 +1,6 @@
 # 轻量 Skill 报告编排开发方案
 
-> 状态：核心方向已确认，待实施
+> 状态：已实施；自动化与离线纵切通过，真实 Gateway/Tool smoke 待安全环境
 > 日期：2026-09-04
 > 适用范围：新建任务；`single_skill` 与 `multi_skill`
 > 历史策略：历史 Task、Plan、Artifact、HTML 与数据库记录原样保留；新实现不兼容、不迁移、不继续读取旧报告合同
@@ -854,6 +854,19 @@ Worktree 共享 Git 历史和对象库，但源码、依赖、环境变量和工
 - 移除 Deterministic Showcase 和旧 Summary/Detail 组合代码。
 - 移除新任务路径中的 Legacy Skill 分支。
 - 旧文件与数据库记录保留但不再由新代码读取。
+
+### 2026-09-04 实施状态
+
+- 新 Task 统一写 `lightweight-execution-plan-v1`；生产执行入口拒绝旧 v2/v3 Plan。
+- Skill 正文、输入合同、报告模板和 hash 随 Plan 冻结；未声明专用模板的 Skill 使用最小通用 Markdown 骨架。
+- `ResolvedPlanInputs` 支持 resolved、pending 和用户明确 waived 的可选输入；会话字段、上传图片/数据集与受控 Gate 已接线。
+- Skill 直接生成并封存 `skill-report-v1` JSON/Markdown；Single 不再调用报告 LLM。
+- Multi 移除执行 Plan 中的旧 Synthesizer Skill，直接消费 `SkillReport[]`，只调用一次最终综合；失败使用确定性分组报告。
+- 唯一终态根为 `reports/final-report.json`；Markdown、无脚本 HTML、来源和 Skill 明细均独立封存，报告失败重试复用成功 Tool/Skill。
+- 新 API 与 Web Stage 2-4 已接线：输入来源/目标 Skill、执行 DAG、`最终报告 / Skill 明细`、Markdown/HTML 下载。
+- 新任务路径不写 Deliverable、ReportReview、ReportDocument、ReportPackage、Contribution Ledger 或 Showcase Artifact；旧数据文件和数据库行未修改。
+- `pnpm quality` 与 `pnpm --dir apps/web build` 已通过；真实 Single/Multi smoke harness 已切换到 FinalReport/SkillReport 收据。
+- 当前 Worktree 没有 Gateway 凭据和 `ALLOW_REAL_PROVIDER=1` 命令级授权，因此尚未执行真实 smoke；不得通过修改 `.env` 绕过该门禁。
 
 ## 17. 测试与 CI
 

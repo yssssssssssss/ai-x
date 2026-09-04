@@ -2442,7 +2442,7 @@ export class ControlPlaneRepository {
              'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
              'cross_skill_review', 'contribution_ledger', 'contribution_summary',
              'research_contribution_bundle',
-             'skill_report', 'skill_report_markdown', 'final_report', 'final_report_markdown',
+             'final_report', 'final_report_markdown',
              'final_report_html', 'report_sources',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )

@@ -15,6 +15,7 @@ import type {
 } from '../../../../database/control-plane.ts';
 import {
   isLightweightExecutionPlanV1,
+  parseFinalReport,
   parseLightweightExecutionPlanV1,
   parseSkillReport,
   type LightweightSkillSnapshot,
@@ -1431,6 +1432,7 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
         throw new ExecutionAuthenticityError(`plan Skill invocation ${policy.invocationId} is duplicated`);
       }
       invocationPoliciesById.set(policy.invocationId, policy);
+      let outputStepNo: number | undefined;
       for (const candidateStepNo of frozen.step_nos) {
         const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
         if (!invocationStep) {
@@ -1440,12 +1442,16 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
         policies.push(policy);
         invocationPoliciesByStep.set(candidateStepNo, policies);
         if (invocationStep.actor_type === 'skill' && invocationStep.actor_id === frozen.skill_id) {
-          lightweightSnapshotsByStep.set(candidateStepNo, {
-            invocationId: frozen.invocation_id,
-            snapshot: frozen.snapshot,
-          });
+          outputStepNo = candidateStepNo;
         }
       }
+      if (outputStepNo === undefined) {
+        throw new ExecutionAuthenticityError(`lightweight Skill invocation ${policy.invocationId} has no output step`);
+      }
+      lightweightSnapshotsByStep.set(outputStepNo, {
+        invocationId: frozen.invocation_id,
+        snapshot: frozen.snapshot,
+      });
       continue;
     }
 
@@ -2534,6 +2540,9 @@ export class LeaseExecutionEngine {
                     skillProvenance: {
                       ...checkpoint.provenance,
                       outputArtifactId: resealed.id,
+                      ...(reusableLightweightReport
+                        ? { markdownArtifactId: reusableLightweightReport.markdownArtifact.id }
+                        : {}),
                       sourceArtifactId: priorArtifact.id,
                       status: reusedSkillOutcome?.status ?? 'succeeded',
                       ...(reusedSkillOutcome?.status === 'degraded'
@@ -2955,6 +2964,9 @@ export class LeaseExecutionEngine {
                   planHash: planVersion.planHash,
                   stepHash: hashJson(step),
                   outputArtifactId: sealedOutput.artifact.id,
+                  ...(lightweightPublication
+                    ? { markdownArtifactId: lightweightPublication.markdownArtifact.id }
+                    : {}),
                   ...(sourceSkillArtifactId ? { sourceArtifactId: sourceSkillArtifactId } : {}),
                   status: skillOutcome?.status ?? 'succeeded',
                   ...(skillOutcome?.status === 'degraded'
@@ -3859,15 +3871,25 @@ export class LeaseExecutionEngine {
             }),
             extraGaps: executionGaps,
           })).report;
+      const sanitizedFinalReport = parseFinalReport({
+        ...finalReport,
+        title: redactString(finalReport.title),
+        markdown: redactString(finalReport.markdown),
+        gaps: finalReport.gaps.map((gap) => redactString(gap)),
+        sources: finalReport.sources.map((source) => ({
+          ...source,
+          title: redactString(source.title),
+        })),
+      });
       const sealed = await new LightweightReportArtifactService(
         this.dependencies.artifacts,
       ).sealFinalReport({
         activeLease: input.lease,
-        report: finalReport,
+        report: sanitizedFinalReport,
       });
       chartPublication?.commit();
       chartPublication = undefined;
-      const status = finalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      const status = sanitizedFinalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
       await this.dependencies.repository.completeExecution(input.lease, {
         status,
         finalReportArtifactId: sealed.jsonArtifact.id,
@@ -3877,7 +3899,7 @@ export class LeaseExecutionEngine {
           attemptId: input.lease.attemptId,
           evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
           finalReportArtifactId: sealed.jsonArtifact.id,
-          gapCount: finalReport.gaps.length,
+          gapCount: sanitizedFinalReport.gaps.length,
         };
       }
 

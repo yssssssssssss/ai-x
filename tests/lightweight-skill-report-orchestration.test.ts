@@ -14,6 +14,11 @@ import {
   type SkillReport,
   type SourceReference,
 } from '../packages/api-contract/lightweight-orchestration.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { CurrentExecutionPlanV3 } from '../packages/api-contract/research-deliverable.ts';
+import {
+  compileLightweightExecutionPlan,
+} from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import {
   PlanInputResolutionError,
@@ -159,6 +164,92 @@ test('loads immutable lightweight metadata for the three vertical-slice Skills',
     assert.ok(snapshot.input_requirements.some(({ key }) => key === 'research_goal'));
     assert.ok(snapshot.report_template.startsWith('#'));
   }
+});
+
+test('compiles the three-Skill vertical slice without the legacy Synthesizer invocation', () => {
+  const loader = new SkillLoader();
+  const skillIds = ['competitive-analysis', 'generate-persona', 'jobs-to-be-done'] as const;
+  const registered = new Map(loader.listCapabilitySkills().map((skill) => [skill.id, skill]));
+  const steps = [...skillIds, 'research-strategy-synthesis'].map((skillId, index) => ({
+    step_no: index + 1,
+    step_name: skillId,
+    actor_type: 'skill' as const,
+    actor_id: skillId,
+    question_ids: ['Q1'],
+    depends_on: skillId === 'research-strategy-synthesis' ? [1, 2, 3] : [],
+    input: { research_goal: '京东众筹增长策略' },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/payload', description: 'output' }],
+    acceptance_criteria: ['complete'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+    skill_invocation_id: `inv-${index + 1}`,
+  }));
+  const sourcePlan = {
+    task_id: '',
+    execution_contract_version: 'current-execution-plan-v3',
+    deliverable_type: 'research_strategy_report',
+    evidence_requirements: [{
+      id: 'public', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+    }],
+    problem_graph: { version: 'problem-graph-v1', questions: [] },
+    problem_graph_provenance: {
+      receiptId: 'receipt-1', modelName: 'fixture', modelVersion: '1', promptHash: 'hash', traceId: 'trace',
+    },
+    capability_decisions: {
+      eligible: [...skillIds, 'research-strategy-synthesis'].map((skillId) => ({
+        skill: registered.get(skillId)!,
+        required_approvals: [], reasons: [], pending_inputs: [], optional_tool_decisions: [],
+      })),
+      rejected: [],
+    },
+    capability_gaps: [],
+    steps,
+    candidate_metadata: { title: '纵切', rationale: 'fixture', tradeoffs: 'fixture' },
+    activated_nodes: [],
+    skill_invocations: [...skillIds, 'research-strategy-synthesis'].map((skillId, index) => ({
+      invocation_id: `inv-${index + 1}`,
+      skill_id: skillId,
+      role: skillId === 'research-strategy-synthesis' ? 'synthesizer' : 'contributor',
+      contribution_types: [], question_ids: ['Q1'], requested_artifact_types: [],
+      depends_on_invocation_ids: skillId === 'research-strategy-synthesis' ? ['inv-1', 'inv-2', 'inv-3'] : [],
+      output_contract: 'fixture', required: true, failure_policy: 'block',
+      execution_mode: 'legacy_single_call', step_nos: [index + 1],
+    })),
+    capability_demand_graph: { version: 'capability-demand-graph-v1', demands: [] },
+    portfolio_summary: {
+      profile_id: 'depth', selected: [], rejected: [], shared_prerequisites: [],
+      estimated_budget: {
+        max_steps: 8, estimated_steps: 4, selected_contributor_count: 3,
+        selected_skill_count: 4, required_demand_count: 0, optional_demand_count: 0,
+        expanded_step_count: 4, expanded_step_limit: 8,
+      },
+    },
+    contribution_requirements: [],
+  } as unknown as CurrentExecutionPlanV3;
+  const task = {
+    version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+    business_domain: 'jd_crowdfunding', research_goal: '京东众筹增长策略',
+    target_audience: ['产品团队'], scope: [], constraints: [], success_criteria: [],
+    expected_deliverables: ['research_strategy_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+  } satisfies ResearchTaskV2;
+  const compiled = compileLightweightExecutionPlan({
+    plan: sourcePlan,
+    mode: 'multi_skill',
+    task,
+    skillLoader: loader,
+  });
+  assert.deepEqual(compiled.plan.skill_invocations.map(({ skill_id }) => skill_id), skillIds);
+  assert.equal(compiled.plan.steps.some(({ actor_id }) => actor_id === 'research-strategy-synthesis'), false);
+  assert.deepEqual(
+    compiled.plan.resolved_inputs.resolved.find(({ key }) => key === 'research_goal')?.targetInvocationIds,
+    ['inv-1', 'inv-2', 'inv-3'],
+  );
+  assert.deepEqual(
+    compiled.plan.resolved_inputs.pending.find(({ requirement }) => requirement.key === 'user_materials')?.targetInvocationIds,
+    ['inv-1', 'inv-2', 'inv-3'],
+  );
 });
 
 test('accepts only the explicit lightweight Plan discriminator', () => {
