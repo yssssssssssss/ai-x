@@ -6,9 +6,9 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { after, before, test } from 'node:test';
 import { Pool } from 'pg';
-import type { Express } from 'express';
+import express, { type Express } from 'express';
 import { signToken } from '../apps/agent-api/src/auth.ts';
-import { closePool } from '../database/db.ts';
+import { createControlPlanningRouter } from '../apps/agent-api/src/routes/control-planning.ts';
 import type {
   ControlPlanCandidatesResponse,
   CurrentPlanCandidate,
@@ -34,11 +34,9 @@ interface PlannedAgentApiDependencies {
   };
 }
 
-type PlannedCreateAgentApiApp = (dependencies: PlannedAgentApiDependencies) => Express;
-
 const originalJwtSecret = process.env.JWT_SECRET;
 const database = new Pool({
-  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native',
 });
 let activeOwnerUserId = '';
 
@@ -56,7 +54,6 @@ after(async () => {
   if (activeOwnerUserId) {
     await database.query('DELETE FROM users WHERE id = $1', [activeOwnerUserId]);
   }
-  await closePool();
   await database.end();
 });
 
@@ -118,7 +115,14 @@ function currentResponsePlan(
   };
 }
 
-test('POST /api/control-tasks/plan plans Current candidates for the authenticated owner without client plan mutation', async () => {
+function legacyPlanningApp(controlPlanning: PlannedAgentApiDependencies['controlPlanning']): Express {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlPlanningRouter(controlPlanning));
+  return app;
+}
+
+test('legacy planning router plans Current candidates without client plan mutation', async () => {
   process.env.JWT_SECRET = `control-planning-test-${randomUUID()}`;
   const ownerUserId = activeOwnerUserId;
   const conversationId = '00000000-0000-0000-0000-000000000201';
@@ -195,11 +199,7 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
 
   try {
     const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-    // Module-boundary exception: server.ts loads .env during evaluation, so install the
-    // test-only JWT secret before dynamically importing the app factory.
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -245,7 +245,7 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
   }
 });
 
-test('POST /api/control-tasks/plan rejects a missing orchestration mode before planning', async () => {
+test('legacy planning router rejects a missing orchestration mode before planning', async () => {
   process.env.JWT_SECRET = `control-planning-mode-${randomUUID()}`;
   let planningCalls = 0;
   const controlPlanning: PlannedAgentApiDependencies['controlPlanning'] = {
@@ -258,9 +258,7 @@ test('POST /api/control-tasks/plan rejects a missing orchestration mode before p
 
   try {
     const token = signToken({ userId: activeOwnerUserId, email: 'mode@test.local' });
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -287,7 +285,7 @@ test('POST /api/control-tasks/plan rejects a missing orchestration mode before p
   }
 });
 
-test('POST /api/control-tasks/plan does not expose internal deliverable contract errors', async () => {
+test('legacy planning router does not expose internal deliverable contract errors', async () => {
   process.env.JWT_SECRET = `control-planning-error-${randomUUID()}`;
   const controlPlanning: PlannedAgentApiDependencies['controlPlanning'] = {
     async plan() {
@@ -298,9 +296,7 @@ test('POST /api/control-tasks/plan does not expose internal deliverable contract
 
   try {
     const token = signToken({ userId: activeOwnerUserId, email: 'plan-error@test.local' });
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -388,7 +384,7 @@ async function readSseUntil(
   return stream.body;
 }
 
-test('POST /api/control-tasks/plan/stream emits conversation, progress, and Current result SSE events', async () => {
+test('legacy planning router streams conversation, progress, and Current result events', async () => {
   process.env.JWT_SECRET = `control-planning-stream-test-${randomUUID()}`;
   const ownerUserId = activeOwnerUserId;
   const conversationId = '00000000-0000-0000-0000-000000000211';
@@ -435,11 +431,7 @@ test('POST /api/control-tasks/plan/stream emits conversation, progress, and Curr
 
   try {
     const token = signToken({ userId: ownerUserId, email: 'stream-owner@test.local' });
-    // Module-boundary exception: server.ts reads JWT configuration during evaluation,
-    // so this test must install its isolated secret before loading the app factory.
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -486,7 +478,7 @@ test('POST /api/control-tasks/plan/stream emits conversation, progress, and Curr
   }
 });
 
-test('new-conversation SSE publishes conversation and progress before planning resolves', async () => {
+test('legacy planning router streams a new conversation before planning resolves', async () => {
   process.env.JWT_SECRET = `control-planning-new-conversation-${randomUUID()}`;
   const conversationId = '00000000-0000-0000-0000-000000000212';
   const taskId = '00000000-0000-0000-0000-000000000312';
@@ -538,10 +530,7 @@ test('new-conversation SSE publishes conversation and progress before planning r
 
   try {
     const token = signToken({ userId: activeOwnerUserId, email: 'new-stream-owner@test.local' });
-    // Module-boundary exception: JWT configuration must be installed before server.ts evaluation.
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -600,7 +589,7 @@ test('new-conversation SSE publishes conversation and progress before planning r
   }
 });
 
-test('new-conversation SSE emits conversation before an error when planning fails', async () => {
+test('legacy planning router emits a new conversation before a planning error', async () => {
   process.env.JWT_SECRET = `control-planning-new-conversation-error-${randomUUID()}`;
   const conversationId = '00000000-0000-0000-0000-000000000213';
   const controlPlanning: PlannedAgentApiDependencies['controlPlanning'] = {
@@ -613,10 +602,7 @@ test('new-conversation SSE emits conversation before an error when planning fail
 
   try {
     const token = signToken({ userId: activeOwnerUserId, email: 'new-stream-error@test.local' });
-    // Module-boundary exception: JWT configuration must be installed before server.ts evaluation.
-    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-    server = createServer(createApp({ controlPlanning }));
+    server = createServer(legacyPlanningApp(controlPlanning));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();

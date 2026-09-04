@@ -83,12 +83,13 @@ interface ControlRuntimeOverrides {
   multiSkillPortfolioMode?: 'inactive' | 'active';
 }
 
-interface ControlRuntimeHarness {
+interface ControlRuntimeHarness extends ControlTasksRuntime {
   controlPlanning: {
     plan(input: {
       originalInput: string;
       conversationId?: string;
       ownerUserId: string;
+      orchestrationMode: 'single_skill' | 'multi_skill';
     }): Promise<ControlPlanCandidatesResponse>;
   };
 }
@@ -96,9 +97,6 @@ interface ControlRuntimeHarness {
 interface ControlRuntimeModule {
   buildControlRuntime(overrides: ControlRuntimeOverrides): ControlRuntimeHarness;
 }
-
-type PlannedCreateAgentApiApp = (dependencies: { controlRuntime: unknown }) => Express;
-type ClosePool = () => Promise<void>;
 
 type ExecutionResponse = ControlExecutionResult & {
   state: ControlWorkflowState;
@@ -545,7 +543,7 @@ const originalPgOptions = process.env.PGOPTIONS;
 const schema = `control_api_integration_${randomUUID().replaceAll('-', '')}`;
 const artifactRoot = mkdtempSync(join(tmpdir(), 'control-api-integration-artifacts-'));
 const database = new Pool({
-  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native',
 });
 const scopedDatabase = new ScopedIntegrationDatabase(database, schema);
 const repository = new ControlPlaneRepository(scopedDatabase);
@@ -557,7 +555,6 @@ let ownerUserId = '';
 let foreignUserId = '';
 let conversationId = '';
 let server: Server | undefined;
-let closeSharedPool: ClosePool | undefined;
 
 function hashPrompt(prompt: string): string {
   return `sha256:${createHash('sha256').update(prompt).digest('hex')}`;
@@ -1123,11 +1120,6 @@ after(async () => {
     errors.push(error);
   }
   try {
-    await closeSharedPool?.();
-  } catch (error) {
-    errors.push(error);
-  }
-  try {
     await database.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
   } catch (error) {
     errors.push(error);
@@ -1298,7 +1290,7 @@ test('GET /api/control-tasks/:id rejects an invalid awaiting clarification paylo
   }
 });
 
-test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
+test('legacy control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
   const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
   const { buildControlRuntime } = await loadControlRuntimeModule();
@@ -1321,10 +1313,7 @@ test('production control runtime returns the revised final deliverable ID for pa
     artifacts,
   });
 
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  ({ closePool: closeSharedPool } = await import('../database/db.ts'));
-  const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
-  server = createServer(createApp({ controlRuntime }));
+  server = createServer(controlTasksApp(controlRuntime));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -1333,13 +1322,12 @@ test('production control runtime returns the revised final deliverable ID for pa
   const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
 
-  const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
+  const planned = await controlRuntime.controlPlanning.plan({
     originalInput,
     conversationId,
+    ownerUserId,
     orchestrationMode: 'single_skill',
   });
-  assert.equal(planResponse.status, 200, await planResponse.clone().text());
-  const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
   assert.equal(planned.task.orchestrationMode, 'single_skill');
   const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
@@ -1779,13 +1767,12 @@ test('production control runtime returns the revised final deliverable ID for pa
     connection.release();
   }
 
-  const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
+  const pausedPlanned = await controlRuntime.controlPlanning.plan({
     originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
     conversationId,
+    ownerUserId,
     orchestrationMode: 'single_skill',
   });
-  assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
-  const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
   const pausedSpeed = pausedPlanned.candidates.find((candidate) => candidate.candidateId === 'speed');
   assert.ok(pausedSpeed);
   const pausedSelectResponse = await postJson(
@@ -1859,439 +1846,6 @@ test('production control runtime returns the revised final deliverable ID for pa
     );
   } finally {
     pausedConnection.release();
-  }
-});
-
-test('production plan stream stops at the explicit direction gate before planning work', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const expectedModel = 'progress-planning-model';
-  const controlRuntime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    tools: new ToolRouter(),
-    llm: new PlanningModelFixtureLLM(expectedModel, expectedModel),
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: expectedModel,
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
-  );
-  try {
-    const response = await postJson(
-      app.baseUrl,
-      '/api/control-tasks/plan/stream',
-      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      {
-        originalInput: `progress-stream-${randomUUID()}`,
-        conversationId,
-        orchestrationMode: 'single_skill',
-      },
-    );
-    assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), [
-      'conversation',
-      'result',
-    ]);
-    const result = events.at(-1)?.data as CurrentPlanningResponse;
-    assert.equal(result.status, 'clarification_required');
-    if (result.status !== 'clarification_required') throw new Error('expected direction clarification');
-    assert.equal(result.task.state, 'awaiting_clarification');
-    assert.equal(result.planningGuidance?.reasonCode, 'scenario_selection_required');
-    assert.deepEqual(result.candidates, []);
-  } finally {
-    await closeLocalServer(app.server);
-  }
-});
-
-test('production API persists Scenario selection guidance and resumes planning after a valid choice', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const expectedModel = 'scenario-selection-model';
-  const runtime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    tools: new ToolRouter().register(new OfflineRealTavilyAdapter()),
-    llm: new PlanningModelFixtureLLM(
-      expectedModel,
-      expectedModel,
-      scenarioSelectionRequirement(),
-    ),
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: expectedModel,
-    multiSkillPortfolioMode: 'inactive',
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
-  );
-  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-  const authorization = { authorization: `Bearer ${token}` };
-  const originalInput = '梳理宠物心智的设计表达策略全景';
-  const expectedGuidance = {
-    reasonCode: 'scenario_selection_required' as const,
-    options: [
-      { id: 'user-material-synthesis', label: '已有用户资料归纳' },
-      { id: 'user-segmentation', label: '用户分层' },
-      { id: 'user-journey-insight', label: '用户旅程与需求洞察' },
-      { id: 'root-cause-analysis', label: '问题根因拆解' },
-      { id: 'metrics-validation', label: '指标与验证计划' },
-    ],
-  };
-
-  try {
-    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
-      originalInput,
-      conversationId,
-      orchestrationMode: 'single_skill',
-    });
-    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
-    const planned = await plannedResponse.json() as CurrentPlanningResponse;
-    assert.equal(planned.status, 'clarification_required');
-    if (planned.status !== 'clarification_required') throw new Error('expected Scenario clarification');
-    assert.equal(planned.task.state, 'awaiting_clarification');
-    assert.deepEqual(planned.candidates, []);
-    assert.deepEqual(planned.planningGuidance, expectedGuidance);
-
-    const refreshedResponse = await fetch(
-      `${app.baseUrl}/api/control-tasks/${planned.task.id}`,
-      { headers: authorization },
-    );
-    assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
-    const refreshed = await refreshedResponse.json() as CurrentTaskReadResponse;
-    assert.equal(refreshed.task.state, 'awaiting_clarification');
-    assert.equal(refreshed.task.stateVersion, planned.task.stateVersion);
-    assert.deepEqual(refreshed.planningGuidance, expectedGuidance);
-
-    const invalidResponse = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      {
-        expectedVersion: planned.task.stateVersion,
-        clarificationAnswers: {},
-        assumptionEdits: {},
-        selectedScenarioId: 'competitor-benchmark-research',
-      },
-      `scenario-invalid-${randomUUID()}`,
-    );
-    assert.equal(invalidResponse.status, 400, await invalidResponse.clone().text());
-    assert.equal(
-      (await invalidResponse.json() as { code?: string }).code,
-      'invalid_scenario_selection',
-    );
-
-    const selectedResponse = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify/stream`,
-      token,
-      {
-        expectedVersion: planned.task.stateVersion,
-        clarificationAnswers: {},
-        assumptionEdits: {},
-        selectedScenarioId: 'user-journey-insight',
-      },
-      `scenario-valid-${randomUUID()}`,
-    );
-    assert.equal(selectedResponse.status, 200, await selectedResponse.clone().text());
-    const selectedEvents = parseSseEvents(await selectedResponse.text());
-    assert.deepEqual(
-      selectedEvents.slice(0, -1).map((event) => {
-        const progress = event.data as { phase: string; status: string };
-        return `${progress.phase}:${progress.status}`;
-      }),
-      [
-        'understand:done',
-        'activate:done',
-        'guidance:done',
-        'states:start',
-        'states:done',
-        'candidates:start',
-        'candidates:done',
-        'persist:start',
-        'persist:done',
-      ],
-    );
-    assert.equal(selectedEvents.at(-1)?.event, 'result');
-    const selected = selectedEvents.at(-1)?.data as ControlPlanCandidatesResponse;
-    assert.equal(selected.task.state, 'awaiting_selection');
-    assert.deepEqual(selected.candidates.map(({ candidateId }) => candidateId), [
-      'speed',
-      'depth',
-      'focused',
-      'mixed_method',
-    ]);
-    for (const candidate of selected.candidates) {
-      const provenance = candidate.plan.planning_provenance;
-      assert.ok(provenance);
-      assert.equal(provenance.classification_method, 'clarification');
-      assert.equal(provenance.classifier_call_count, 0);
-      assert.equal(provenance.primary_scenario_id, 'user-journey-insight');
-    }
-  } finally {
-    await closeLocalServer(app.server);
-  }
-});
-
-
-test('production Current planning rejects model drift before candidate persistence and records a failed receipt', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const originalInput = `planning-model-drift-${randomUUID()}`;
-  const expectedModel = 'expected-planning-model';
-  const requestedModel = 'gateway-routing-alias';
-  const actualModel = 'unexpected-planning-model';
-  const receiptConnection = await scopedDatabase.connect();
-  const existingReceipts = await receiptConnection.query(
-    'SELECT id FROM control_model_calls WHERE attempt_id IS NULL',
-  );
-  receiptConnection.release();
-  const runtime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    tools: new ToolRouter(),
-    llm: new PlanningModelFixtureLLM(requestedModel, actualModel),
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: expectedModel,
-    multiSkillPortfolioMode: 'inactive',
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
-  );
-  try {
-    const response = await postJson(
-      app.baseUrl,
-      '/api/control-tasks/plan',
-      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput, conversationId, orchestrationMode: 'single_skill' },
-    );
-    assert.equal(response.status, 502);
-    assert.match(await response.text(), /model drift/i);
-  } finally {
-    await closeLocalServer(app.server);
-  }
-
-  const connection = await scopedDatabase.connect();
-  try {
-    const persisted = await connection.query(
-      `SELECT
-         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
-         (SELECT state FROM control_tasks WHERE original_input = $1) AS state,
-         (SELECT count(*)::int
-          FROM control_plan_versions AS plan
-          JOIN control_tasks AS task ON task.id = plan.task_id
-          WHERE task.original_input = $1) AS candidates`,
-      [originalInput],
-    );
-    const receipts = await connection.query(
-      `SELECT stage, requested_model, actual_model, status, failure_json
-       FROM control_model_calls
-       WHERE attempt_id IS NULL AND NOT (id = ANY($1::uuid[]))
-       ORDER BY stage`,
-      [existingReceipts.rows.map((row) => row.id)],
-    );
-
-    assert.deepEqual(persisted.rows[0], { tasks: 1, state: 'failed', candidates: 0 });
-    assert.deepEqual(receipts.rows, [{
-      stage: 'requirement_understanding',
-      requested_model: requestedModel,
-      actual_model: actualModel,
-      status: 'failed',
-      failure_json: {
-        kind: 'model_drift',
-        expectedModel,
-        actualModel,
-      },
-    }]);
-  } finally {
-    connection.release();
-  }
-});
-
-test('production Current planning persists candidates only when every receipt matches the model pin', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const originalInput = `planning-model-match-${randomUUID()}`;
-  const expectedModel = 'expected-planning-model';
-  const requestedModel = 'gateway-routing-alias';
-  const receiptConnection = await scopedDatabase.connect();
-  const existingReceipts = await receiptConnection.query(
-    'SELECT id FROM control_model_calls WHERE attempt_id IS NULL',
-  );
-  receiptConnection.release();
-  const runtime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    tools: new ToolRouter(),
-    llm: new PlanningModelFixtureLLM(requestedModel, expectedModel),
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: expectedModel,
-    multiSkillPortfolioMode: 'inactive',
-  });
-  // Delayed import preserves the test-controlled DB/JWT environment used by this integration file.
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
-  );
-  let planned: ControlPlanCandidatesResponse;
-  try {
-    const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-    const response = await postJson(
-      app.baseUrl,
-      '/api/control-tasks/plan',
-      token,
-      { originalInput, conversationId, orchestrationMode: 'single_skill' },
-    );
-    assert.equal(response.status, 200, await response.clone().text());
-    const direction = await response.json() as CurrentPlanningResponse;
-    assert.equal(direction.status, 'clarification_required');
-    if (direction.status !== 'clarification_required') throw new Error('expected direction clarification');
-
-    const selectedResponse = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${direction.task.id}/clarify`,
-      token,
-      {
-        expectedVersion: direction.task.stateVersion,
-        clarificationAnswers: {},
-        assumptionEdits: {},
-        selectedScenarioId: 'competitor-benchmark-research',
-      },
-      `model-match-direction-${randomUUID()}`,
-    );
-    assert.equal(selectedResponse.status, 200, await selectedResponse.clone().text());
-    planned = await selectedResponse.json() as ControlPlanCandidatesResponse;
-  } finally {
-    await closeLocalServer(app.server);
-  }
-
-  const connection = await scopedDatabase.connect();
-  try {
-    const persisted = await connection.query(
-      `SELECT
-         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
-         (SELECT count(*)::int
-          FROM control_plan_versions AS plan
-          JOIN control_tasks AS task ON task.id = plan.task_id
-          WHERE task.original_input = $1) AS candidates`,
-      [originalInput],
-    );
-    const persistedPlans = await connection.query(
-      `SELECT plan.plan_json
-       FROM control_plan_versions AS plan
-       JOIN control_tasks AS task ON task.id = plan.task_id
-       WHERE task.original_input = $1
-       ORDER BY plan.version`,
-      [originalInput],
-    );
-    const receipts = await connection.query(
-      `SELECT id, stage, requested_model, actual_model, prompt_hash, trace_id, status, failure_json
-       FROM control_model_calls
-       WHERE attempt_id IS NULL AND NOT (id = ANY($1::uuid[]))
-       ORDER BY stage`,
-      [existingReceipts.rows.map((row) => row.id)],
-    );
-
-    assert.equal(planned.task.state, 'awaiting_selection');
-    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), [
-      'speed',
-      'depth',
-      'breadth',
-      'decision',
-    ]);
-    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 4 });
-    assert.deepEqual(
-      receipts.rows.map((row) => ({
-        stage: row.stage,
-        requestedModel: row.requested_model,
-        actualModel: row.actual_model,
-        status: row.status,
-        failure: row.failure_json,
-      })),
-      ['planning', 'planning_decision', 'problem_graph', 'requirement_understanding'].map((stage) => ({
-        stage,
-        requestedModel,
-        actualModel: expectedModel,
-        status: 'succeeded',
-        failure: null,
-      })),
-    );
-    const problemGraphReceipt = receipts.rows.find((row) => row.stage === 'problem_graph');
-    assert.ok(problemGraphReceipt);
-    assert.equal(persistedPlans.rows.length, 4);
-    for (const row of persistedPlans.rows) {
-      assertRecord(row.plan_json);
-      assertRecord(row.plan_json.problem_graph_provenance);
-      assert.deepEqual(row.plan_json.problem_graph_provenance, {
-        receiptId: problemGraphReceipt.id,
-        modelName: problemGraphReceipt.actual_model,
-        modelVersion: `${expectedModel}-fixture-v1`,
-        promptHash: problemGraphReceipt.prompt_hash,
-        traceId: problemGraphReceipt.trace_id,
-      });
-    }
-  } finally {
-    connection.release();
-  }
-});
-
-test('supplied foreign and missing planning conversations return 404 before creating a task', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const foreignConversation = await scopedDatabase.connect();
-  let foreignConversationId = '';
-  try {
-    const result = await foreignConversation.query(
-      `INSERT INTO conversations (owner_user_id, title) VALUES ($1, 'foreign planning conversation') RETURNING id`,
-      [foreignUserId],
-    );
-    foreignConversationId = String(result.rows[0]?.id);
-  } finally {
-    foreignConversation.release();
-  }
-  const runtime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    planning: { async plan() { throw new Error('planning must not run'); } },
-    tools: new ToolRouter(),
-    llm: new OfflineEligibleRealLLM(),
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: 'fixture-real-model',
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
-  );
-  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-  const cases = [
-    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
-    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
-  ];
-  try {
-    for (const target of cases) {
-      const response = await postJson(app.baseUrl, '/api/control-tasks/plan', ownerToken, target);
-      assert.equal(response.status, 404, await response.clone().text());
-    }
-    const connection = await scopedDatabase.connect();
-    try {
-      const tasks = await connection.query(
-        'SELECT count(*)::int AS count FROM control_tasks WHERE original_input = ANY($1::text[])',
-        [cases.map((target) => target.originalInput)],
-      );
-      assert.equal(tasks.rows[0]?.count, 0);
-    } finally {
-      connection.release();
-    }
-  } finally {
-    await closeLocalServer(app.server);
   }
 });
 
@@ -2651,375 +2205,6 @@ test('failed clarification releases its pending command so a retry can complete'
     assert.equal(calls, 2);
   } finally {
     await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
-  }
-});
-
-test('post-activation clarification failure reclaims the same command without another requirement version', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const llm = new ClarificationRetryLLM();
-  let plannerCalls = 0;
-  const controlRuntime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    planning: {
-      async plan(input) {
-        plannerCalls += 1;
-        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure');
-        return planningResult(input.originalInput, resolvedClarificationRequirement());
-      },
-    },
-    tools: new ToolRouter(),
-    llm,
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: llm.identity.requestedModel,
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
-  );
-  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-  const originalInput = `post-activation-retry-${randomUUID()}`;
-  try {
-    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
-      originalInput,
-      conversationId,
-      orchestrationMode: 'single_skill',
-    });
-    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
-    const planned = await plannedResponse.json() as CurrentPlanningResponse;
-    assert.equal(planned.status, 'clarification_required');
-    const requestBody = {
-      expectedVersion: planned.task.stateVersion,
-      clarificationAnswers: { audience: '产品团队' },
-      assumptionEdits: {},
-    };
-    const key = `post-activation-${randomUUID()}`;
-
-    const failed = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      requestBody,
-      key,
-    );
-    assert.equal(failed.status, 500);
-    const afterFailure = await scopedDatabase.connect();
-    try {
-      const persisted = await afterFailure.query(
-        `SELECT
-           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
-           (SELECT state_version::int FROM control_tasks WHERE id = $1) AS state_version,
-           (SELECT command_status FROM control_commands
-             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status,
-           (SELECT reservation_expires_at <= now() FROM control_commands
-             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS reclaimable`,
-        [planned.task.id, key],
-      );
-      assert.deepEqual(persisted.rows[0], {
-        requirement_versions: 2,
-        state_version: planned.task.stateVersion + 1,
-        command_status: 'pending',
-        reclaimable: true,
-      });
-    } finally {
-      afterFailure.release();
-    }
-
-    const retried = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      requestBody,
-      key,
-    );
-    assert.equal(retried.status, 200, await retried.clone().text());
-    const retriedBody = await retried.json() as ControlPlanCandidatesResponse;
-    assert.equal(retriedBody.kind, 'current');
-    assert.equal(retriedBody.task.id, planned.task.id);
-    assert.deepEqual(retriedBody.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
-    const replay = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      requestBody,
-      key,
-    );
-    assert.equal(replay.status, 200, await replay.clone().text());
-    assert.deepEqual(await replay.json(), retriedBody);
-
-    const conflict = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      { ...requestBody, clarificationAnswers: { audience: '消费者' } },
-      key,
-    );
-    assert.equal(conflict.status, 409);
-
-    const afterSuccess = await scopedDatabase.connect();
-    try {
-      const versions = await afterSuccess.query(
-        'SELECT count(*)::int AS count FROM control_requirement_versions WHERE task_id = $1',
-        [planned.task.id],
-      );
-      assert.equal(versions.rows[0]?.count, 2);
-    } finally {
-      afterSuccess.release();
-    }
-    assert.equal(llm.requirementCalls, 2, 'retry must not rerun requirement understanding');
-    assert.equal(plannerCalls, 2, 'retry may rerun downstream planning exactly once');
-  } finally {
-    await closeLocalServer(app.server);
-  }
-});
-
-test('latest-version fresh-key clarification recovers hydrated unchanged assumptions after refresh', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const llm = new ClarificationRetryLLM();
-  let plannerCalls = 0;
-  const controlRuntime = buildControlRuntime({
-    repository,
-    conversations: conversationAdapter(),
-    planning: {
-      async plan(input) {
-        plannerCalls += 1;
-        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure before candidate persistence');
-        return planningResult(input.originalInput, resolvedClarificationRequirement());
-      },
-    },
-    tools: new ToolRouter(),
-    llm,
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    expectedActualModel: llm.identity.requestedModel,
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
-  );
-  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-  const originalInput = `latest-version-fresh-key-recovery-${randomUUID()}`;
-  try {
-    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
-      originalInput,
-      conversationId,
-      orchestrationMode: 'single_skill',
-    });
-    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
-    const planned = await plannedResponse.json() as CurrentPlanningResponse;
-    assert.equal(planned.status, 'clarification_required');
-
-    const failedKey = `post-activation-failure-${randomUUID()}`;
-    const failed = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      {
-        expectedVersion: planned.task.stateVersion,
-        clarificationAnswers: { audience: '产品团队' },
-        assumptionEdits: {},
-      },
-      failedKey,
-    );
-    assert.equal(failed.status, 500);
-    assert.equal(llm.requirementCalls, 2);
-
-    const beforeRecoveryConnection = await scopedDatabase.connect();
-    let requirementVersionsBeforeRecovery = 0;
-    try {
-      const beforeRecovery = await beforeRecoveryConnection.query(
-        `SELECT
-           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
-           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans`,
-        [planned.task.id],
-      );
-      requirementVersionsBeforeRecovery = Number(beforeRecovery.rows[0]?.requirement_versions);
-      assert.deepEqual(beforeRecovery.rows[0], { requirement_versions: 2, plans: 0 });
-    } finally {
-      beforeRecoveryConnection.release();
-    }
-
-    const refreshedResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
-    const refreshed = await refreshedResponse.json() as CurrentTaskReadResponse;
-    assert.equal(refreshed.task.state, 'awaiting_clarification');
-    assert.equal(refreshed.task.stateVersion, planned.task.stateVersion + 1);
-    assert.deepEqual(refreshed.task.structuredTask, resolvedClarificationRequirement());
-    const refreshedRequirement = refreshed.task.structuredTask as ResearchTaskV2;
-    assert.deepEqual(refreshedRequirement.ambiguities, []);
-    assert.deepEqual(refreshedRequirement.clarification_questions, []);
-    assert.deepEqual(refreshedRequirement.blocking_issues, []);
-    assert.deepEqual(refreshed.candidates, []);
-    const hydratedAssumptionEdits = Object.fromEntries(
-      refreshedRequirement.assumptions
-        .filter(({ editable }) => editable)
-        .map(({ key, value }) => [key, value]),
-    );
-    assert.deepEqual(hydratedAssumptionEdits, { scope: '公开资料' });
-
-    const freshKey = `refreshed-finalized-recovery-${randomUUID()}`;
-    assert.notEqual(freshKey, failedKey);
-    const recoveredResponse = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      {
-        expectedVersion: refreshed.task.stateVersion,
-        clarificationAnswers: {},
-        assumptionEdits: hydratedAssumptionEdits,
-      },
-      freshKey,
-    );
-    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
-    const recovered = await recoveredResponse.json() as ControlPlanCandidatesResponse;
-    assert.equal(recovered.task.state, 'awaiting_selection');
-    assert.deepEqual(recovered.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
-
-    const afterRecoveryConnection = await scopedDatabase.connect();
-    try {
-      const afterRecovery = await afterRecoveryConnection.query(
-        `SELECT
-           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
-           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
-           (SELECT command_status FROM control_commands
-             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status`,
-        [planned.task.id, freshKey],
-      );
-      assert.deepEqual(afterRecovery.rows[0], {
-        requirement_versions: requirementVersionsBeforeRecovery,
-        plans: 2,
-        command_status: 'completed',
-      });
-    } finally {
-      afterRecoveryConnection.release();
-    }
-    assert.equal(llm.requirementCalls, 2, 'refresh recovery must reuse the finalized active requirement');
-    assert.equal(plannerCalls, 2);
-  } finally {
-    await closeLocalServer(app.server);
-  }
-});
-
-test('response delivery failure after atomic clarification commit replays the persisted response', async () => {
-  const { buildControlRuntime } = await loadControlRuntimeModule();
-  const llm = new ClarificationRetryLLM();
-  const instrumentedRepository = Object.create(repository) as ControlPlaneRepository;
-  let failResponseDelivery = true;
-  let atomicCalls = 0;
-  instrumentedRepository.persistClarificationCandidatesAndCompleteCommand = async (input) => {
-    atomicCalls += 1;
-    const response = await repository.persistClarificationCandidatesAndCompleteCommand(input);
-    if (failResponseDelivery) {
-      failResponseDelivery = false;
-      throw new Error('simulated HTTP response delivery failure after commit');
-    }
-    return response;
-  };
-  let plannerCalls = 0;
-  const controlRuntime = buildControlRuntime({
-    repository: instrumentedRepository,
-    conversations: conversationAdapter(),
-    planning: {
-      async plan(input) {
-        plannerCalls += 1;
-        return planningResult(input.originalInput, resolvedClarificationRequirement());
-      },
-    },
-    tools: new ToolRouter(),
-    llm,
-    validator: new SchemaValidator(),
-    skillLoader: new SkillLoader(),
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: instrumentedRepository }),
-    expectedActualModel: llm.identity.requestedModel,
-  });
-  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const app = await listenLocalApp(
-    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
-  );
-  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
-  try {
-    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
-      originalInput: `response-delivery-replay-${randomUUID()}`,
-      conversationId,
-      orchestrationMode: 'single_skill',
-    });
-    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
-    const planned = await plannedResponse.json() as CurrentPlanningResponse;
-    assert.equal(planned.status, 'clarification_required');
-    const key = `response-delivery-${randomUUID()}`;
-    const requestBody = {
-      expectedVersion: planned.task.stateVersion,
-      clarificationAnswers: { audience: '产品团队' },
-      assumptionEdits: {},
-    };
-
-    const failed = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      requestBody,
-      key,
-    );
-    assert.equal(failed.status, 500);
-    const persistedResponse = (
-      await repository.getCommand(planned.task.id, 'clarification', key)
-    )?.response as ControlPlanCandidatesResponse;
-    assert.equal(persistedResponse.task.state, 'awaiting_selection');
-    const recoveredResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
-    const recovered = await recoveredResponse.json() as {
-      candidates: ControlPlanCandidatesResponse['candidates'];
-      activatedNodes: string[];
-    };
-    assert.deepEqual(
-      recovered.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
-      persistedResponse.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
-    );
-    assert.deepEqual(recovered.activatedNodes, persistedResponse.activatedNodes);
-    const repeatedRecovery = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    assert.equal(repeatedRecovery.status, 200);
-
-    const connection = await scopedDatabase.connect();
-    try {
-      const persisted = await connection.query(
-        `SELECT
-           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
-           (SELECT count(*)::int
-              FROM messages
-             WHERE conversation_id = $2
-               AND idempotency_key = 'requirement:' ||
-                 (SELECT active_requirement_version_id::text FROM control_tasks WHERE id = $1) ||
-                 ':assistant') AS assistant_messages`,
-        [planned.task.id, conversationId],
-      );
-      assert.deepEqual(persisted.rows[0], { plans: 2, assistant_messages: 1 });
-    } finally {
-      connection.release();
-    }
-
-    const replay = await postJson(
-      app.baseUrl,
-      `/api/control-tasks/${planned.task.id}/clarify`,
-      token,
-      requestBody,
-      key,
-    );
-    assert.equal(replay.status, 200, await replay.clone().text());
-    assert.deepEqual(await replay.json(), persistedResponse);
-    assert.equal(atomicCalls, 1);
-    assert.equal(plannerCalls, 1);
-    assert.equal(llm.requirementCalls, 2);
-  } finally {
-    await closeLocalServer(app.server);
   }
 });
 

@@ -15,6 +15,7 @@ export interface VisualInputImage {
   bytes: Buffer;
   contentType: keyof typeof EXTENSIONS;
   extension: 'jpg' | 'png' | 'webp';
+  pixelCount: number;
 }
 
 export class VisualInputDataUrlError extends Error {
@@ -35,9 +36,11 @@ async function decodeVisualDataUrl(value: unknown): Promise<VisualInputImage> {
     throw new VisualInputDataUrlError();
   }
   const contentType = match[1] as keyof typeof EXTENSIONS;
+  let pixelCount = 0;
   try {
     const metadata = await inspectTrustedRaster(bytes);
     if (metadata.contentType !== contentType) throw new VisualInputDataUrlError();
+    pixelCount = metadata.width * metadata.height;
   } catch (error) {
     if (error instanceof VisualInputDataUrlError) throw error;
     if (error instanceof BinaryArtifactValidationError) throw new VisualInputDataUrlError();
@@ -47,6 +50,7 @@ async function decodeVisualDataUrl(value: unknown): Promise<VisualInputImage> {
     bytes,
     contentType,
     extension: EXTENSIONS[contentType],
+    pixelCount,
   };
 }
 

@@ -7,7 +7,7 @@ source_entity: skill:ur-skill-experience-walkthrough
 source_path: wiki/user-research/02-skills-技能/用户研究/体验走查/SKILL.md
 source_hash: sha256:99c1b0a3790963c83a2fc9a4f906a8593d8140df3a7651ceac7b1cb92dd835e4
 canonical_target: knowledge-base/skills/run-heuristic-evaluation
-canonical_hash: sha256:072072add7be148880e8d57d5aa05c114b707f7ffd61e88d6756602f4f03509a
+canonical_hash: sha256:add36330c6fd519d3f332e3df219cc053cfcb703eca5fa67530bf2843a5ae3c4
 disposition: merge_into_existing
 merge_sections:
   - when_to_use

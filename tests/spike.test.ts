@@ -8,7 +8,7 @@ import { createUser, createConversation, listExecutionLog, listArtifacts } from 
 import { closePool } from '../database/db.ts';
 
 // P0-01 验收:计划-确认-执行闸门、执行写日志、失败回放。
-// 碰真实库:需先 createdb user_research_ai && pnpm db:migrate。
+// 碰真实库:需先 createdb user_research_ai_skill_native && pnpm db:migrate。
 // 单测强制走 Mock LLM:确定性、不花 token、不依赖内网(不受 .env 默认 gateway 影响)。
 process.env.LLM_PROVIDER = 'mock';
 

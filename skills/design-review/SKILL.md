@@ -3,6 +3,51 @@ name: design-experience-review
 description: 设计体验走查——对设计稿/页面做美学量化、视觉注意力、品牌一致性评估
 when_to_use: 用户需要对设计稿/页面做美学、注意力、品牌视觉走查或体验评估时使用(需用户提供设计稿图像)
 owner: 体验设计组
+native_delivery:
+  version: 1
+  id: design-experience-review
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 走查目标
+      description: 本次设计体验走查需要重点判断的问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 本次设计走查最需要判断什么？
+      missing_policy: stop
+    - id: designImage
+      label: 设计稿
+      description: 待评估的设计稿或页面截图。
+      required: true
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 请上传待评估的设计稿或页面截图。
+      missing_policy: stop
+    - id: review_focus
+      label: 评估重点
+      description: 需要重点关注的美学、注意力、品牌或其他维度。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database]
+      question: 是否有必须重点检查的体验维度？可以逐行提供。
+      missing_policy: gap
+  knowledge: []
+  tools:
+    - id: aesthetic-quant-lab
+      required: false
+    - id: attention-analysis-lab
+      required: false
+    - id: vision-brand-lab
+      required: false
+  report:
+    title: 设计体验走查报告
+    summary_instruction: 概括最关键的设计问题、证据、严重度和优先改进动作。
+    sections:
+      - 走查范围与素材
+      - 美学与可读性
+      - 注意力与信息层级
+      - 品牌一致性
+      - 问题优先级、缺口与来源
 ---
 
 # 设计体验走查

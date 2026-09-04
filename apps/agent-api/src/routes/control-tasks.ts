@@ -583,9 +583,24 @@ function readDatasetMultipart(req: Request): Promise<ParsedDatasetUpload> {
   });
 }
 
-export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
+export function createControlTasksRouter(
+  runtime: ControlTasksRuntime,
+  options: { readOnly?: boolean } = {},
+): Router {
   const router = Router();
   router.use(requireAuth);
+  if (options.readOnly) {
+    router.use((req, res, next) => {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        next();
+        return;
+      }
+      res.status(410).json({
+        error: '旧 Control Task 已切为只读；请使用 /api/research-tasks',
+        code: 'legacy_control_read_only',
+      });
+    });
+  }
   const { repository, workflow } = runtime;
   router.get('/', async (req, res) => {
     const actor = await authenticatedActor(req, res);
@@ -728,6 +743,13 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   });
 
   router.get('/:id/reports/:attemptId/editorial-summary.html', async (req, res) => {
+    if (options.readOnly) {
+      res.status(410).json({
+        error: '旧 Control Task 已切为只读；编辑摘要生成不可用',
+        code: 'legacy_control_read_only',
+      });
+      return;
+    }
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
     if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;

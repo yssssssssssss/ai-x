@@ -3,6 +3,46 @@ name: digital-human-competitive-analysis
 description: 数字人竞品分析——分析数字人/虚拟主播/直播竞品的能力、体验与差异
 when_to_use: 用户需要分析数字人、虚拟主播、直播竞品时使用
 owner: 竞品分析组
+native_delivery:
+  version: 1
+  id: digital-human-competitive-analysis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 研究目标
+      description: 数字人或虚拟主播竞品研究需要回答的业务问题与范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这次数字人竞品研究需要回答什么问题？
+      missing_policy: stop
+    - id: competitors
+      label: 对标对象
+      description: 必须覆盖的数字人、虚拟主播或直播产品。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database, tool]
+      tool_ids: [tavily-web-search]
+      question: 是否有必须覆盖的竞品？可以逐行提供。
+      missing_policy: gap
+  knowledge: []
+  tools:
+    - id: tavily-web-search
+      required: true
+    - id: ai-spider-search
+      required: false
+    - id: experience-model-lab
+      required: false
+    - id: virtual-user-lab
+      required: false
+  report:
+    title: 数字人竞品分析报告
+    summary_instruction: 概括有证据支持的竞品差异、机会和验证风险，明确区分公开事实与模拟假设。
+    sections:
+      - 研究范围与方法
+      - 竞品能力与体验对比
+      - 商业化与技术形态
+      - 差异化机会
+      - 风险、信息缺口与来源
 ---
 
 # 数字人竞品分析

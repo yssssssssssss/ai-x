@@ -38,6 +38,47 @@ composition:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: generate-persona
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: Persona 目标
+      description: 人物角色需要支持的产品决策、研究范围与目标人群。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这些 Persona 需要支持什么决策、覆盖什么人群？
+      missing_policy: stop
+    - id: user_materials
+      label: 用户研究材料
+      description: 匿名访谈、问卷、行为数据或已有定性洞察；缺失时只能形成待验证 Proto-Persona。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有用于构建 Persona 的匿名研究材料？
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_persona_building
+      required: true
+    - id: toolbox_collection_persona
+      required: true
+    - id: model_user_personas_segmentation
+      required: true
+    - id: toolbox_analysis_affinity_diagram
+      required: false
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 人物角色研究报告
+    summary_instruction: 概括角色分型、关键差异、决策含义及证据充分性。
+    sections:
+      - 目标、材料与方法
+      - 分型变量与聚类依据
+      - 人物角色画像
+      - 场景、需求与行为差异
+      - 应用建议、缺口与来源
 ---
 
 # Generate Persona — 研究数据/洞察 → 结构化人物角色（编排 wiki 正典）

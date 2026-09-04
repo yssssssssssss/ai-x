@@ -30,6 +30,57 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: competitive-analysis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 竞品研究目标
+      description: 需要比较的业务问题、我方背景和分析边界。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 本次竞品分析需要回答什么问题？
+      missing_policy: stop
+    - id: competitors
+      label: 对标对象
+      description: 需要覆盖的竞品或替代方案。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database, tool]
+      tool_ids: [tavily-web-search]
+      question: 是否有必须覆盖的竞品或替代方案？
+      missing_policy: gap
+    - id: competitor_materials
+      label: 竞品素材
+      description: 竞品功能、截图、价格、运营、口碑或其他可观测材料。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database, tool]
+      tool_ids: [tavily-web-search]
+      question: 是否有需要纳入的竞品素材？
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_competitive_analysis
+      required: true
+    - id: competitor-benchmark-research
+      required: true
+    - id: toolbox_collection_desk_research
+      required: true
+    - id: toolbox_analysis_opportunity_research
+      required: false
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 竞品分析报告
+    summary_instruction: 概括竞品战略意图、对我方影响和有证据支持的应对优先级。
+    sections:
+      - 目标、范围与知己小结
+      - 竞品分层与对比
+      - 战略意图与体验拆解
+      - 影响判断与跟进决策
+      - 行动建议、缺口与来源
 ---
 
 # Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）

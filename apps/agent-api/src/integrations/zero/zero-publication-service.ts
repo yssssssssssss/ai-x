@@ -520,7 +520,7 @@ export class ZeroPublicationService {
           ? publication.zeroNodeMap.__finalName
           : `Zero report ${publication.taskId}`;
         const resumed = await this.dependencies.zero.finalizeDraft({
-          pageName: publication.zeroPageName,
+          pageId: publication.zeroPageId,
           draftRootNodeId,
           finalName,
           ...(publication.updateRootNodeId ? { updateRootNodeId: publication.updateRootNodeId } : {}),
@@ -536,7 +536,7 @@ export class ZeroPublicationService {
       }
       if (draftRootNodeId) {
         await this.dependencies.zero.cleanupDraft({
-          pageName: publication.zeroPageName,
+          pageId: publication.zeroPageId,
           rootNodeId: draftRootNodeId,
         });
         draftRootNodeId = null;
@@ -720,7 +720,7 @@ export class ZeroPublicationService {
         receiptArtifactId: receipt.id,
       });
       const finalizedDraft = await this.dependencies.zero.finalizeDraft({
-        pageName: publication.zeroPageName,
+        pageId: publication.zeroPageId,
         draftRootNodeId,
         finalName: rendered.name,
         ...(publication.updateRootNodeId ? { updateRootNodeId: publication.updateRootNodeId } : {}),
@@ -737,7 +737,7 @@ export class ZeroPublicationService {
       if (draftRootNodeId && !finalized) {
         try {
           await this.dependencies.zero.cleanupDraft({
-            pageName: publication.zeroPageName,
+            pageId: publication.zeroPageId,
             rootNodeId: draftRootNodeId,
           });
         } catch {

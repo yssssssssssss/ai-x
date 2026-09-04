@@ -27,6 +27,42 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: conversion-funnel-analysis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 漏斗诊断目标
+      description: 待诊断的转化路径、业务问题、时间和人群范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明要诊断的转化路径和核心问题。
+      missing_policy: stop
+    - id: analytics_dataset
+      label: 分步转化数据
+      description: 各步骤的曝光、进入、完成、流失及可用分群字段。
+      required: false
+      accepted_sources: [upload, database]
+      question: 如需直接诊断，请上传分步转化数据与字段口径。
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_conversion_funnel
+      required: true
+    - id: data-behavior-diagnosis
+      required: true
+    - id: toolbox_analysis_issue_prioritization
+      required: false
+  tools: []
+  report:
+    title: 转化漏斗诊断报告
+    summary_instruction: 概括主要流失段、可能原因、证据边界和优先验证动作。
+    sections:
+      - 目标、口径与数据质量
+      - 漏斗现状与关键流失段
+      - 分群与路径差异
+      - 原因假设与验证
+      - 优先行动、缺口与来源
 ---
 
 # Conversion Funnel Analysis — 分步数据 + 转化路径 → 漏斗诊断（编排 wiki 正典）

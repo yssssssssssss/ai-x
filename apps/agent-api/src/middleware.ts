@@ -36,3 +36,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   req.userEmail = user.email;
   next();
 }
+
+export function requireLoopbackPeer(req: Request, res: Response, next: NextFunction): void {
+  const address = req.socket.remoteAddress ?? '';
+  if (
+    address === '::1'
+    || address.startsWith('127.')
+    || address.startsWith('::ffff:127.')
+  ) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'Zero publication is available only on this machine', code: 'zero_local_only' });
+}

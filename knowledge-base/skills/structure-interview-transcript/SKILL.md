@@ -23,6 +23,44 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: structure-interview-transcript
+  allow_partial: false
+  inputs:
+    - id: research_goal
+      label: 研究目的
+      description: 本场访谈要回答的研究问题和内容范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这场访谈服务于什么研究目的和研究问题？
+      missing_policy: stop
+    - id: user_materials
+      label: 单场访谈逐字稿
+      description: 一场已匿名化的访谈逐字稿或录音转写。
+      required: true
+      accepted_sources: [upload, database]
+      question: 请上传这一场访谈的匿名逐字稿或录音转写。
+      missing_policy: stop
+  knowledge:
+    - id: toolbox_collection_interview_guide_design
+      required: true
+    - id: toolbox_analysis_qualitative_insight_frameworks
+      required: true
+    - id: toolbox_analysis_affinity_diagram
+      required: false
+    - id: model_orid
+      required: false
+  tools: []
+  report:
+    title: 单场访谈结构化小结
+    summary_instruction: 概括受访者背景、围绕研究问题的主要发现、痛点和待跟进项。
+    sections:
+      - 访谈背景与执行信息
+      - 分主题发现与原话
+      - 痛点、需求与矛盾
+      - 待跟进问题
+      - 运行说明、缺口与来源
 ---
 
 # Structure Interview Transcript — 单场访谈逐字稿 → 结构化小结（降噪整理版）

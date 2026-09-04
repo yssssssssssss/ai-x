@@ -9,7 +9,7 @@ import {
 import { closePool } from '../database/db.ts';
 
 // P0-02 验收:建用户/会话/消息/任务/日志/产物,按 owner 查最近任务,按 task_id 查 log/decision。
-// 碰真实库:需先 createdb user_research_ai && pnpm db:migrate。
+// 碰真实库:需先 createdb user_research_ai_skill_native && pnpm db:migrate。
 
 let userId: string;
 let convId: string;

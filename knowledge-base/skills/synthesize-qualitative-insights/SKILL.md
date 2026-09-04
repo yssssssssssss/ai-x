@@ -22,6 +22,47 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: synthesize-qualitative-insights
+  allow_partial: false
+  inputs:
+    - id: research_goal
+      label: 综合目标
+      description: 多份定性材料需要共同回答的研究问题和分析范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这些定性材料需要共同回答什么研究问题？
+      missing_policy: stop
+    - id: user_materials
+      label: 多份定性材料
+      description: 已匿名化的访谈小结、逐字稿、研究笔记、开放题或客服反馈。
+      required: true
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 请上传需要跨场综合的匿名定性材料。
+      missing_policy: stop
+  knowledge:
+    - id: toolbox_analysis_qualitative_coding
+      required: true
+    - id: toolbox_analysis_affinity_diagram
+      required: true
+    - id: toolbox_analysis_qualitative_insight_frameworks
+      required: true
+    - id: model_user_insight
+      required: true
+    - id: toolbox_analysis_opportunity_research
+      required: false
+  tools: []
+  report:
+    title: 定性研究洞察综合报告
+    summary_instruction: 概括跨场主题、核心洞察、证据覆盖和最优先机会。
+    sections:
+      - 研究问题与材料范围
+      - 跨场主题与证据
+      - 结构化用户洞察
+      - 机会与待验证方向
+      - 分析底稿、缺口与来源
 ---
 
 # Synthesize Qualitative Insights — 多份定性材料 → 跨场主题 + 结构化洞察（编排 wiki 正典）

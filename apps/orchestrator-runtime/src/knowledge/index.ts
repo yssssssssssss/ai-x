@@ -54,14 +54,18 @@ function assertIndexedKnowledge(items: unknown): KnowledgeIndexItem[] {
   return items as KnowledgeIndexItem[];
 }
 
-function loadKnowledgeIndexFile(): KnowledgeIndexItem[] {
-  const path = kbPath('knowledge-base/.index/knowledge.json');
+function loadKnowledgeIndexFile(
+  knowledgeRoot = kbPath('knowledge-base'),
+): KnowledgeIndexItem[] {
+  const path = resolve(knowledgeRoot, '.index', 'knowledge.json');
   if (!existsSync(path)) return [];
   return assertIndexedKnowledge(JSON.parse(readFileSync(path, 'utf8')));
 }
 
-export function loadRuntimeKnowledgeIndex(): KnowledgeIndexItem[] {
-  return loadKnowledgeIndexFile().filter((item) => RUNTIME_KNOWLEDGE_STATUSES.has(item.status));
+export function loadRuntimeKnowledgeIndex(
+  knowledgeRoot = kbPath('knowledge-base'),
+): KnowledgeIndexItem[] {
+  return loadKnowledgeIndexFile(knowledgeRoot).filter((item) => RUNTIME_KNOWLEDGE_STATUSES.has(item.status));
 }
 
 export function loadEvaluationKnowledgeIndex(): KnowledgeIndexItem[] {
@@ -134,8 +138,11 @@ export function resolveKnowledgeSourcePath(
   return fullReal;
 }
 
-function readVerifiedKnowledgeEntry(item: KnowledgeIndexItem): { frontmatter: Record<string, unknown>; content: string } {
-  const full = resolveKnowledgeSourcePath(item.source_path);
+function readVerifiedKnowledgeEntry(
+  item: KnowledgeIndexItem,
+  knowledgeRoot = kbPath('knowledge-base'),
+): { frontmatter: Record<string, unknown>; content: string } {
+  const full = resolveKnowledgeSourcePath(item.source_path, knowledgeRoot);
   const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
   if (parsed.frontmatter.id !== item.id) throw new Error(`Knowledge source/index path identity drift for ${item.id}`);
   if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${item.id}`);
@@ -146,10 +153,13 @@ function readVerifiedKnowledgeEntry(item: KnowledgeIndexItem): { frontmatter: Re
   return parsed;
 }
 
-export function getEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
-  const item = loadRuntimeKnowledgeIndex().find((candidate) => candidate.id === id);
+export function getEntry(
+  id: string,
+  knowledgeRoot = kbPath('knowledge-base'),
+): { frontmatter: Record<string, unknown>; content: string } | null {
+  const item = loadRuntimeKnowledgeIndex(knowledgeRoot).find((candidate) => candidate.id === id);
   if (!item) return null;
-  return readVerifiedKnowledgeEntry(item);
+  return readVerifiedKnowledgeEntry(item, knowledgeRoot);
 }
 
 export function getEvaluationEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {

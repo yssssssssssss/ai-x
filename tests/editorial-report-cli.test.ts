@@ -674,7 +674,7 @@ test('successful official Phase 1 CLI generation leaves every main byte unchange
   const schema = `editorial_cli_${randomUUID().replaceAll('-', '')}`;
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'editorial-cli-sidecar-'));
   const database = new Pool({
-    connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+    connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native',
   });
   const scopedDatabase = new ScopedEditorialCliDatabase(database, schema);
 

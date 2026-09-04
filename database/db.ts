@@ -12,7 +12,7 @@ loadEnv();
 
 // 单一连接池:所有 DB 访问经此。
 const connectionString =
-  process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai';
+  process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native';
 
 export let pool = new Pool({ connectionString });
 

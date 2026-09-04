@@ -24,6 +24,44 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: feature-adoption-analysis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 采纳分析目标
+      description: 待分析功能、目标人群、采纳定义和业务问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明要分析的功能、目标人群和采纳问题。
+      missing_policy: stop
+    - id: analytics_dataset
+      label: 功能采纳数据
+      description: 覆盖触达、激活、使用、留存与流失的数据及字段口径。
+      required: false
+      accepted_sources: [upload, database]
+      question: 如需直接分析，请上传功能采纳行为数据与字段口径。
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_feature_adoption
+      required: true
+    - id: toolbox_analysis_conversion_funnel
+      required: true
+    - id: toolbox_analysis_experience_metrics_heart
+      required: false
+    - id: toolbox_analysis_issue_prioritization
+      required: false
+  tools: []
+  report:
+    title: 功能采纳分析报告
+    summary_instruction: 概括采纳表现、主要流失段、原因假设和改进优先级。
+    sections:
+      - 分析目标与数据质量
+      - 采纳漏斗
+      - 五维指标与分群差异
+      - 流失归因与验证
+      - 改进优先级、缺口与来源
 ---
 
 # Feature Adoption Analysis — 采纳行为数据 → 采纳漏斗 + 五维指标 + 流失段归因（编排 wiki 正典）

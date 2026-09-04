@@ -161,7 +161,9 @@ export class SchemaValidator {
   }
 
   validateSchemaOrThrow(schema: object, value: unknown, label: string): void {
-    const validate = this.ajv.compile(schema);
+    const schemaWithoutId = { ...schema } as Record<string, unknown>;
+    delete schemaWithoutId.$id;
+    const validate = this.ajv.compile(schemaWithoutId);
     if (validate(value)) return;
     const errors = (validate.errors ?? []).map(
       (error) => `${error.instancePath || '(root)'} ${error.message ?? 'invalid'}`,

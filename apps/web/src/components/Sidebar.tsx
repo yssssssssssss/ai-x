@@ -107,7 +107,7 @@ export function Sidebar({
             <HistoryTaskRow
               key={taskKey(task)}
               task={task}
-              active={task.kind === 'current' && task.id === activeTaskId}
+              active={task.kind === 'native' && task.id === activeTaskId}
               onOpen={() => onOpenTask(task)}
               onUpdate={(patch) => onUpdateTask(task, patch)}
             />

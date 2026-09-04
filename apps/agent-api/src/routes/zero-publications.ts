@@ -8,7 +8,7 @@ import {
 import {
   ZeroPublicationServiceError,
 } from '../integrations/zero/zero-publication-service.ts';
-import { requireAuth } from '../middleware.ts';
+import { requireAuth, requireLoopbackPeer } from '../middleware.ts';
 
 export interface ZeroPublicationHttpPort {
   status(): Promise<ZeroIntegrationStatusResponse>;
@@ -86,19 +86,6 @@ function asyncRoute(handler: (req: Request, res: Response) => Promise<void>): Re
 
 function routeParam(value: string | string[] | undefined): string {
   return typeof value === 'string' ? value : '';
-}
-
-function requireLoopbackPeer(req: Request, res: Response, next: NextFunction): void {
-  const address = req.socket.remoteAddress ?? '';
-  if (
-    address === '::1'
-    || address.startsWith('127.')
-    || address.startsWith('::ffff:127.')
-  ) {
-    next();
-    return;
-  }
-  res.status(403).json({ error: 'Zero publication is available only on this machine', code: 'zero_local_only' });
 }
 
 export function createZeroIntegrationRouter(

@@ -3,6 +3,45 @@ name: competitive-app-analysis
 description: 基于内部工具的竞品 app 截图分析——检索竞品截图库,对界面做美学/注意力/品牌视觉的量化分析
 when_to_use: 用户要对竞品 app 的【界面本身】做分析——截图级的视觉设计、注意力分布、品牌一致性、信息架构;或诉求提到"看竞品页面/界面/截图/设计怎么做的"。若用户只要查竞品做了什么/战略动态(网络资料),走 competitive-web-research。
 owner: 竞品分析组
+native_delivery:
+  version: 1
+  id: competitive-app-analysis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 研究目标
+      description: 竞品界面分析需要回答的核心问题与页面场景。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这次竞品界面分析需要回答什么问题？
+      missing_policy: stop
+    - id: competitor_screenshots
+      label: 竞品截图
+      description: 需要比较的真实竞品页面截图。
+      required: true
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 请上传需要分析的竞品页面截图。
+      missing_policy: replace
+  knowledge: []
+  tools:
+    - id: ai-spider-search
+      required: false
+    - id: aesthetic-quant-lab
+      required: false
+    - id: attention-analysis-lab
+      required: false
+    - id: vision-brand-lab
+      required: false
+  report:
+    title: 竞品 App 界面分析报告
+    summary_instruction: 概括截图证据支持的视觉与体验差异，以及最值得验证的改进方向。
+    sections:
+      - 分析对象与素材
+      - 视觉美学对比
+      - 注意力与信息架构
+      - 品牌一致性与差异
+      - 改进建议、缺口与来源
 ---
 
 # 竞品分析 · App 截图分析路径

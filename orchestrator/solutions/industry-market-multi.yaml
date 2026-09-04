@@ -1,0 +1,15 @@
+version: 1
+id: industry-market-multi
+title: 竞品研究支持的行业市场分析
+description: 先完成公开竞品研究，再由行业市场分析 Skill 做一次综合并交付报告。
+when_to_use: 任务需要独立竞品研究作为行业与增长策略的输入。
+mode: multi_skill
+recommended: true
+skills:
+  - skill_id: competitive-web-research
+    depends_on: []
+    failure_policy: gap
+  - skill_id: industry-market-analysis
+    depends_on: [competitive-web-research]
+    failure_policy: stop
+final_report_skill_id: industry-market-analysis

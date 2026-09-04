@@ -249,7 +249,7 @@ class FailingQueryDatabase implements MigrationDatabase {
 const schema = `control_plane_${randomUUID().replaceAll('-', '')}`;
 const workspaceRoot = mkdtempSync(join(tmpdir(), 'control-artifact-'));
 const database = new Pool({
-  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native',
 });
 const scopedDatabase = new ScopedMigrationDatabase(database, schema);
 let ownerId = '';

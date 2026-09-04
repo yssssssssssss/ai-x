@@ -34,6 +34,47 @@ required_tools:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: accessibility-review
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 评估目标
+      description: 待评对象、平台、核心流程和本次无障碍评估范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明待评对象和本次无障碍评估范围。
+      missing_policy: stop
+    - id: evaluation_materials
+      label: 界面与读屏素材
+      description: 页面截图、原型、流程说明或读屏录音转写；缺失时仅产出走查工具包。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 如需直接走查，请上传界面截图、流程说明或读屏材料。
+      missing_policy: gap
+  knowledge:
+    - id: standard_accessibility_adaptation
+      required: true
+    - id: toolbox_collection_accessibility_audit
+      required: true
+    - id: toolbox_analysis_issue_prioritization
+      required: true
+    - id: toolbox_collection_usability_testing
+      required: false
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 无障碍体验走查报告
+    summary_instruction: 概括最严重的无障碍问题、整改优先级和必须真机或真人验证的边界。
+    sections:
+      - 评估范围与限制
+      - 无障碍问题清单
+      - POUR 与等级汇总
+      - 分平台整改与复测
+      - 信息缺口与来源
 ---
 
 # Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）

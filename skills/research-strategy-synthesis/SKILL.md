@@ -3,6 +3,43 @@ name: research-strategy-synthesis
 description: 基于已验证公开资料、Knowledge、用户材料与数据，逐项回答业务研究问题，输出证据约束的策略地图、心智模型、设计原则、机会点和优先行动；证据不足时给出 provisional 答案而不是退化为研究计划。
 when_to_use: 用户要求基于当前证据直接给出研究结论、策略产物和优先行动时使用。
 owner: 用研团队
+native_delivery:
+  version: 1
+  id: research-strategy-synthesis
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 策略问题
+      description: 需要基于证据回答的业务研究问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 需要本次策略综合回答哪些核心问题？
+      missing_policy: stop
+    - id: evidence_materials
+      label: 已有证据材料
+      description: 已验证的研究材料、数据或历史结论。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有需要纳入综合的研究材料或数据？
+      missing_policy: gap
+  knowledge:
+    - id: strategy-synthesis
+      required: true
+    - id: priority-roadmap
+      required: true
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 研究策略综合报告
+    summary_instruction: 直接回答核心业务问题，概括证据、策略取舍和最优先行动。
+    sections:
+      - 核心问题与当前答案
+      - 证据与关键发现
+      - 策略地图与设计原则
+      - 机会点与优先行动
+      - 风险、待验证项与来源
 ---
 
 # Research Strategy Synthesis

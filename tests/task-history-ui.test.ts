@@ -6,6 +6,8 @@ const theme = new URL('../apps/web/src/theme.css', import.meta.url);
 const workbench = new URL('../apps/web/src/pages/Workbench.tsx', import.meta.url);
 const sidebar = new URL('../apps/web/src/components/Sidebar.tsx', import.meta.url);
 const composer = new URL('../apps/web/src/components/Composer.tsx', import.meta.url);
+const nativeFlow = new URL('../apps/web/src/components/SkillNativeTaskFlow.tsx', import.meta.url);
+const nativeHook = new URL('../apps/web/src/hooks/useSkillNativeFlow.ts', import.meta.url);
 
 test('workbench has one contained scroll chain and a non-scrolling bottom composer', async () => {
   const [css, workbenchSource, composerSource] = await Promise.all([
@@ -23,56 +25,67 @@ test('workbench has one contained scroll chain and a non-scrolling bottom compos
   assert.match(composerSource, /className="composer"/u);
 });
 
-test('deliverable validation retry explains terminal rebuild before full retry fallback', async () => {
+test('new workbench tasks use the Skill-native API while both older task stores stay read-only', async () => {
   const source = await readFile(workbench, 'utf8');
-  assert.match(source, /failure\?\.kind === 'deliverable_validation'/u);
-  assert.match(source, /优先复用已验证的计划步骤，只重新构建 Canonical Deliverable/u);
-  assert.match(source, /复用校验失败时才回退为完整重试/u);
+  assert.match(source, /useSkillNativeFlow/u);
+  assert.match(source, /api\.listResearchTasks\(\)/u);
+  assert.match(source, /api\.listControlTasks\(\)/u);
+  assert.match(source, /api\.controlTask\(task\.id\)/u);
+  assert.match(source, /api\.taskDetail\(task\.id\)/u);
+  assert.match(source, /<CurrentStage4Report[\s\S]*?readOnly/u);
+  assert.doesNotMatch(source, /useTaskFlow/u);
 });
 
-test('current conversation renders each user turn before assistant stages and isolates loading state', async () => {
-  const [source, css] = await Promise.all([
-    readFile(workbench, 'utf8'),
-    readFile(theme, 'utf8'),
-  ]);
-  const timelineStart = source.indexOf('<div className={`chat-column');
+test('new task timeline renders the native flow and keeps the composer outside the scroll chain', async () => {
+  const source = await readFile(workbench, 'utf8');
+  const timelineStart = source.indexOf('<div className="chat-column"');
   const timelineEnd = source.indexOf('<Composer', timelineStart);
-  assert.ok(timelineStart >= 0 && timelineEnd > timelineStart, 'current conversation timeline must exist');
+  assert.ok(timelineStart >= 0 && timelineEnd > timelineStart, 'Skill-native task timeline must exist');
   const timeline = source.slice(timelineStart, timelineEnd);
-
-  assert.match(
-    timeline,
-    /phase === 'idle'\s*\?\s*\([\s\S]*?: phase === 'loading-task'\s*\?\s*\([\s\S]*?:\s*\(\s*<>\s*\{originalInput\s*\?\s*<UserBubble/u,
-    'idle, loading, and active conversation states must be mutually exclusive',
-  );
-
-  const userTurn = timeline.indexOf('{originalInput ? <UserBubble');
-  assert.ok(userTurn >= 0, 'active conversation must render the submitted user input');
-  for (const assistantTurn of [
-    "{clarification && phase === 'clarifying'",
-    '{candidatesResp && (',
-    "{phase === 'planning' && <PlanProgressCard",
-    "{phase === 'awaiting-approval' && (",
-    "{phase === 'ready' && <ReadyExecutionNotice",
-  ]) {
-    const assistantTurnIndex = timeline.indexOf(assistantTurn);
-    assert.ok(assistantTurnIndex > userTurn, `${assistantTurn} must follow the user turn`);
-  }
-  assert.match(
-    timeline,
-    /clarificationSubmitting\s*\?\s*\(\s*<PlanProgressCard steps=\{progress\} variant="clarification"/u,
-    'clarification submission must expose the live planning steps',
-  );
-
-  const chatColumnRule = css.match(/\.chat-column\s*\{[^}]*\}/u)?.[0] ?? '';
-  assert.doesNotMatch(chatColumnRule, /column-reverse|direction:\s*rtl/u);
+  assert.match(timeline, /flow\.phase === 'idle'/u);
+  assert.match(timeline, /<SkillNativeTaskFlow/u);
+  assert.match(timeline, /phase=\{flow\.phase\}/u);
 });
 
-test('Knowledge configuration drift exposes replan and abort instead of retry', async () => {
-  const source = await readFile(workbench, 'utf8');
-  assert.match(source, /executionFailureAllowsAction\(failure, 'replan'\)/u);
-  assert.match(source, /onReplan=\{\(\) => flow\.revisePlan/u);
-  assert.match(source, /重新生成计划/u);
+test('Skill-native task failures expose frozen-plan retry and explicit replan', async () => {
+  const source = await readFile(nativeFlow, 'utf8');
+  assert.match(source, /phase === 'paused' \|\| phase === 'failed'/u);
+  assert.match(source, /void onRetry\(\)/u);
+  assert.match(source, /void onReplan\(\)/u);
+  assert.match(source, /使用冻结 Plan 重试/u);
+  assert.match(source, /phase === 'done'[\s\S]*?读取最新 Skill 定义重新规划/u);
+});
+
+test('Skill-native report iframe permits printing without enabling scripts', async () => {
+  const source = await readFile(nativeFlow, 'utf8');
+  assert.match(source, /sandbox="allow-modals allow-same-origin"/u);
+  assert.doesNotMatch(source, /allow-scripts/u);
+});
+
+test('automatic input bindings are visible and correctable before confirmation', async () => {
+  const source = await readFile(nativeFlow, 'utf8');
+  assert.match(source, /已自动绑定，可在确认前纠正/u);
+  assert.match(source, /\{input\.preview\}/u);
+  assert.match(source, />纠正<\/button>/u);
+  assert.match(source, /不使用，记为 Gap/u);
+  assert.match(source, /Array\.isArray\(value\.value\)[\s\S]*?\.join\('\\n'\)/u);
+});
+
+test('replacement plans explain the fallback and require an explicit unavailable choice', async () => {
+  const source = await readFile(nativeFlow, 'utf8');
+  assert.match(source, /失败或关键资料缺失时改用 \$\{skill\.replacementSkillName\}/u);
+  assert.match(source, /requirement\.missingPolicy === 'replace' \? '无法提供，按方案替换 Skill'/u);
+  assert.match(source, /question\.missingPolicy === 'replace' \? '无法提供，按方案替换 Skill'/u);
+  assert.match(source, /event\.target\.checked \? null/u);
+});
+
+test('native async responses are fenced when the active task changes', async () => {
+  const source = await readFile(nativeHook, 'utf8');
+  assert.match(source, /const currentGeneration = generation\.current;/u);
+  assert.match(source, /loadTask\(task\.id, currentGeneration, false\)/u);
+  assert.doesNotMatch(source, /applyTask\([^;]+generation\.current\)/su);
+  assert.match(source, /输入确认失败'[\s\S]*?loadTask\(currentTask\.id, currentGeneration, false\)/u);
+  assert.match(source, /重新规划失败'[\s\S]*?loadTask\(currentTask\.id, currentGeneration, false\)/u);
 });
 
 test('sidebar exposes four status tabs and persistent item management actions', async () => {

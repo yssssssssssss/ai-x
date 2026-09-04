@@ -1401,6 +1401,16 @@ test('Stage4 makes the Editorial Summary primary and keeps existing renderers as
       assert.match(primaryHtml, /正在生成编辑摘要/u);
       assert.doesNotMatch(primaryHtml, /历史结构化报告/u);
 
+      const readOnlyHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+        report: historicalCompetitiveReport,
+        taskState: 'completed',
+        orchestrationMode: 'single_skill',
+        readOnly: true,
+      }));
+      assert.doesNotMatch(readOnlyHtml, />编辑摘要</u);
+      assert.doesNotMatch(readOnlyHtml, /正在生成编辑摘要/u);
+      assert.match(readOnlyHtml, /历史结构化报告/u);
+
       const html = renderToStaticMarkup(react.createElement(StructuredCurrentStage4Report, {
         report: historicalCompetitiveReport,
         taskState: 'completed',

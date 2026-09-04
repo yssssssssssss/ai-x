@@ -26,6 +26,53 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: generate-usability-test
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 测试目标
+      description: 待测对象、核心任务、目标用户和需要验证的问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明待测对象、核心任务和需要验证的问题。
+      missing_policy: stop
+    - id: evaluation_materials
+      label: 产品或原型材料
+      description: 产品说明、页面截图、原型或关键流程材料。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有产品、原型、截图或关键流程材料？
+      missing_policy: gap
+    - id: target_users
+      label: 目标测试用户
+      description: 招募条件、样本差异和无障碍等特殊要求。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database]
+      question: 是否有明确的目标用户与招募条件？
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_collection_usability_testing
+      required: true
+    - id: toolbox_collection_participant_recruitment
+      required: true
+    - id: toolbox_collection_respondent_bias
+      required: false
+    - id: standard_sampling
+      required: false
+  tools: []
+  report:
+    title: 可用性测试执行包
+    summary_instruction: 概括测试目标、核心任务、样本和关键执行风险。
+    sections:
+      - 测试目标与范围
+      - 招募与样本
+      - 任务脚本与主持词
+      - 指标、记录与分析
+      - 执行清单、缺口与来源
 ---
 
 # Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）

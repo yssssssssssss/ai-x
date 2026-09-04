@@ -42,6 +42,51 @@ composition:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: jobs-to-be-done
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 待定义需求
+      description: 需要从功能设想或表层诉求向上追问的需求和业务决策。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明要判断的功能设想、用户诉求和业务决策。
+      missing_policy: stop
+    - id: user_materials
+      label: 用户与切换材料
+      description: 匿名 Job 或 Switch 访谈、用户反馈、流失原声及其他可核验材料。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有访谈、反馈或切换流失材料需要纳入？
+      missing_policy: gap
+  knowledge:
+    - id: model_jtbd
+      required: true
+    - id: model_user_needs
+      required: true
+    - id: model_means_end_laddering
+      required: true
+    - id: model_job_map
+      required: true
+    - id: model_four_forces
+      required: false
+    - id: toolbox_collection_job_interview
+      required: false
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: Jobs To Be Done 需求分析报告
+    summary_instruction: 概括核心 Job、关键情境、原始需求判断和最优先验证项。
+    sections:
+      - 原始需求与分析范围
+      - 核心 Job 与三层需求
+      - Job Map、替代方案与四力
+      - 原始方案判断与机会
+      - 待验证项、缺口与来源
 ---
 
 # Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）

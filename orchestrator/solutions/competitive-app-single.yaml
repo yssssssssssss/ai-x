@@ -1,0 +1,13 @@
+version: 1
+id: competitive-app-single
+title: 竞品 App 界面分析
+description: 优先基于真实竞品截图完成界面分析；无法提供截图时改用公开 Web 竞品研究。
+when_to_use: 任务需要比较竞品界面、视觉、注意力或品牌表现。
+mode: single_skill
+recommended: true
+skills:
+  - skill_id: competitive-app-analysis
+    depends_on: []
+    failure_policy: replace
+    replacement_skill_id: competitive-web-research
+final_report_skill_id: competitive-app-analysis

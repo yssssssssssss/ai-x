@@ -26,6 +26,43 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: issue-prioritization
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 排序目标
+      description: 决策场景、版本目标和优先级判断边界。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这次排序用于什么决策场景和版本目标？
+      missing_policy: stop
+    - id: issue_inventory
+      label: 问题或需求清单
+      description: 已识别问题、需求或候选项及可用影响与成本证据；缺失时仅产工具包。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 如需直接排序，请上传问题或需求清单及已有量化证据。
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_issue_prioritization
+      required: true
+    - id: toolbox_analysis_priority_quadrant_method
+      required: true
+    - id: model_kano
+      required: false
+  tools: []
+  report:
+    title: 问题与需求优先级报告
+    summary_instruction: 概括最先处理的事项、排序依据和证据不足项。
+    sections:
+      - 决策场景与排序口径
+      - 分层与严重度
+      - 优先级评分与排序
+      - 快赢项与实施建议
+      - 不确定性、缺口与来源
 ---
 
 # Issue Prioritization — 一堆问题/需求 + (可选)量化证据 → 分层·定级·排序（编排 wiki 正典）

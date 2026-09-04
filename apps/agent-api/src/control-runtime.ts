@@ -90,6 +90,13 @@ import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
+import { SkillNativeCatalog } from '../../orchestrator-runtime/src/skill-native/catalog.ts';
+import {
+  RegistryToolPort,
+  SkillNativeExecutionEngine,
+} from '../../orchestrator-runtime/src/skill-native/execution.ts';
+import { SkillNativeTaskService } from '../../orchestrator-runtime/src/skill-native/service.ts';
+import { PostgresSkillNativeTaskStore } from '../../orchestrator-runtime/src/skill-native/store.ts';
 import {
   DatasetInputGateError,
   DatasetInputGateStore,
@@ -102,6 +109,7 @@ import {
   ZeroPublicationService,
   type ZeroPublicationMcp,
 } from './integrations/zero/zero-publication-service.ts';
+import { SkillNativeZeroPublisher } from './integrations/zero/skill-native-zero-publisher.ts';
 
 
 function datasetUploadHash(input: {
@@ -401,6 +409,7 @@ export interface ControlRuntimeOverrides {
   multiSkillPortfolioMode?: 'inactive' | 'active';
   zeroMcp?: ZeroPublicationMcp;
   zeroPublicationEnabled?: boolean;
+  skillNative?: SkillNativeTaskService;
 }
 
 export type ControlPlanningRuntime = Pick<ControlPlanningService, 'plan' | 'planExistingTask'>;
@@ -413,6 +422,7 @@ export interface ControlRuntime {
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
   zeroPublication?: ZeroPublicationService;
+  skillNative?: SkillNativeTaskService;
   annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
@@ -532,7 +542,26 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   if (!expectedActualModel) {
     throw new Error('LLM_EXPECTED_ACTUAL_MODEL is required for the production control runtime');
   }
+  const zeroPublicationEnabled = overrides.zeroPublicationEnabled
+    ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
+  const zeroMcp = zeroPublicationEnabled
+    ? overrides.zeroMcp ?? new LocalZeroMcpClient({
+        url: process.env.ZERO_MCP_URL?.trim() || 'http://127.0.0.1:27618/mcp',
+      })
+    : undefined;
   const receiptLlm = new ReceiptLLMClient(llm, repository);
+  const nativeStore = new PostgresSkillNativeTaskStore(pool);
+  const nativeTools = new RegistryToolPort(tools, validator, nativeStore);
+  const skillNative = overrides.skillNative ?? new SkillNativeTaskService({
+    store: nativeStore,
+    catalog: new SkillNativeCatalog(),
+    execution: new SkillNativeExecutionEngine({
+      llm: new ReceiptLLMClient(llm, nativeStore),
+      tools: nativeTools,
+    }),
+    tools: nativeTools,
+    ...(zeroMcp ? { zeroPublisher: new SkillNativeZeroPublisher(zeroMcp) } : {}),
+  });
   const gatewayBaseUrl = process.env.LLM_GATEWAY_BASE_URL?.trim();
   const endpointUrl = gatewayBaseUrl
     ? `${gatewayBaseUrl.replace(/\/$/u, '')}/chat/completions`
@@ -930,15 +959,11 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       expectedModel: expectedActualModel,
     }),
   }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates);
-  const zeroPublicationEnabled = overrides.zeroPublicationEnabled
-    ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
-  const zeroPublication = zeroPublicationEnabled
+  const zeroPublication = zeroMcp
     ? new ZeroPublicationService({
       store: repository,
       artifacts,
-      zero: overrides.zeroMcp ?? new LocalZeroMcpClient({
-        url: process.env.ZERO_MCP_URL?.trim() || 'http://127.0.0.1:27618/mcp',
-      }),
+      zero: zeroMcp,
       reportPackages: {
         async read(input) {
           const packageArtifact = await repository.getArtifact(input.reportPackageArtifactId);
@@ -970,6 +995,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     workflow,
     repository,
     artifacts,
+    skillNative,
     ...(zeroPublication ? { zeroPublication } : {}),
     uploadDataset: async (input) => {
       const task = await repository.getTaskDetail(input.taskId);

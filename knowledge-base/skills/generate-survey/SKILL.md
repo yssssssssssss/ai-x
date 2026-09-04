@@ -25,6 +25,54 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: generate-survey
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 问卷目标
+      description: 问卷需要验证的研究问题、目标人群和使用场景。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这份问卷需要验证什么研究问题？
+      missing_policy: stop
+    - id: target_users
+      label: 目标样本
+      description: 目标受访者、筛选条件和配额要求。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database]
+      question: 是否有目标受访者、筛选或配额要求？
+      missing_policy: gap
+    - id: research_constraints
+      label: 投放约束
+      description: 题量、作答时长、渠道、量表或合规约束。
+      required: false
+      accepted_sources: [conversation, database]
+      question: 是否有题量、时长、投放渠道或量表方面的约束？
+      missing_policy: gap
+  knowledge:
+    - id: standard_questionnaire_design
+      required: true
+    - id: standard_questionnaire_experience_audit
+      required: true
+    - id: toolbox_collection_surveys
+      required: true
+    - id: toolbox_collection_scale_development
+      required: false
+    - id: model_cognitive_biases
+      required: false
+  tools: []
+  report:
+    title: 用户研究问卷
+    summary_instruction: 概括问卷目标、结构、样本要求和投放前注意事项。
+    sections:
+      - 问卷目标与适用样本
+      - 筛选与知情说明
+      - 正式题目与选项
+      - 跳转逻辑与编码
+      - 投放说明、缺口与来源
 ---
 
 # Generate Survey — 研究目标 → 合规问卷草稿（编排 wiki 正典）

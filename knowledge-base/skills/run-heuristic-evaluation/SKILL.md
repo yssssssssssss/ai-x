@@ -25,6 +25,45 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: run-heuristic-evaluation
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 评估目标
+      description: 待评对象、核心流程和本次启发式评估范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明待评对象和本次体验走查范围。
+      missing_policy: stop
+    - id: evaluation_materials
+      label: 界面或流程素材
+      description: 页面截图、原型、线上流程或足够具体的文字说明；缺失时仅产出工具包。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 如需直接走查，请上传界面截图、原型或流程材料。
+      missing_policy: gap
+  knowledge:
+    - id: model_nielsen_heuristics
+      required: true
+    - id: toolbox_collection_heuristic_evaluation
+      required: true
+    - id: toolbox_analysis_issue_prioritization
+      required: true
+    - id: toolbox_collection_usability_testing
+      required: false
+  tools: []
+  report:
+    title: 启发式体验评估报告
+    summary_instruction: 概括最严重的可用性问题、原则依据和优先整改动作。
+    sections:
+      - 评估范围与限制
+      - 可用性问题清单
+      - 启发式与严重度汇总
+      - 修复优先级与复测
+      - 信息缺口与来源
 ---
 
 # Run Heuristic Evaluation — 评估对象 + 范围 → 启发式评估（编排 wiki 正典）

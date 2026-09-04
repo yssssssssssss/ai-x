@@ -508,20 +508,20 @@ return { nodes: nodes.map((item) => ({ id: item.id, name: item.name, fills: item
   }
 
   async finalizeDraft(input: {
-    pageName: string;
+    pageId: string;
     draftRootNodeId: string;
     finalName: string;
     updateRootNodeId?: string;
   }): Promise<{ finalRootNodeId: string }> {
-    if (!isZeroNodeId(input.draftRootNodeId) || (
+    if (!isZeroNodeId(input.pageId) || !isZeroNodeId(input.draftRootNodeId) || (
       input.updateRootNodeId !== undefined && !isZeroNodeId(input.updateRootNodeId)
     )) {
       throw new ZeroMcpClientError('zero_swap_incomplete', 'Zero publication node ID is invalid');
     }
     await this.loadScriptResources();
     const code = `
-const page = relay.root.children.find((candidate) => candidate.type === 'PAGE' && candidate.name === ${JSON.stringify(input.pageName)})
-if (!page) throw new Error('target page unavailable')
+const page = await relay.getNodeByIdAsync(${JSON.stringify(input.pageId)})
+if (!page || page.type !== 'PAGE') throw new Error('target page unavailable')
 await relay.setCurrentPageAsync(page)
 const draft = await relay.getNodeByIdAsync(${JSON.stringify(input.draftRootNodeId)})
 if (!draft || draft.parent !== page) throw new Error('draft unavailable')
@@ -540,12 +540,12 @@ return { mutatedNodeIds: [draft.id], finalRootNodeId: draft.id }
     return { finalRootNodeId: input.draftRootNodeId };
   }
 
-  async cleanupDraft(input: { pageName: string; rootNodeId: string }): Promise<void> {
-    if (!isZeroNodeId(input.rootNodeId)) return;
+  async cleanupDraft(input: { pageId: string; rootNodeId: string }): Promise<void> {
+    if (!isZeroNodeId(input.pageId) || !isZeroNodeId(input.rootNodeId)) return;
     await this.loadScriptResources();
     const code = `
-const page = relay.root.children.find((candidate) => candidate.type === 'PAGE' && candidate.name === ${JSON.stringify(input.pageName)})
-if (!page) return { mutatedNodeIds: [] }
+const page = await relay.getNodeByIdAsync(${JSON.stringify(input.pageId)})
+if (!page || page.type !== 'PAGE') return { mutatedNodeIds: [] }
 await relay.setCurrentPageAsync(page)
 const node = await relay.getNodeByIdAsync(${JSON.stringify(input.rootNodeId)})
 if (!node || node.parent !== page) return { mutatedNodeIds: [] }

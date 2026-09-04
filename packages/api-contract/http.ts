@@ -160,7 +160,7 @@ export interface TaskSummary {
   updated_at?: string;
 }
 
-export type TaskHistoryKind = 'legacy' | 'current';
+export type TaskHistoryKind = 'legacy' | 'current' | 'native';
 
 export interface TaskHistoryPreference {
   taskId: string;

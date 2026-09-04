@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +29,13 @@ after(async () => {
   rmSync(workspaceRoot, { recursive: true, force: true });
   restoreEnvironment('JWT_SECRET', originalJwtSecret);
   restoreEnvironment('RUN_WORKSPACE_ROOT', originalWorkspaceRoot);
+});
+
+test('server startup recovers only the Skill-native runtime', async () => {
+  const source = await readFile(new URL('../apps/agent-api/src/server.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /ExecutionRecoveryController/u);
+  assert.doesNotMatch(source, /zeroPublication\.recoverExpired/u);
+  assert.match(source, /controlRuntime\.skillNative\?\.recoverInterrupted\(\)/u);
 });
 
 test('legacy POST routes are gone without DB or workspace writes while legacy GET history remains readable', async () => {
@@ -74,8 +82,15 @@ test('legacy POST routes are gone without DB or workspace writes while legacy GE
         path: `/api/tasks/${legacyTask.id}/${command}`,
         body: {},
       })),
+      { path: '/api/control-tasks/plan', body: { originalInput: '不得创建旧 Control Task', orchestrationMode: 'single_skill' } },
+      ...['clarify', 'select', 'confirm', 'approve', 'revise', 'cancel', 'resume', 'execute'].map((command) => ({
+        path: `/api/control-tasks/${legacyTask.id}/${command}`,
+        body: {},
+      })),
+      { path: `/api/control-tasks/${legacyTask.id}/publications/zero`, body: {} },
     ];
     const statuses: number[] = [];
+    const errors: string[] = [];
     for (const mutation of mutations) {
       const response = await fetch(`${baseUrl}${mutation.path}`, {
         method: 'POST',
@@ -83,7 +98,7 @@ test('legacy POST routes are gone without DB or workspace writes while legacy GE
         body: JSON.stringify(mutation.body),
       });
       statuses.push(response.status);
-      await response.text();
+      errors.push(((await response.json()) as { error: string }).error);
     }
 
     const listResponse = await fetch(`${baseUrl}/api/tasks`, {
@@ -92,6 +107,13 @@ test('legacy POST routes are gone without DB or workspace writes while legacy GE
     const detailResponse = await fetch(`${baseUrl}/api/tasks/${legacyTask.id}`, {
       headers: { authorization: `Bearer ${token}` },
     });
+    const controlListResponse = await fetch(`${baseUrl}/api/control-tasks`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const editorialSummaryResponse = await fetch(
+      `${baseUrl}/api/control-tasks/${legacyTask.id}/reports/not-an-attempt/editorial-summary.html`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
     const listBody = await listResponse.json() as { kind: string; tasks: Array<{ id: string }> };
     const detailBody = await detailResponse.json() as { kind: string; task: { id: string } };
     const afterWrites = await pool.query(
@@ -103,6 +125,7 @@ test('legacy POST routes are gone without DB or workspace writes while legacy GE
     );
 
     assert.deepEqual(statuses, mutations.map(() => 410));
+    assert.ok(errors.slice(0, 6).every((error) => error.includes('/api/research-tasks')));
     assert.deepEqual(afterWrites.rows[0], before.rows[0]);
     assert.equal(readdirSync(workspaceRoot).length, 0);
     assert.equal(listResponse.status, 200);
@@ -111,6 +134,8 @@ test('legacy POST routes are gone without DB or workspace writes while legacy GE
     assert.equal(detailResponse.status, 200);
     assert.equal(detailBody.kind, 'legacy');
     assert.equal(detailBody.task.id, legacyTask.id);
+    assert.equal(controlListResponse.status, 200);
+    assert.equal(editorialSummaryResponse.status, 410);
   } finally {
     server.close();
     await once(server, 'close');

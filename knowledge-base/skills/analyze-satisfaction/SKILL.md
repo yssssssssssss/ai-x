@@ -27,6 +27,46 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: analyze-satisfaction
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 分析目标
+      description: 满意度分析需要回答的业务问题、指标和比较口径。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 本次满意度分析需要回答什么问题？
+      missing_policy: stop
+    - id: analytics_dataset
+      label: 满意度数据
+      description: 包含总体指标、属性评分、样本量及必要分群或时间字段的数据。
+      required: true
+      accepted_sources: [upload, database]
+      question: 请上传满意度数据及字段口径说明。
+      missing_policy: stop
+  knowledge:
+    - id: toolbox_analysis_key_driver_analysis
+      required: true
+    - id: toolbox_analysis_satisfaction_analysis_models
+      required: true
+    - id: toolbox_analysis_satisfaction_drop_attribution
+      required: true
+    - id: toolbox_analysis_data_standardization
+      required: true
+    - id: model_ect
+      required: false
+  tools: []
+  report:
+    title: 满意度诊断报告
+    summary_instruction: 概括关键驱动、优先改进项、异动判断及数据限制。
+    sections:
+      - 数据范围与质量
+      - 满意度现状
+      - 关键驱动与 IPA
+      - 异动归因与分群
+      - 改进优先级、缺口与来源
 ---
 
 # Analyze Satisfaction — 满意度数据 → 关键驱动 + IPA 改进优先级 + 掉分归因（编排 wiki 正典）

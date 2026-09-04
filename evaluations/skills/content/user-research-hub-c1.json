@@ -187,9 +187,9 @@
       "status": "draft",
       "source_hash": "sha256:953ac3cc8b46bdda988654f8880e767ca489202e6b26a8afee561e39f1ed07e1",
       "content_hash": "sha256:49546c55a6ae48a56740ef7e708efb516d9757140d5dbd48e33cdac0f7215243",
-      "artifact_hash": "sha256:e7436163b60cb636744d44286d66c8145bc42bbb6b1d862699a77c3b7c15cdee",
+      "artifact_hash": "sha256:ff6c3b0b254e35e0bded0d185a8bfe453dc8ba46e6b56292da489d38a4ee8e8a",
       "canonical_target": "skills/competitive-analysis/web-research/SKILL.md",
-      "canonical_hash": "sha256:ce2e8219c6a2d201cd65a9deb8653fd42296a7fcba56db5ab18b8d23920ce7e4"
+      "canonical_hash": "sha256:ba5f0a50943c79ebd7bd2ed1039672747c05fcdd4d518f1389955fec8bb29798"
     },
     {
       "id": "experience-walkthrough-delta",
@@ -198,9 +198,9 @@
       "status": "draft",
       "source_hash": "sha256:99c1b0a3790963c83a2fc9a4f906a8593d8140df3a7651ceac7b1cb92dd835e4",
       "content_hash": "sha256:89e0bb9a1ac0dcdfc3d19b250006995fafcce0e41a48d09e4dafedd4596ec252",
-      "artifact_hash": "sha256:5b1f6015ec0f47ae9b2d63a85d08dd34d7af82f1ce7e0fc9bbdf3d6c9f4b34e0",
+      "artifact_hash": "sha256:56b78918b167b522aa8f0bb9a4691ee1236d5c381677271f87cf43192c2cf849",
       "canonical_target": "knowledge-base/skills/run-heuristic-evaluation",
-      "canonical_hash": "sha256:072072add7be148880e8d57d5aa05c114b707f7ffd61e88d6756602f4f03509a"
+      "canonical_hash": "sha256:add36330c6fd519d3f332e3df219cc053cfcb703eca5fa67530bf2843a5ae3c4"
     }
   ],
   "bindings": [

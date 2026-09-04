@@ -171,11 +171,13 @@ export function CurrentStage4Report(props: {
   report: ControlDeliverableResponse;
   taskState: 'completed' | 'completed_with_gaps';
   orchestrationMode?: 'single_skill' | 'multi_skill';
+  readOnly?: boolean;
 }) {
   const [view, setView] = useState<'summary' | 'detail'>('summary');
   useEffect(() => {
-    setView('summary');
-  }, [props.report.deliverable.attemptId, props.report.deliverable.taskId]);
+    setView(props.readOnly ? 'detail' : 'summary');
+  }, [props.readOnly, props.report.deliverable.attemptId, props.report.deliverable.taskId]);
+  if (props.readOnly) return <StructuredCurrentStage4Report {...props} />;
   return (
     <>
       <nav className="report-view-toggle" aria-label="报告呈现">
@@ -344,10 +346,12 @@ export function StructuredCurrentStage4Report({
   report,
   taskState,
   orchestrationMode,
+  readOnly,
 }: {
   report: ControlDeliverableResponse;
   taskState: 'completed' | 'completed_with_gaps';
   orchestrationMode?: 'single_skill' | 'multi_skill';
+  readOnly?: boolean;
 }) {
   const modeNotice = orchestrationMode === undefined
     ? null
@@ -374,6 +378,7 @@ export function StructuredCurrentStage4Report({
           ? <MultimodalResearchPlanReport
               report={report as MultimodalReportResponse & ResearchPlanResponse}
               taskState={taskState}
+              readOnly={readOnly}
             />
           : <CurrentTextReport report={report as ResearchPlanResponse} />}
         {contributionView}
@@ -387,6 +392,7 @@ export function StructuredCurrentStage4Report({
         <MultimodalCurrentReport
           report={report}
           taskState={taskState}
+          readOnly={readOnly}
         />
         {contributionView}
       </>
@@ -407,9 +413,11 @@ export function StructuredCurrentStage4Report({
 function MultimodalResearchPlanReport({
   report,
   taskState,
+  readOnly,
 }: {
   report: MultimodalReportResponse & ResearchPlanResponse;
   taskState: 'completed' | 'completed_with_gaps';
+  readOnly?: boolean;
 }) {
   const [view, setView] = useState<'full' | 'summary'>('full');
   return (
@@ -427,6 +435,7 @@ function MultimodalResearchPlanReport({
         : <MultimodalCurrentReport
             report={report}
             taskState={taskState}
+            readOnly={readOnly}
           />}
     </>
   );
@@ -435,9 +444,11 @@ function MultimodalResearchPlanReport({
 function MultimodalCurrentReport({
   report,
   taskState,
+  readOnly = false,
 }: {
   report: MultimodalReportResponse;
   taskState: 'completed' | 'completed_with_gaps';
+  readOnly?: boolean;
 }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [htmlBundleStatus, setHtmlBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
@@ -505,15 +516,16 @@ function MultimodalCurrentReport({
   }, [report.reportDocument.sections, report.visualAssetManifests]);
 
   useEffect(() => {
+    if (readOnly) return;
     let active = true;
     void api.zeroStatus()
       .then((status) => { if (active) setZeroStatus(status); })
       .catch(() => { if (active) setZeroStatus({ available: false, authenticated: false, reason: 'offline' }); });
     return () => { active = false; };
-  }, []);
+  }, [readOnly]);
 
   useEffect(() => {
-    if (!zeroPublication || zeroPublication.status === 'completed' || zeroPublication.status === 'failed') return;
+    if (readOnly || !zeroPublication || zeroPublication.status === 'completed' || zeroPublication.status === 'failed') return;
     let active = true;
     const poll = async () => {
       try {
@@ -535,7 +547,7 @@ function MultimodalCurrentReport({
     const timer = window.setInterval(() => { void poll(); }, 1_000);
     void poll();
     return () => { active = false; window.clearInterval(timer); };
-  }, [taskId, zeroPublication?.id, zeroPublication?.status]);
+  }, [readOnly, taskId, zeroPublication?.id, zeroPublication?.status]);
 
   function openZeroConfirmation() {
     const transition = transitionZeroPublicationConfirmation(zeroConfirmation, 'request');
@@ -691,73 +703,77 @@ function MultimodalCurrentReport({
               离线 HTML 暂不可用，仍可下载 Markdown ZIP
             </span>
           ) : null}
-          <button
-            ref={zeroPublishButtonRef}
-            type="button"
-            className="btn-ghost"
-            onClick={openZeroConfirmation}
-            disabled={!zeroReady || zeroBusy || zeroUiState === 'completed'}
-            title={zeroStatusHint}
-            aria-haspopup="dialog"
-            aria-expanded={zeroConfirmation === 'open'}
-            aria-controls={zeroConfirmation === 'open' ? 'zero-publication-confirmation' : undefined}
-          >
-            {zeroPublicationButtonLabel(zeroUiState)}
-          </button>
-          <span
-            style={{ color: zeroError ? 'var(--danger)' : 'var(--text-dim)', fontSize: 12 }}
-            role={zeroError ? 'alert' : 'status'}
-            aria-live="polite"
-          >
-            {zeroError
-              ?? (zeroPublication && zeroBusy
-                ? zeroPublicationProgressLabel(zeroPublication.stage, zeroPublication.progress)
-                : zeroPublication?.status === 'completed'
-                  ? `已发送 · 节点 ${zeroPublication.finalRootNodeId ?? '已创建'}`
-                  : zeroStatusHint)}
-          </span>
-          {zeroConfirmation === 'open' ? (
-            <section
-              id="zero-publication-confirmation"
-              className="zero-publication-confirmation"
-              role="dialog"
-              aria-labelledby="zero-publication-confirmation-title"
-              aria-describedby="zero-publication-confirmation-description"
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') cancelZeroConfirmation();
-              }}
-            >
-              <h2 id="zero-publication-confirmation-title">确认发送到 Zero</h2>
-              <p>{isReportDocumentV4(report.reportDocument)
-                ? report.reportDocument.title.text
-                : report.reportDocument.title}</p>
-              <dl>
-                <dt>目标文件</dt>
-                <dd>{zeroStatus?.currentFileKey ?? '当前 Zero 文件'}</dd>
-                <dt>目标页面</dt>
-                <dd>{zeroStatus?.currentPageName ?? zeroStatus?.currentPageId}</dd>
-                <dt>发布类型</dt>
-                <dd>新建稿件</dd>
-                <dt>视觉资产</dt>
-                <dd>{report.visualAssetManifests.length} 个，预计至少 {estimatedSliceCount} 个切片</dd>
-              </dl>
-              <p id="zero-publication-confirmation-description">确认后会将可编辑稿件写入当前 Zero 页面；取消不会创建发布记录。</p>
-              <div>
-                <button
-                  autoFocus
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => void confirmZeroPublication()}
-                  disabled={!zeroReady || zeroBusy}
+          {!readOnly ? (
+            <>
+              <button
+                ref={zeroPublishButtonRef}
+                type="button"
+                className="btn-ghost"
+                onClick={openZeroConfirmation}
+                disabled={!zeroReady || zeroBusy || zeroUiState === 'completed'}
+                title={zeroStatusHint}
+                aria-haspopup="dialog"
+                aria-expanded={zeroConfirmation === 'open'}
+                aria-controls={zeroConfirmation === 'open' ? 'zero-publication-confirmation' : undefined}
+              >
+                {zeroPublicationButtonLabel(zeroUiState)}
+              </button>
+              <span
+                style={{ color: zeroError ? 'var(--danger)' : 'var(--text-dim)', fontSize: 12 }}
+                role={zeroError ? 'alert' : 'status'}
+                aria-live="polite"
+              >
+                {zeroError
+                  ?? (zeroPublication && zeroBusy
+                    ? zeroPublicationProgressLabel(zeroPublication.stage, zeroPublication.progress)
+                    : zeroPublication?.status === 'completed'
+                      ? `已发送 · 节点 ${zeroPublication.finalRootNodeId ?? '已创建'}`
+                      : zeroStatusHint)}
+              </span>
+              {zeroConfirmation === 'open' ? (
+                <section
+                  id="zero-publication-confirmation"
+                  className="zero-publication-confirmation"
+                  role="dialog"
+                  aria-labelledby="zero-publication-confirmation-title"
+                  aria-describedby="zero-publication-confirmation-description"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') cancelZeroConfirmation();
+                  }}
                 >
-                  确认发送
-                </button>
-                <button type="button" className="btn-ghost" onClick={cancelZeroConfirmation} disabled={zeroBusy}>
-                  取消
-                </button>
-              </div>
-            </section>
-          ) : null}
+                  <h2 id="zero-publication-confirmation-title">确认发送到 Zero</h2>
+                  <p>{isReportDocumentV4(report.reportDocument)
+                    ? report.reportDocument.title.text
+                    : report.reportDocument.title}</p>
+                  <dl>
+                    <dt>目标文件</dt>
+                    <dd>{zeroStatus?.currentFileKey ?? '当前 Zero 文件'}</dd>
+                    <dt>目标页面</dt>
+                    <dd>{zeroStatus?.currentPageName ?? zeroStatus?.currentPageId}</dd>
+                    <dt>发布类型</dt>
+                    <dd>新建稿件</dd>
+                    <dt>视觉资产</dt>
+                    <dd>{report.visualAssetManifests.length} 个，预计至少 {estimatedSliceCount} 个切片</dd>
+                  </dl>
+                  <p id="zero-publication-confirmation-description">确认后会将可编辑稿件写入当前 Zero 页面；取消不会创建发布记录。</p>
+                  <div>
+                    <button
+                      autoFocus
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => void confirmZeroPublication()}
+                      disabled={!zeroReady || zeroBusy}
+                    >
+                      确认发送
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={cancelZeroConfirmation} disabled={zeroBusy}>
+                      取消
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+            </>
+          ) : <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>旧任务只读</span>}
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
           {htmlBundleStatus === 'error' ? <span role="alert">离线 HTML 下载失败，请重试</span> : null}
         </>

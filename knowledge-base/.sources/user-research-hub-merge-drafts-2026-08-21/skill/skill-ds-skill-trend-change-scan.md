@@ -7,7 +7,7 @@ source_entity: skill:ds-skill-trend-change-scan
 source_path: wiki/user-research/02-skills-技能/设计策略/趋势变化扫描/SKILL.md
 source_hash: sha256:953ac3cc8b46bdda988654f8880e767ca489202e6b26a8afee561e39f1ed07e1
 canonical_target: skills/competitive-analysis/web-research/SKILL.md
-canonical_hash: sha256:ce2e8219c6a2d201cd65a9deb8653fd42296a7fcba56db5ab18b8d23920ce7e4
+canonical_hash: sha256:ba5f0a50943c79ebd7bd2ed1039672747c05fcdd4d518f1389955fec8bb29798
 disposition: merge_into_existing
 merge_sections:
   - when_to_use

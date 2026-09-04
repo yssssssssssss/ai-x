@@ -78,7 +78,7 @@ interface CurrentHistoryTask {
 }
 
 interface HistoryTask extends LegacyHistoryTask {
-  kind: 'legacy' | 'current';
+  kind: 'legacy' | 'current' | 'native';
   displayName?: string | null;
   pinnedAt?: string | null;
   requiresAction?: boolean;
@@ -86,7 +86,7 @@ interface HistoryTask extends LegacyHistoryTask {
 
 interface TaskHistoryPreference {
   taskId: string;
-  taskKind: 'legacy' | 'current';
+  taskKind: 'legacy' | 'current' | 'native';
   displayName: string | null;
   pinnedAt: string | null;
   hiddenAt: string | null;
@@ -171,6 +171,7 @@ interface CurrentFlowStateModule {
     legacyTasks: LegacyHistoryTask[],
     currentTasks: CurrentHistoryTask[],
     preferences?: TaskHistoryPreference[],
+    nativeTasks?: CurrentHistoryTask[],
   ): HistoryTask[];
   createRequestId(source: {
     randomUUID?: () => string;
@@ -402,6 +403,29 @@ test('history preferences pin, rename and hide tasks without mutating their sour
   assert.equal(history[0]?.displayName, '重命名后的任务');
   assert.equal(historyTaskPresentation(history[0]!).group, 'pending');
   assert.equal(historyTaskPresentation(history[1]!).group, 'completed');
+});
+
+test('Control and Skill-native task history keep distinct read-only identities', async () => {
+  const { mergeTaskHistory } = await loadCurrentFlowStateModule();
+  const current = {
+    id: 'control-task',
+    originalInput: '旧 Control 任务',
+    taskType: 'competitive_research',
+    state: 'completed',
+    createdAt: '2026-09-01T00:00:00.000Z',
+  };
+  const native = {
+    id: 'native-task',
+    originalInput: '原生任务',
+    taskType: 'single_skill',
+    state: 'ready',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  };
+  const history = mergeTaskHistory([], [current], [], [native]);
+  assert.deepEqual(history.map(({ id, kind }) => ({ id, kind })), [
+    { id: 'native-task', kind: 'native' },
+    { id: 'control-task', kind: 'current' },
+  ]);
 });
 
 test('approval work is pending only for the approver, while the owner sees it as running', async () => {

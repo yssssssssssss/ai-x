@@ -166,6 +166,20 @@ export type {
   ZeroPublicationStage,
   ZeroPublicationStatus,
 } from '../../../../packages/api-contract/zero-publication.ts';
+export type {
+  ConfirmSkillNativeTaskRequest,
+  CreateSkillNativeTaskRequest,
+  OrchestrationMode,
+  PublishSkillNativeReportRequest,
+  ReportResult,
+  SkillNativeCandidateView,
+  SkillNativeInputAnswer,
+  SkillNativePlanView,
+  SkillNativeTaskState,
+  SkillNativeTaskSummary,
+  SkillNativeTaskView,
+  SkillNativeZeroPublication,
+} from '../../../../packages/api-contract/skill-native.ts';
 
 import type {
   ApprovalControlPlanRequest,
@@ -191,6 +205,14 @@ import type {
   ZeroIntegrationStatusResponse,
   ZeroPublicationResponse,
 } from '../../../../packages/api-contract/zero-publication.ts';
+import type {
+  ConfirmSkillNativeTaskRequest,
+  CreateSkillNativeTaskRequest,
+  PublishSkillNativeReportRequest,
+  SkillNativeTaskSummary,
+  SkillNativeTaskView,
+  SkillNativeZeroPublication,
+} from '../../../../packages/api-contract/skill-native.ts';
 import type {
   User,
   TaskDetail,
@@ -314,6 +336,32 @@ export const api = {
   login: (b: { email: string; password: string }) =>
     req<{ token: string; user: User }>('/auth/login', { method: 'POST', body: b }),
   me: () => req<{ user: User }>('/auth/me'),
+  createResearchTask: (body: CreateSkillNativeTaskRequest) =>
+    req<SkillNativeTaskView>('/research-tasks', { method: 'POST', body }),
+  listResearchTasks: () => req<{ tasks: SkillNativeTaskSummary[] }>('/research-tasks'),
+  researchCatalog: () => req<{
+    skills: Array<{ id: string; name: string; description: string; contentHash: string; available: true }>;
+    unavailableSkills: Array<{ id: string; sourcePath: string; reason: string }>;
+    solutions: Array<{ id: string; title: string; description: string; mode: 'single_skill' | 'multi_skill'; recommended: boolean; contentHash: string }>;
+    invalidSolutions: Array<{ sourcePath: string; reason: string }>;
+  }>('/research-tasks/catalog'),
+  researchTask: (taskId: string) => req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}`),
+  selectResearchSolution: (taskId: string, body: { expectedVersion: number; solutionId: string }) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/select`, { method: 'POST', body }),
+  confirmResearchTask: (taskId: string, body: ConfirmSkillNativeTaskRequest) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/confirm`, { method: 'POST', body }),
+  executeResearchTask: (taskId: string, expectedVersion: number) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/execute`, { method: 'POST', body: { expectedVersion } }),
+  cancelResearchTask: (taskId: string, expectedVersion: number) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST', body: { expectedVersion } }),
+  resumeResearchTask: (taskId: string, expectedVersion: number) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST', body: { expectedVersion } }),
+  replanResearchTask: (taskId: string, expectedVersion: number) =>
+    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/replan`, { method: 'POST', body: { expectedVersion } }),
+  publishResearchTaskToZero: (taskId: string, body: PublishSkillNativeReportRequest) =>
+    req<SkillNativeZeroPublication>(`/research-tasks/${encodeURIComponent(taskId)}/publications/zero`, { method: 'POST', body }),
+  researchReportHtml: async (taskId: string) => (await reqBlob(`/research-tasks/${encodeURIComponent(taskId)}/report.html`)).text(),
+  researchReportMarkdown: async (taskId: string) => (await reqBlob(`/research-tasks/${encodeURIComponent(taskId)}/report.md`)).blob(),
   // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
   planControlStream: async (
     body: PlanControlTaskRequest,

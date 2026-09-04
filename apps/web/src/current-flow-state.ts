@@ -91,11 +91,11 @@ export function taskStatePresentation(state: string): TaskStatePresentation {
 }
 
 export function historyTaskPresentation(task: HistoryTaskSummary): TaskStatePresentation {
-  if (task.kind === 'current') {
+  if (task.kind === 'current' || task.kind === 'native') {
     if (task.status === 'awaiting_approval' && task.requiresAction) {
       return { label: '待审批', group: 'pending', tone: 'action' };
     }
-    if (task.status === 'completed' || task.status === 'completed_with_gaps') {
+    if (task.kind === 'current' && (task.status === 'completed' || task.status === 'completed_with_gaps')) {
       if (task.task_type === 'research_synthesis') {
         return {
           label: task.status === 'completed_with_gaps' ? '研究答案已完成·有缺口' : '研究答案已完成',
@@ -173,6 +173,7 @@ export function mergeTaskHistory(
   legacyTasks: TaskSummary[],
   currentTasks: CurrentHistoryTaskSummary[],
   preferences: TaskHistoryPreference[] = [],
+  nativeTasks: CurrentHistoryTaskSummary[] = [],
 ): HistoryTaskSummary[] {
   const history: HistoryTaskSummary[] = [
     ...legacyTasks.map((task) => ({ ...task, kind: 'legacy' as const })),
@@ -185,6 +186,15 @@ export function mergeTaskHistory(
       created_at: task.createdAt,
       ...(task.updatedAt ? { updated_at: task.updatedAt } : {}),
       ...(task.requiresAction ? { requiresAction: true } : {}),
+    })),
+    ...nativeTasks.map((task) => ({
+      kind: 'native' as const,
+      id: task.id,
+      original_input: task.originalInput,
+      task_type: task.taskType,
+      status: task.state,
+      created_at: task.createdAt,
+      ...(task.updatedAt ? { updated_at: task.updatedAt } : {}),
     })),
   ];
   return applyTaskHistoryPreferences(history, preferences);

@@ -23,6 +23,46 @@ execution_contract: orchestrator/skill-executions/generate-research-plan.yaml
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: generate-research-plan
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 研究需求
+      description: 业务背景、决策问题、研究目标与期望交付。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明业务背景、待决策问题和期望研究交付。
+      missing_policy: stop
+    - id: research_constraints
+      label: 项目约束
+      description: 时间、预算、样本、渠道、合规和已有资源约束。
+      required: false
+      accepted_sources: [conversation, upload, database]
+      question: 是否有时间、预算、样本或渠道方面的约束？
+      missing_policy: gap
+  knowledge:
+    - id: standard_requirement_elicitation
+      required: true
+    - id: standard_research_question_definition
+      required: true
+    - id: standard_research_project_workflow
+      required: true
+    - id: standard_sampling
+      required: true
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 用户研究执行方案
+    summary_instruction: 概括研究目标、方法组合、关键里程碑和主要约束。
+    sections:
+      - 研究背景与问题
+      - 目标、范围与假设
+      - 方法与样本设计
+      - 执行流程与分工
+      - 交付、风险、缺口与来源
 ---
 
 # Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案

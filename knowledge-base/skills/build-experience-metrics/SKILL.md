@@ -42,6 +42,47 @@ composition:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: build-experience-metrics
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 度量目标
+      description: 产品或系统、业务目标及不可恶化的体验底线。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明要为哪个产品建立体验度量，以及业务目标和体验底线。
+      missing_policy: stop
+    - id: analytics_dataset
+      label: 已有指标资料
+      description: 现有埋点、指标口径、历史基线或可用数据说明。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有现有指标口径、埋点或历史基线资料？
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_experience_metrics_heart
+      required: true
+    - id: toolbox_analysis_longitudinal_benchmark_tracking
+      required: true
+    - id: toolbox_analysis_data_standardization
+      required: true
+    - id: scenario_b_end_experience_measurement
+      required: false
+  tools:
+    - id: tavily-web-search
+      required: false
+  report:
+    title: 体验度量体系方案
+    summary_instruction: 概括体验北极星、护栏、采集口径和落地优先级。
+    sections:
+      - 目标与度量边界
+      - GSM 与 HEART 指标体系
+      - 北极星、护栏与拆解
+      - 采集口径与纵向追踪
+      - 实施计划、缺口与来源
 ---
 
 # Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度量体系（北极星·护栏 + 采集口径 + 纵向追踪）（编排 wiki 正典）

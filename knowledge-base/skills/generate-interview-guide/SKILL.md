@@ -22,6 +22,52 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: generate-interview-guide
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 研究目标
+      description: 访谈需要回答的研究问题、对象与使用场景。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这次访谈最需要回答哪些研究问题？
+      missing_policy: stop
+    - id: target_users
+      label: 目标受访者
+      description: 受访者特征、筛选条件和需要覆盖的差异。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database]
+      question: 是否有明确的目标受访者或筛选条件？
+      missing_policy: gap
+    - id: research_constraints
+      label: 执行约束
+      description: 访谈时长、形式、样本规模或必须避免的问题。
+      required: false
+      accepted_sources: [conversation, database]
+      question: 是否有访谈时长、形式或样本方面的约束？
+      missing_policy: gap
+  knowledge:
+    - id: standard_interview_guide_standard
+      required: true
+    - id: toolbox_collection_interview_guide_design
+      required: true
+    - id: toolbox_collection_interviews
+      required: true
+    - id: toolbox_collection_respondent_bias
+      required: false
+  tools: []
+  report:
+    title: 用户访谈提纲
+    summary_instruction: 概括访谈目标、适用对象、结构与关键执行提醒。
+    sections:
+      - 研究目标与受访者
+      - 开场与知情说明
+      - 核心访谈问题
+      - 追问与收尾
+      - 执行说明、缺口与来源
 ---
 
 # Generate Interview Guide — 研究目标 → 结构化访谈提纲（编排 wiki 正典）

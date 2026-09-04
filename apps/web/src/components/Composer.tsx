@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, type FormEvent, type KeyboardEvent } from 'react';
-import { api, type OrchestrationModeV1, type SkillItem } from '../api/client.ts';
+import { api, type OrchestrationMode, type SkillItem } from '../api/client.ts';
 import { LABS, type Lab } from '../pages/Labs.tsx';
 
 // 底部 sticky 输入框。Enter 提交,Shift+Enter 换行。
@@ -7,19 +7,24 @@ import { LABS, type Lab } from '../pages/Labs.tsx';
 export function Composer({ disabled, multiSkillEnabled, onSubmit }: {
   disabled: boolean;
   multiSkillEnabled: boolean;
-  onSubmit: (text: string, orchestrationMode: OrchestrationModeV1) => void;
+  onSubmit: (text: string, orchestrationMode: OrchestrationMode) => void;
 }) {
   const [text, setText] = useState('');
-  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationModeV1>('single_skill');
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationMode>('single_skill');
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [sel, setSel] = useState(0);
   const [dismissed, setDismissed] = useState(false); // Esc 关闭,直到下次改动
   const [activeLab, setActiveLab] = useState<Lab | null>(null); // 工具弹窗
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // 首次挂载拉一次可直呼 skill 列表(登录态)
+  // 原生 Catalog 是可直呼 Skill 的唯一来源；无原生声明的旧 Skill 不进入菜单。
   useEffect(() => {
-    api.skills().then((r) => setSkills(r.skills)).catch(() => {});
+    api.researchCatalog().then(({ skills: catalogSkills }) => setSkills(catalogSkills.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      task_types: ['原生直达'],
+    })))).catch(() => {});
   }, []);
 
   // 仅当整段输入是 $token(还没敲空格)时进入菜单态;query 为 $ 后的字符

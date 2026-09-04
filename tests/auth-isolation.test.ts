@@ -5,11 +5,7 @@ import { after, afterEach, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { signToken } from '../apps/agent-api/src/auth.ts';
 import { Pool } from 'pg';
-import {
-  ControlPlaneAuthorizationError,
-  ControlPlaneConflictError,
-  ControlPlaneRepository,
-} from '../database/control-plane.ts';
+import { ControlPlaneRepository } from '../database/control-plane.ts';
 import {
   runMigrations,
   type MigrationConnection,
@@ -23,8 +19,6 @@ import type {
   writeMessage as WriteMessage,
 } from '../database/repository.ts';
 import type { CurrentExecutionPlan } from '../packages/api-contract/research-deliverable.ts';
-import { EditorialSummaryPipelineError } from '../apps/orchestrator-runtime/src/report/editorial-summary-pipeline.ts';
-import { EditorialSummaryStoreError } from '../apps/orchestrator-runtime/src/report/editorial-summary-store.ts';
 import {
   HtmlBundleIntegrityError,
   HtmlBundleUnavailableError,
@@ -76,7 +70,7 @@ try {
 
 const schema = `auth_isolation_${randomUUID().replaceAll('-', '')}`;
 const database = new Pool({
-  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai_skill_native',
 });
 const scopedDatabase = new ScopedMigrationDatabase(database, schema);
 const controlRepository = new ControlPlaneRepository(scopedDatabase);
@@ -596,7 +590,7 @@ test('task history preferences persist per user and soft-delete without touching
   }
 });
 
-test('Current task GET and every command hide foreign and missing task IDs behind 404', async () => {
+test('Current task GET hides identities while retired commands return one read-only response', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   // Static import would load the app and shared DB pool before this test installs its scoped environment.
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
@@ -681,8 +675,9 @@ test('Current task GET and every command hide foreign and missing task IDs behin
           },
         );
         const body = await response.json() as Record<string, unknown>;
-        assert.equal(response.status, 404, `${target.label} ${command.name}`);
-        assert.deepEqual(Object.keys(body), ['error']);
+        assert.equal(response.status, 410, `${target.label} ${command.name}`);
+        assert.deepEqual(Object.keys(body), ['error', 'code']);
+        assert.equal(body.code, 'legacy_control_read_only');
         const serialized = JSON.stringify(body);
         assert.equal(serialized.includes(currentTaskId), false);
         assert.equal(serialized.includes(missingTaskId), false);
@@ -872,22 +867,12 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
   }
 });
 
-test('foreign and missing planning conversations return 404 without SSE existence disclosure', async () => {
+test('retired Control planning routes are authenticated, read-only, and disclose no conversation identity', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   const leakedConversationId = conversationId;
-  const controlPlanning = {
-    async plan(input: { conversationId?: string }): Promise<never> {
-      if (input.conversationId === leakedConversationId) {
-        throw new ControlPlaneAuthorizationError(
-          `conversation ${leakedConversationId} is not owned by ${foreignUserId}`,
-        );
-      }
-      throw new ControlPlaneConflictError(`conversation ${input.conversationId} does not exist`);
-    },
-  };
   // Static import would load the app and shared DB pool before this test installs its scoped environment.
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const server = createAgentApiApp({ controlPlanning }).listen(0, '127.0.0.1');
+  const server = createAgentApiApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
@@ -914,8 +899,8 @@ test('foreign and missing planning conversations return 404 without SSE existenc
         }),
       });
       const body = await response.json() as Record<string, unknown>;
-      assert.equal(response.status, 404);
-      assert.deepEqual(Object.keys(body), ['error']);
+      assert.equal(response.status, 410);
+      assert.deepEqual(Object.keys(body), ['error', 'code']);
       const serialized = JSON.stringify(body);
       assert.equal(serialized.includes(leakedConversationId), false);
       assert.equal(serialized.includes(missingConversationId), false);
@@ -934,9 +919,8 @@ test('foreign and missing planning conversations return 404 without SSE existenc
         orchestrationMode: 'single_skill',
       }),
     });
+    assert.equal(streamResponse.status, 410);
     const streamBody = await streamResponse.text();
-    const eventNames = [...streamBody.matchAll(/^event: (.+)$/gmu)].map((match) => match[1]);
-    assert.deepEqual(eventNames, ['error']);
     assert.equal(streamBody.includes(leakedConversationId), false);
     assert.equal(streamBody.includes(foreignUserId), false);
     assert.equal(streamBody.includes('not owned'), false);
@@ -946,27 +930,18 @@ test('foreign and missing planning conversations return 404 without SSE existenc
   }
 });
 
-test('Editorial Summary route is owner-bound and returns offline HTML', async () => {
+test('legacy Editorial Summary route is read-only and never invokes the report reader', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
-  const reads: Array<{ taskId: string; attemptId: string; ownerUserId: string }> = [];
-  const readEditorialSummaryHtml = async (input: {
-    taskId: string;
-    attemptId: string;
-    ownerUserId: string;
-  }): Promise<string | null> => {
-    reads.push(input);
-    if (input.attemptId === 'attempt-unavailable') throw new HtmlBundleUnavailableError();
-    if (input.attemptId === 'attempt-integrity') throw new EditorialSummaryStoreError('SUMMARY_STORE_INVALID');
-    if (input.attemptId === 'attempt-generation') throw new EditorialSummaryPipelineError('SUMMARY_GENERATION_FAILED');
-    if (input.attemptId !== 'attempt-ready') return null;
-    return '<!doctype html><title>Editorial Summary</title>';
-  };
+  let readCount = 0;
   const controlRuntime = {
     repository: controlRepository,
     workflow: {},
     getDeliverable: async () => null,
-    readEditorialSummaryHtml,
+    readEditorialSummaryHtml: async () => {
+      readCount += 1;
+      throw new Error('legacy Editorial Summary reader must not be called');
+    },
   };
   const server = createAgentApiApp({ controlRuntime: controlRuntime as never }).listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -981,33 +956,15 @@ test('Editorial Summary route is owner-bound and returns offline HTML', async ()
   );
 
   try {
-    const ready = await request('attempt-ready', ownerToken);
-    assert.equal(ready.status, 200);
-    assert.equal(ready.headers.get('content-type'), 'text/html; charset=utf-8');
-    assert.equal(ready.headers.get('content-disposition'), 'inline; filename="editorial-summary.html"');
-    assert.equal(
-      ready.headers.get('content-security-policy'),
-      "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    );
-    assert.equal(await ready.text(), '<!doctype html><title>Editorial Summary</title>');
-
-    const unavailable = await request('attempt-unavailable', ownerToken);
-    assert.equal(unavailable.status, 409);
-    assert.equal((await unavailable.json() as { code: string }).code, 'editorial_summary_unavailable');
-
-    const integrity = await request('attempt-integrity', ownerToken);
-    assert.equal(integrity.status, 409);
-    assert.equal((await integrity.json() as { code: string }).code, 'editorial_summary_integrity');
-
-    const generation = await request('attempt-generation', ownerToken);
-    assert.equal(generation.status, 409);
-    assert.equal((await generation.json() as { code: string }).code, 'editorial_summary_generation_failed');
-
-    const missing = await request('attempt-missing', ownerToken);
-    assert.equal(missing.status, 404);
-    const foreign = await request('attempt-ready', foreignToken);
-    assert.equal(foreign.status, 404);
-    assert.equal(reads.filter(({ attemptId }) => attemptId === 'attempt-ready').length, 1);
+    for (const token of [ownerToken, foreignToken]) {
+      const response = await request('attempt-ready', token);
+      assert.equal(response.status, 410);
+      assert.deepEqual(await response.json(), {
+        error: '旧 Control Task 已切为只读；编辑摘要生成不可用',
+        code: 'legacy_control_read_only',
+      });
+    }
+    assert.equal(readCount, 0);
   } finally {
     server.close();
     await once(server, 'close');

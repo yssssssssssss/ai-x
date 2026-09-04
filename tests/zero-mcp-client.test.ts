@@ -195,6 +195,21 @@ test('Zero MCP client loads required resources before HTML and script writes', a
     bytes: new Uint8Array([1, 2, 3]),
     description: 'write image',
   })).imageHash, 'hash-1');
+  const stableTarget = { pageId: '30:1', pageName: '[p]duplicate' };
+  await client.finalizeDraft({
+    ...stableTarget,
+    draftRootNodeId: '31:2',
+    finalName: 'Report',
+  });
+  await client.cleanupDraft({ ...stableTarget, rootNodeId: '31:2' });
+  const mutationScripts = fake.calls.flatMap((call) => {
+    const params = call.params as { name?: string; arguments?: { code?: string } } | undefined;
+    return params?.name === 'use_design_script' && typeof params.arguments?.code === 'string'
+      ? [params.arguments.code]
+      : [];
+  });
+  assert.equal(mutationScripts.filter((code) => code.includes('getNodeByIdAsync("30:1")')).length, 2);
+  assert.ok(mutationScripts.every((code) => !code.includes('candidate.name === "[p]duplicate"')));
   const resourceReads = fake.calls.filter((call) => (
     call.method === 'tools/call'
     && (call.params as { name?: string } | undefined)?.name === 'resources_read'

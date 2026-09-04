@@ -25,6 +25,45 @@ required_tools:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: code-open-feedback
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 编码目标
+      description: 需要从开放反馈中回答的问题、产品范围和时间范围。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 本次开放反馈编码需要回答什么问题？
+      missing_policy: stop
+    - id: user_materials
+      label: 开放反馈
+      description: 匿名化的评价、工单、开放题、评论或客服会话文本。
+      required: true
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 请上传需要编码的匿名开放反馈材料。
+      missing_policy: stop
+  knowledge:
+    - id: toolbox_analysis_voc_analysis
+      required: true
+    - id: toolbox_analysis_voc_product_line_classification
+      required: true
+    - id: toolbox_analysis_text_analysis
+      required: true
+    - id: toolbox_analysis_affinity_diagram
+      required: false
+  tools: []
+  report:
+    title: 开放反馈编码与 VOC 分析报告
+    summary_instruction: 概括高频主题、主要负面痛点及其证据和行动优先级。
+    sections:
+      - 数据范围与编码口径
+      - 编码标签库
+      - 主题频次与情感
+      - Top 痛点与代表证据
+      - 行动建议、缺口与来源
 ---
 
 # Code Open Feedback — 海量短反馈 → 编码标签库 + 主题频次/情感 + Top 痛点（编排 wiki 正典）

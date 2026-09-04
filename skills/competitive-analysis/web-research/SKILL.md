@@ -3,6 +3,49 @@ name: competitive-web-research
 description: 基于 web 搜索的竞品分析——通过搜索 API 检索网络公开资料,做能力/体验/商业化对标
 when_to_use: 用户要做竞品分析且以【网络公开资料】为主要信息源(官网/发布会/评测/应用商店/新闻/用户评价);没有竞品 app 截图、或诉求是"查资料看竞品在做什么/战略意图/市场动态"时用本 skill。若用户要的是对竞品 app 界面做截图级设计/注意力/品牌分析,走 competitive-app-analysis。
 owner: 竞品分析组
+status: approved
+native_delivery:
+  version: 1
+  id: competitive-web-research
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 研究目标
+      description: 竞品研究需要回答的核心问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 这次竞品研究最需要回答什么问题？
+      missing_policy: stop
+    - id: competitors
+      label: 对标对象
+      description: 必须覆盖的竞品或相邻业务；未指定时可以基于公开资料形成候选范围。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database, tool]
+      tool_ids: [tavily-web-search]
+      question: 是否有必须覆盖的竞品或相邻业务？可以逐行提供。
+      missing_policy: gap
+    - id: dimensions
+      label: 对比维度
+      description: 需要重点比较的能力、体验、生态、商业化或差异化维度。
+      required: false
+      multiple: true
+      accepted_sources: [conversation, database]
+      question: 是否有必须覆盖的竞品对比维度？可以逐行提供。
+      missing_policy: gap
+  knowledge: []
+  tools:
+    - id: tavily-web-search
+      required: true
+  report:
+    title: 竞品公开资料研究
+    summary_instruction: 概括有公开来源支持的主要差异、机会和风险，不提升证据确定性。
+    sections:
+      - 竞品范围与方法
+      - 竞品对比矩阵
+      - 关键发现
+      - 差异化机会
+      - 信息缺口与来源
 ---
 
 # 竞品分析 · Web 搜索路径

@@ -25,35 +25,35 @@ async function getOwnedTask(taskId: string, userId: string) {
   return task;
 }
 
-// Legacy planning mutations are intentionally unavailable; use /api/control-tasks planning.
+// Legacy planning mutations are intentionally unavailable; use the Skill-native task API.
 tasksRouter.post('/plan', (_req, res) => {
-  res.status(410).json({ error: 'legacy task plan 已移除；请使用 /api/control-tasks/plan' });
+  res.status(410).json({ error: 'legacy task plan 已移除；请使用 /api/research-tasks' });
 });
 
 // 段1+2 流式:SSE 逐阶段推送 planPhase 进度(理解→激活→召回→判定→候选→归档),末尾推 result。
 // 用 POST(带 body + JWT header,EventSource 不支持);前端用 fetch ReadableStream 解析。
 tasksRouter.post('/plan/stream', (_req, res) => {
-  res.status(410).json({ error: 'legacy task plan/stream 已移除；请使用 /api/control-tasks/plan/stream' });
+  res.status(410).json({ error: 'legacy task plan/stream 已移除；请使用 /api/research-tasks' });
 });
 
 // Legacy feedback mutation is intentionally unavailable.
 tasksRouter.post('/:id/feedback', (_req, res) => {
-  res.status(410).json({ error: 'legacy task feedback 已移除；请使用 control 反馈通道' });
+  res.status(410).json({ error: 'legacy task feedback 已移除；新任务请使用 /api/research-tasks' });
 });
 
 // Legacy mutations are intentionally unavailable; legacy tasks remain read-only.
 tasksRouter.post('/:id/select', (_req, res) => {
-  res.status(410).json({ error: 'legacy task mutation 已移除；请使用 /api/control-tasks/:id/select' });
+  res.status(410).json({ error: 'legacy task mutation 已移除；请使用 /api/research-tasks/:id/select' });
 });
 
 // Legacy merged execution is intentionally unavailable.
 tasksRouter.post('/:id/execute', (_req, res) => {
-  res.status(410).json({ error: 'legacy merged execute 已移除；请使用 /api/control-tasks/:id/execute' });
+  res.status(410).json({ error: 'legacy merged execute 已移除；请使用 /api/research-tasks/:id/execute' });
 });
 
 // Legacy resume is intentionally unavailable.
 tasksRouter.post('/:id/resume', (_req, res) => {
-  res.status(410).json({ error: 'legacy task resume 已移除；请使用 /api/control-tasks/:id/resume' });
+  res.status(410).json({ error: 'legacy task resume 已移除；请使用 /api/research-tasks/:id/resume' });
 });
 
 // Legacy read routes remain owner-scoped and require an active authenticated user.

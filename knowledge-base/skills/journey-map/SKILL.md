@@ -31,6 +31,45 @@ task_types:
 inputs: []
 outputs: []
 status: approved
+native_delivery:
+  version: 1
+  id: journey-map
+  allow_partial: true
+  inputs:
+    - id: research_goal
+      label: 旅程目标
+      description: 需要还原的用户目标、起止场景和决策问题。
+      required: true
+      accepted_sources: [conversation, database]
+      question: 请说明要还原哪类用户完成什么目标的旅程。
+      missing_policy: stop
+    - id: user_materials
+      label: 用户研究材料
+      description: 匿名访谈、观察、客服反馈、已有 Persona 或行为数据。
+      required: false
+      multiple: true
+      accepted_sources: [upload, database]
+      question: 是否有用于还原旅程的匿名研究材料？
+      missing_policy: gap
+  knowledge:
+    - id: toolbox_analysis_journey_map
+      required: true
+    - id: toolbox_collection_experience_map
+      required: true
+    - id: toolbox_collection_scenario_based_need_discovery
+      required: true
+    - id: toolbox_analysis_qualitative_insight_frameworks
+      required: false
+  tools: []
+  report:
+    title: 用户体验旅程分析报告
+    summary_instruction: 概括关键阶段、情绪低谷、主要断点和优先机会。
+    sections:
+      - 目标、用户与旅程范围
+      - 端到端旅程图
+      - 触点、情绪与痛点
+      - 需求与机会优先级
+      - 局限、缺口与来源
 ---
 
 # Journey Map — 研究材料 + 研究目标/场景 → 用户体验旅程图（编排 wiki 正典）
