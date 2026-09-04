@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 import {
+  parseSkillInputRequirements,
+  type SkillInputRequirement,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+import {
   CONTRIBUTION_TYPES,
   type ContributionType,
   type EvidenceClass,
@@ -305,6 +309,8 @@ export interface SkillRegistryEntry {
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
   composition?: SkillComposition;
+  input_requirements?: SkillInputRequirement[];
+  report_template?: string;
 }
 
 const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
@@ -332,10 +338,38 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'cost_level',
   'risk_level',
   'composition',
+  'input_requirements',
+  'report_template',
 ]);
 
 export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
   return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+}
+
+export function skillLightweightContractIssues(skill: SkillRegistryEntry): string[] {
+  const hasRequirements = skill.input_requirements !== undefined;
+  const hasTemplate = skill.report_template !== undefined;
+  if (!hasRequirements && !hasTemplate) return [];
+  const issues: string[] = [];
+  if (!hasRequirements) issues.push('report_template requires input_requirements');
+  if (!hasTemplate) issues.push('input_requirements requires report_template');
+  if (hasRequirements) {
+    try {
+      parseSkillInputRequirements(skill.input_requirements);
+    } catch (error) {
+      issues.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (
+    hasTemplate
+    && (
+      typeof skill.report_template !== 'string'
+      || !skill.report_template.trim()
+      || skill.report_template.startsWith('/')
+      || skill.report_template.split('/').includes('..')
+    )
+  ) issues.push('report_template must be a safe project-relative path');
+  return issues;
 }
 
 const SKILL_COMPOSITION_FIELDS = new Set([

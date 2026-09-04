@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  SKILL_REPORT_VERSION,
+  parseSkillInputRequirements,
+  type LightweightSkillSnapshot,
+  type SkillInputRequirement,
+} from '../../../../packages/api-contract/lightweight-orchestration.ts';
 import type { LoadedSkillExecutionContract } from '../skills/skill-execution-contract.ts';
 import { loadSkillExecutionContract } from '../skills/skill-execution-contract.ts';
 import {
@@ -176,6 +183,33 @@ export class SkillLoader {
       throw new Error(`compiled Skill ${id} is missing execution_contract`);
     }
     return loadSkillExecutionContract(entry.execution_contract, id);
+  }
+
+  loadLightweightSnapshot(id: string): LightweightSkillSnapshot {
+    const entry = this.getSkill(id);
+    if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
+    if (!entry.input_requirements || !entry.report_template) {
+      throw new Error(`skill ${id} has no lightweight input/report contract`);
+    }
+    const body = this.loadSkillBody(id);
+    const inputRequirements: SkillInputRequirement[] = parseSkillInputRequirements(
+      entry.input_requirements,
+    );
+    const reportTemplate = readFileSync(join(getConfigRoot(), entry.report_template), 'utf8');
+    if (!reportTemplate.trim()) throw new Error(`skill ${id} report template is empty`);
+    const digest = (value: string): string => `sha256:${createHash('sha256').update(value).digest('hex')}`;
+    const execution = this.loadSkillExecution(id);
+    return {
+      skill_id: id,
+      body: body.body,
+      body_hash: body.hash,
+      input_requirements: inputRequirements,
+      input_requirements_hash: digest(JSON.stringify(inputRequirements)),
+      output_schema_hash: digest(SKILL_REPORT_VERSION),
+      report_template: reportTemplate,
+      report_template_hash: digest(reportTemplate),
+      ...(execution ? { execution_contract_hash: execution.hash } : {}),
+    };
   }
 
   // 第三层:执行期加载 Skill 输入与统一输出信封；有领域 payload 时内联为同一有效合同。

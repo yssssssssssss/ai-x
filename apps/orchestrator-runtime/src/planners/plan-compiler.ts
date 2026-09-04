@@ -351,14 +351,24 @@ function freezeCapabilityDecisions(
 ): CurrentCapabilityDecisions {
   const freezeDecision = (
     decision: CapabilityResolution['eligible'][number] | CurrentCapabilityDecisions['eligible'][number],
-  ) => ({
-    ...structuredClone(decision),
-    skill: {
-      ...structuredClone(decision.skill),
-      optional_tools: [...(decision.skill.optional_tools ?? [])],
-    },
-    optional_tool_decisions: structuredClone(decision.optional_tool_decisions ?? []),
-  });
+  ) => {
+    const {
+      input_requirements: _inputRequirements,
+      report_template: _reportTemplate,
+      ...persistedSkill
+    } = decision.skill as typeof decision.skill & {
+      input_requirements?: unknown;
+      report_template?: unknown;
+    };
+    return {
+      ...structuredClone(decision),
+      skill: {
+        ...structuredClone(persistedSkill),
+        optional_tools: [...(decision.skill.optional_tools ?? [])],
+      },
+      optional_tool_decisions: structuredClone(decision.optional_tool_decisions ?? []),
+    };
+  };
   return {
     eligible: resolution.eligible.map(freezeDecision),
     rejected: resolution.rejected.map(freezeDecision),

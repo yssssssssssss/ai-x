@@ -8,6 +8,7 @@ import {
   skillCompositionIssues,
   skillDatasetInputIssue,
   skillOptionalToolIssue,
+  skillLightweightContractIssues,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
   type SkillRegistryEntry,
@@ -103,6 +104,9 @@ function lintSkills(issues: LintIssue[]): void {
     for (const message of skillCompositionIssues(s)) {
       issues.push({ level: 'error', target: tgt, message });
     }
+    for (const message of skillLightweightContractIssues(s)) {
+      issues.push({ level: 'error', target: tgt, message });
+    }
     if (
       s.composition?.contribution_adapter
       && !(CONTRIBUTION_ADAPTER_IDS as readonly string[]).includes(s.composition.contribution_adapter)
@@ -148,6 +152,9 @@ function lintSkills(issues: LintIssue[]): void {
     }
     if (s.payload_schema && !fileExists(s.payload_schema)) {
       issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
+    }
+    if (s.report_template && !fileExists(s.report_template)) {
+      issues.push({ level: 'error', target: tgt, message: `report_template 不存在: ${s.report_template}` });
     }
     const executionMode = s.execution_mode ?? 'legacy_single_call';
     if (executionMode === 'compiled') {

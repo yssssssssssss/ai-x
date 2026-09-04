@@ -314,6 +314,34 @@ skills:
       - competitive_research
       - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
+    required_tools:
+      - tavily-web-search
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: 本次竞品分析需要回答的问题、范围与决策目标。
+        required: true
+        multiple: false
+        acceptedSources: [conversation]
+        question: 本次竞品分析需要回答什么问题？
+      - key: public_evidence
+        kind: value
+        label: 竞品公开资料
+        description: 可核验的竞品页面、功能、运营活动、价格或公开报道。
+        required: false
+        multiple: true
+        acceptedSources: [upload, database, knowledge, tool]
+        question: 是否有希望纳入分析的竞品公开资料？
+      - key: user_materials
+        kind: value
+        label: 补充研究材料
+        description: 用户提供的竞品观察、内部背景或已脱敏研究材料。
+        required: false
+        multiple: true
+        acceptedSources: [conversation, upload, database]
+        question: 是否有可用于补充竞品判断的研究材料？
+    report_template: knowledge-base/skills/competitive-analysis/references/competitive-analysis-skeleton.md
     status: active
     composition:
       modes: [standalone, contributor, synthesizer]
@@ -433,6 +461,40 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     dataset_inputs:
       - user_research_dataset
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: Persona 需要服务的研究问题和决策目标。
+        required: true
+        multiple: false
+        acceptedSources: [conversation]
+        question: 这组 Persona 需要支持什么研究或产品决策？
+      - key: user_materials
+        kind: value
+        label: 用户研究材料
+        description: 已脱敏的访谈记录、定性发现或用户原话。
+        required: false
+        multiple: true
+        acceptedSources: [conversation, upload, database]
+        question: 是否有可用于生成 Persona 的用户研究材料？
+      - key: qualitative_insights
+        kind: value
+        label: 已有定性洞察
+        description: 已完成的定性主题、洞察或研究结论。
+        required: false
+        multiple: true
+        acceptedSources: [conversation, upload, database]
+        question: 是否有可以复用的定性洞察？
+      - key: user_research_dataset
+        kind: dataset
+        label: 用户研究数据集
+        description: 用于支持或验证用户分型的数据集。
+        required: false
+        multiple: false
+        acceptedSources: [upload, database]
+        question: 是否有可用于支持用户分型的数据集？
+    report_template: knowledge-base/skills/generate-persona/references/persona-skeleton.md
     required_tools:
       - tavily-web-search
     execution_mode: compiled
@@ -638,6 +700,32 @@ skills:
       - user_research_planning
       - industry_market_analysis
     output_schema: schemas/skill-result-envelope.schema.json
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: 需要向上翻译为 Job 的需求、功能设想或业务问题。
+        required: true
+        multiple: false
+        acceptedSources: [conversation]
+        question: 需要分析的是哪条需求、功能设想或业务问题？
+      - key: user_materials
+        kind: value
+        label: 用户研究材料
+        description: 已脱敏的 Job/Switch 访谈、用户反馈或流失原声。
+        required: false
+        multiple: true
+        acceptedSources: [conversation, upload, database]
+        question: 是否有可用于验证 Job 的用户研究材料？
+      - key: qualitative_insights
+        kind: value
+        label: 已有定性洞察
+        description: 与当前需求相关的已验证洞察或研究结论。
+        required: false
+        multiple: true
+        acceptedSources: [conversation, upload, database]
+        question: 是否有可以复用的定性洞察？
+    report_template: knowledge-base/skills/jobs-to-be-done/references/jtbd-skeleton.md
     required_tools:
       - tavily-web-search
     execution_mode: compiled
