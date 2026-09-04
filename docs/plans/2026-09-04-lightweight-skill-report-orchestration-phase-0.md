@@ -1,7 +1,7 @@
 # 轻量 Skill 报告编排 Phase 0 边界冻结记录
 
 > 日期：2026-09-04
-> 状态：Phase 0 完成，尚未开始业务代码修改
+> 状态：Phase 0 经独立审查补充冻结，尚未开始业务代码修改
 > 方案：`docs/plans/2026-09-04-lightweight-skill-report-orchestration-development.md`
 
 ## 1. 开发隔离与切换边界
@@ -61,7 +61,48 @@
 
 ## 4. 冻结的最小合同
 
-Phase 0 保持开发方案中的字段集合，不继续增加版本层、错误码、审计账本或兼容字段。
+Phase 0 保持轻量边界，不增加多版本 Reader、错误码目录、审计账本或兼容字段。独立审查确认，新路径还必须有一个明确 Plan 判别项，否则无法与历史 v2/v3 Plan 隔离。
+
+### 4.1 LightweightExecutionPlanV1
+
+```ts
+interface LightweightSkillSnapshot {
+  skillId: string;
+  body: string;
+  bodyHash: string;
+  inputRequirements: SkillInputRequirement[];
+  inputRequirementsHash: string;
+  reportTemplate: string;
+  reportTemplateHash: string;
+  executionContractHash?: string;
+}
+
+interface LightweightSkillInvocation {
+  invocationId: string;
+  skillId: string;
+  dependsOnInvocationIds: string[];
+  stepNos: number[];
+  required: boolean;
+  failurePolicy: 'block' | 'gap';
+  snapshot: LightweightSkillSnapshot;
+}
+
+interface LightweightExecutionPlanV1 {
+  executionContractVersion: 'lightweight-execution-plan-v1';
+  taskId: string;
+  mode: 'single_skill' | 'multi_skill';
+  invocations: LightweightSkillInvocation[];
+  resolvedInputs: ResolvedPlanInputs;
+  steps: CurrentPlanStep[];
+}
+```
+
+- 只有该 discriminator 能进入轻量执行、恢复与报告读取路径；不得根据时间、Task mode、文件存在或旧 Artifact 内容猜测。
+- Plan 直接保存冻结的 Skill 正文、输入合同和报告模板及其 hash。执行期间不得重新读取活动目录内容来替换快照。
+- `single_skill` 恰好一个 Invocation；`multi_skill` 包含 1..N Contributor Invocation，不包含旧 Synthesizer Skill。最终综合由 Reporting Module 发起一次文本 LLM 调用。
+- `steps` 继续复用现有 DAG、Lease、Tool、Knowledge 与 Artifact 执行能力；旧 v2/v3 Plan 不得进入该路径。
+
+### 4.2 SkillInputRequirement
 
 ```ts
 type SkillInputSource =
@@ -73,6 +114,7 @@ type SkillInputSource =
 
 interface SkillInputRequirement {
   key: string;
+  kind: 'value' | 'visual' | 'dataset';
   label: string;
   description: string;
   required: boolean;
@@ -82,20 +124,31 @@ interface SkillInputRequirement {
 }
 ```
 
+### 4.3 ResolvedPlanInputs
+
 ```ts
 interface ResolvedPlanInputs {
   resolved: Array<{
     key: string;
     valueRef: string;
-    source: SkillInputSource;
+    source: Exclude<SkillInputSource, 'knowledge' | 'tool'>;
     targetInvocationIds: string[];
   }>;
   pending: Array<{
     requirement: SkillInputRequirement;
     targetInvocationIds: string[];
   }>;
+  waived: Array<{
+    key: string;
+    targetInvocationIds: string[];
+    reason: string;
+  }>;
 }
 ```
+
+Knowledge 与 Tool 输入由冻结 DAG output binding 满足，不伪造为执行前已经存在的 `valueRef`。
+
+### 4.4 SkillReport
 
 ```ts
 interface SourceReference {
@@ -114,14 +167,19 @@ interface SkillReport {
   markdown: string;
   sources: SourceReference[];
   gaps: string[];
+  missingInputKeys?: string[];
 }
 ```
+
+`SourceReference` 不是模型自由输出，而是平台从已验证输入、Knowledge 与 Tool Artifact 确定性投影。`needs_input` 时 `missingInputKeys` 必须非空且属于当前 Invocation 的冻结输入合同；其他状态不得携带该字段。
+
+### 4.5 FinalReport
 
 ```ts
 interface FinalReport {
   version: 'final-report-v1';
   taskId: string;
-  planId: string;
+  planVersionId: string;
   attemptId: string;
   mode: 'single_skill' | 'multi_skill';
   title: string;
@@ -131,23 +189,39 @@ interface FinalReport {
   skillReports: Array<{
     skillId: string;
     invocationId: string;
-    status: SkillReport['status'];
+    status: Exclude<SkillReport['status'], 'needs_input'>;
     path: string;
   }>;
 }
 ```
 
-### 4.1 最小语义约束
+### 4.6 最小语义约束
 
-- `SkillInputRequirement.key` 是跨 Skill 去重键；只有语义相同的输入使用同一个 key。
+- `SkillInputRequirement.key` 是跨 Skill 去重键；只有语义相同且 `kind` 一致的输入使用同一个 key。
 - `valueRef` 只保存受控存储引用，不内联原始敏感内容。`multiple: true` 时，该引用指向一个已绑定的集合 Artifact，不再增加单值/多值联合类型。
-- `resolved` 与 `pending` 对同一个 key 互斥；`targetInvocationIds` 必须属于当前冻结 Plan。
+- `resolved`、`pending` 与 `waived` 对同一个 key 互斥；`targetInvocationIds` 必须属于当前冻结 Plan。
+- 必需输入不能进入 `waived`；可选输入只有在用户明确确认继续后才能进入 `waived`，并确定性形成 Gap。
 - 会话、上传和有权限数据库资料在报告来源中统一归为 `user_input`；获取渠道仍保留在输入绑定记录中。数据库归属、权限、适用范围与可用状态只在 Input Resolution 信任边界校验一次。
-- `SourceReference.id` 必须对应已存在的输入、Knowledge 或 Tool 来源记录；URL 只能来自真实输入或 Tool 结果。
+- `SourceReference.id` 必须由系统投影到已存在的输入、Knowledge 或 Tool 来源记录；模型不得创建 SourceReference。Markdown 只允许 `[S-id]` 引用，所有外部链接必须与已验证来源 URL 完全一致。
 - Single 的 `FinalReport.markdown` 保持 Skill 正文与章节顺序不变，只允许系统在正文后确定性追加来源和 Gap。
 - Multi 只允许一次综合 LLM 生成正文；来源和 Gap 由系统确定性合并、追加。综合失败时拼接各 Skill 原始 Markdown，不重跑 Skill。
-- `FinalReport.skillReports[].path` 只能是当前 Task 工作区内的相对 JSON 路径。
+- `FinalReport.skillReports[].path` 只能是当前 Task 工作区内的相对 JSON 路径，且状态不得为 `needs_input`。
 - 合同只在受信边界校验一次；不在 Loader、Planner、Execution、Reporting 重复实现同一套校验。
+
+### 4.7 终态 Artifact 与固定路径
+
+轻量执行以唯一 SEALED `final_report` Artifact 为终态根：
+
+| Artifact kind | 固定相对路径 | Schema / media type |
+|---|---|---|
+| `skill_report` | `skill-results/<invocation-id>.json` | `skill-report-v1` |
+| `skill_report_markdown` | `skill-results/<invocation-id>.md` | `text/markdown; charset=utf-8` |
+| `final_report` | `reports/final-report.json` | `final-report-v1` |
+| `final_report_markdown` | `reports/report.md` | `text/markdown; charset=utf-8` |
+| `final_report_html` | `reports/report.html` | `text/html; charset=utf-8` |
+| `report_sources` | `reports/sources.json` | `source-reference-list-v1` |
+
+完成、命令丢失恢复、Artifact invalidation 与读取都从 `reports/final-report.json` 的 SEALED 身份开始，不从旧 ReportReview、ReportDocument 或 ReportPackage 重建。
 
 ## 5. 纵切选择
 
@@ -206,14 +280,14 @@ jobs-to-be-done ──────┘
 - ADR-0008、0010：ReportDocument / ReportPackage / Editorial Summary 双报告集；
 - ADR-0011：Single Skill Plan v2 的 Legacy Invocation 兼容。
 
-ADR-0004 的 plan/answer 任务语义、ADR-0009 的用户显式选择并冻结 Single/Multi 模式、ADR-0001/0002 的真实调用安全边界仍可保留。正式写代码前应新增一份轻量架构 ADR，明确上述“仅对新 Task 被取代”的范围；不修改历史 ADR 来伪造历史决策。
+ADR-0004 的 plan/answer 任务语义、ADR-0009 的用户显式选择并冻结 Single/Multi 模式、ADR-0001/0002 的真实调用安全边界仍可保留。ADR-0012 作为本次 Phase 0 补充冻结的一部分，与本文件一起先于业务代码提交。它明确上述“仅对新 Task 被取代”的范围；不修改历史 ADR 来伪造历史决策。
 
 ## 7. 最小实施范围（写代码前检查点）
 
 第一条可运行纵切最多新增 5 个文件：
 
 1. `docs/adr/0012-adopt-lightweight-skill-report-orchestration.md`：记录新 Task 的取代关系与切换边界；
-2. `packages/api-contract/lightweight-orchestration.ts`：四个合同、`SourceReference` 与唯一的边界解析；
+2. `packages/api-contract/lightweight-orchestration.ts`：Plan discriminator、四个合同、`SourceReference` 与唯一的边界解析；
 3. `apps/orchestrator-runtime/src/input-resolution/resolved-plan-inputs.ts`：输入聚合、去重和 Invocation 绑定；
 4. `apps/orchestrator-runtime/src/report/lightweight-reporting.ts`：Single 直出、Multi 一次综合、来源/Gap 附录和失败拼接；
 5. `tests/lightweight-skill-report-orchestration.test.ts`：一个 Single Fixture 与一个三 Skill Multi Fixture。
