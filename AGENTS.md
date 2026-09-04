@@ -19,6 +19,11 @@ Single-context — root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.m
 Before calibrating a feature with real model calls, follow
 `docs/agents/real-llm-development-workflow.md`: freeze local contracts and diagnostics first, then run one real single-path and one real second-path smoke.
 
+## Browser
+
+- When a task requires browser access or interaction, use the `ego-browser`
+  skill and Ego Lite.
+
 ## Design simplicity (anti-over-engineering)
 
 Over-engineering is the most frequent correction in this workspace. These are
