@@ -290,8 +290,9 @@ test('a denied data policy falls back without calling the LLM or exposing an err
   assert.equal(inspectedProvider, llm.identity);
 });
 
-test('production data policy only allows classified public or internal non-PII material', async () => {
-  const allowedClassifications = [
+test('production data policy allows business classifications with a real eligible provider', async () => {
+  const classifications = [
+    undefined,
     {
       taskSensitivity: 'public' as const,
       piiDetected: false,
@@ -302,20 +303,6 @@ test('production data policy only allows classified public or internal non-PII m
       piiDetected: false,
       hasSensitiveOrBlockedEvidence: false,
     },
-  ];
-  for (const dataClassification of allowedClassifications) {
-    const llm = new PlannerLlm(modelBlueprint(materialFixture()));
-    const result = await new ReportEditorialPlanner({
-      llm,
-      estimatePromptTokens: () => 1_000,
-      dataPolicy: productionReportEditorialPlannerDataPolicy,
-    }).plan({ ...planInput(), dataClassification });
-    assert.equal(result.mode, 'model');
-    assert.equal(llm.calls.length, 1);
-  }
-
-  const deniedClassifications = [
-    undefined,
     {
       taskSensitivity: 'confidential' as const,
       piiDetected: false,
@@ -332,7 +319,7 @@ test('production data policy only allows classified public or internal non-PII m
       hasSensitiveOrBlockedEvidence: true,
     },
   ];
-  for (const dataClassification of deniedClassifications) {
+  for (const dataClassification of classifications) {
     const llm = new PlannerLlm(modelBlueprint(materialFixture()));
     const result = await new ReportEditorialPlanner({
       llm,
@@ -342,21 +329,21 @@ test('production data policy only allows classified public or internal non-PII m
       ...planInput(),
       ...(dataClassification ? { dataClassification } : {}),
     });
-    assert.equal(result.mode, 'fallback');
-    assert.equal(result.reasonCode, 'data_policy_denied');
-    assert.equal(llm.calls.length, 0);
+    assert.equal(result.mode, 'model');
+    assert.equal(llm.calls.length, 1);
   }
 
   const safeInput = buildReportEditorialPlannerInputV1(materialFixture());
+  const classification = classifications[1];
   assert.equal(productionReportEditorialPlannerDataPolicy(
     safeInput,
     { ...new PlannerLlm(null).identity, mode: 'mock' },
-    allowedClassifications[0],
+    classification,
   ), false);
   assert.equal(productionReportEditorialPlannerDataPolicy(
     safeInput,
     { ...new PlannerLlm(null).identity, eligibleAsReal: false },
-    allowedClassifications[0],
+    classification,
   ), false);
 });
 

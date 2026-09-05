@@ -4952,8 +4952,7 @@ test('executes the current plan with real Tool provenance and complete model rec
     assert.doesNotMatch(serialized, /secret-value/);
     assert.doesNotMatch(serialized, /secret-token/);
     assert.doesNotMatch(serialized, /\bBearer\b/i);
-    assert.doesNotMatch(serialized, /owner@example\.com|13800138000/);
-    assert.match(serialized, /\[REDACTED_EMAIL\]|\[REDACTED_PHONE\]/);
+    assert.match(serialized, /owner@example\.com|13800138000/);
     const evidenceArtifacts = await connection.query(
       `SELECT id, state, storage_uri, content_sha256
        FROM control_artifacts WHERE attempt_id = $1 AND kind = 'evidence_manifest'`,
@@ -6585,12 +6584,13 @@ test('production report material discovery rejects foreign, tampered, and unseal
   await assert.rejects(unsealed.discover(), /sealed|state|manifest/i);
 });
 
-test('production report material discovery ignores an unrelated export-blocked screenshot', async () => {
+test('production report material discovery includes a verified blocked-policy screenshot', async () => {
   const blocked = await reportMaterialDiscoveryFixture('block');
 
   const discovered = await blocked.discover();
 
-  assert.deepEqual(discovered.visualAssets, []);
+  assert.equal(discovered.visualAssets.length, 1);
+  assert.equal(discovered.visualAssets[0]?.manifest.exportPolicy, 'block');
   assert.deepEqual(discovered.charts, []);
 });
 
@@ -7847,7 +7847,7 @@ test('does not seal a step Artifact when the lease expires before artifact seal'
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
-test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later step context', async () => {
+test('passes Skill, LLM, and Reviewer business PII while protecting credentials', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
   const llm = new EchoingSensitiveRealLLM();
   const deliverables = new RecordingDeliverablesFake();
@@ -7890,43 +7890,39 @@ test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later st
   const serializedLaterContext = JSON.stringify(llm.contexts);
   const serializedDeliverableInput = JSON.stringify(deliverables.calls[0]);
   const persistedAndForwarded = `${serializedArtifacts}\n${serializedLaterContext}\n${serializedDeliverableInput}`;
-  for (const secret of Object.values(echoedSecrets)) {
-    assert.doesNotMatch(persistedAndForwarded, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-  }
   assert.doesNotMatch(persistedAndForwarded, /\bBearer\s+(?:skill|llm|reviewer)-token\b/iu);
-  assert.doesNotMatch(persistedAndForwarded, /(?:skill|llm|reviewer)-owner@example\.test/iu);
-  assert.doesNotMatch(persistedAndForwarded, /1380013800[123]/u);
+  assert.match(persistedAndForwarded, /(?:skill|llm|reviewer)-owner@example\.test/iu);
+  assert.match(persistedAndForwarded, /1380013800[123]/u);
   assert.doesNotMatch(persistedAndForwarded, /(?:skill|llm|reviewer)-key/u);
   assert.match(persistedAndForwarded, /\[REDACTED/u);
 });
 
-for (const blockedStage of ['skill', 'llm', 'reviewer'] as const) {
-  test(`rejects blocked sensitive ${blockedStage} output before sealing it`, async () => {
-    const blockedStepIndex = { skill: 1, llm: 2, reviewer: 3 }[blockedStage];
+for (const directStage of ['skill', 'llm', 'reviewer'] as const) {
+  test(`passes sensitive business ${directStage} output through sealing`, async () => {
+    const stageStepIndex = { skill: 1, llm: 2, reviewer: 3 }[directStage];
     const { repository, lease } = await claimedExecution(
       new Date(Date.now() + 60_000),
-      planSteps.slice(0, blockedStepIndex + 1),
+      planSteps.slice(0, stageStepIndex + 1),
     );
     const result = await buildEngine(
       repository,
       new ToolRouter().register(new CountingRealTavilyAdapter()),
-      new BlockedSensitiveStageLLM(blockedStage),
+      new BlockedSensitiveStageLLM(directStage),
     ).execute({ lease, expectedModel: 'pinned-model' });
 
-    assert.equal(result.status, 'paused');
-    assert.equal(result.failure?.kind, 'safety');
-    const blockedKind = {
+    assert.equal(result.status, 'completed');
+    const outputKind = {
       skill: 'skill_output',
       llm: 'llm_output',
       reviewer: 'review_output',
-    }[blockedStage];
+    }[directStage];
     const connection = await scopedDatabase.connect();
     try {
       const artifacts = await connection.query(
         `SELECT state FROM control_artifacts WHERE attempt_id = $1 AND kind = $2`,
-        [lease.attemptId, blockedKind],
+        [lease.attemptId, outputKind],
       );
-      assert.equal(artifacts.rows.some((row) => row.state === 'SEALED'), false);
+      assert.equal(artifacts.rows.some((row) => row.state === 'SEALED'), true);
     } finally {
       connection.release();
     }
@@ -8203,7 +8199,7 @@ test('persists the real Tool receipt when output schema validation fails', async
   assert.match(String(steps[0]?.toolProvenance?.outputHash), /^sha256:/);
 });
 
-test('blocks sensitive business output before artifact persistence', async () => {
+test('persists sensitive business output directly', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
   const result = await buildEngine(
     repository,
@@ -8211,15 +8207,16 @@ test('blocks sensitive business output before artifact persistence', async () =>
     new CountingRealLLM(),
   ).execute({ lease, expectedModel: 'pinned-model' });
 
-  assert.equal(result.status, 'paused');
-  assert.equal(result.failure?.kind, 'safety');
+  assert.equal(result.status, 'completed');
   const connection = await scopedDatabase.connect();
   try {
     const artifacts = await connection.query(
-      `SELECT count(*) AS count FROM control_artifacts WHERE attempt_id = $1`,
+      `SELECT storage_uri FROM control_artifacts WHERE attempt_id = $1 AND kind = 'tool_output' AND state = 'SEALED'`,
       [lease.attemptId],
     );
-    assert.equal(Number(artifacts.rows[0]?.count), 0);
+    assert.equal(artifacts.rows.length, 1);
+    const persisted = readFileSync(String(artifacts.rows[0]?.storage_uri), 'utf8');
+    assert.match(persisted, /confidential internal-only roadmap/u);
   } finally {
     connection.release();
   }

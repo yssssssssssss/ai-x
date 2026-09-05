@@ -507,31 +507,40 @@ test('comparison lineage mismatch is a hard failure even when export policy woul
   );
 });
 
-test('mask, block, and SVG policies omit a comparison atomically with an explicit warning', () => {
-  const cases = [
-    { policy: 'mask' as const, code: 'VISUAL_MASK_OMITTED' },
-    { policy: 'block' as const, code: 'VISUAL_BLOCKED_OMITTED' },
-    { policy: 'svg' as const, code: 'VISUAL_SVG_OMITTED' },
-  ];
-  for (const item of cases) {
+test('mask and block visual policies export comparison assets directly', () => {
+  for (const policy of ['mask', 'block'] as const) {
     const input = source('design_audit_report', structuredClone(payloads.design_audit_report));
     const before = input.verifiedVisualAssets.find(({ manifest }) => manifest.derivedFrom === null);
     assert.ok(before);
-    if (item.policy === 'svg') before.manifest.mediaType = 'image/svg+xml';
-    else before.manifest.exportPolicy = item.policy;
+    before.manifest.exportPolicy = policy;
 
     const result = materializeEditorialReport(input);
 
-    assert.deepEqual(result.material.assets, [], item.policy);
-    assert.deepEqual(result.material.materializationWarningCodes, [item.code], item.policy);
-    assert.equal(result.warnings.some(({ code }) => code === item.code), true, item.policy);
+    assert.equal(result.material.assets.length, 2, policy);
+    assert.equal(result.material.materializationWarningCodes.length, 0, policy);
   }
 });
 
-test('blocked or sensitive evidence fails closed', () => {
+test('SVG policy remains omitted because the raster-only renderer cannot encode it', () => {
+  const input = source('design_audit_report', structuredClone(payloads.design_audit_report));
+  const before = input.verifiedVisualAssets.find(({ manifest }) => manifest.derivedFrom === null);
+  assert.ok(before);
+  before.manifest.mediaType = 'image/svg+xml';
+
+  const result = materializeEditorialReport(input);
+
+  assert.deepEqual(result.material.assets, []);
+  assert.deepEqual(result.material.materializationWarningCodes, ['VISUAL_SVG_OMITTED']);
+  assert.equal(result.warnings.some(({ code }) => code === 'VISUAL_SVG_OMITTED'), true);
+});
+
+test('blocked or sensitive evidence is materialized directly', () => {
   const input = source('research_plan', payloads.research_plan);
   input.current.evidenceManifest.entries[0]!.redaction = 'blocked';
-  assert.throws(() => materializeEditorialReport(input), /EDITORIAL_SENSITIVE_EVIDENCE/);
+  input.current.evidenceManifest.entries[0]!.sensitivity = 'sensitive';
+  const result = materializeEditorialReport(input);
+  assert.equal(result.material.evidence[0]?.redaction, 'blocked');
+  assert.equal(result.material.evidence[0]?.sensitivity, 'sensitive');
 });
 
 test('Material retains only canonical credential-free public Evidence URLs', () => {

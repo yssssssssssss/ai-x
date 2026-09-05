@@ -380,7 +380,6 @@ function assertVerifiedVisualAsset(
   ) {
     fail(`${label} Visual Asset, bytes, and Manifest identity do not match`);
   }
-  if (asset.manifest.exportPolicy === 'block') fail(`${label} Visual Asset is blocked from report export`);
 }
 
 function assetReference(asset: VerifiedVisualAsset): ReportAssetReference {

@@ -465,17 +465,6 @@ export interface EditorialModelEgressPolicy {
   defaultDecision: 'deny';
   allowed: readonly [
     {
-      sensitivity: 'public';
-      redactionPolicyVersion: 'v1';
-      provider: 'gateway';
-      mode: 'real';
-      endpointHost: 'llm-gw.jd.local';
-      endpointUrl: 'http://llm-gw.jd.local/v1/chat/completions';
-      redirectMode: 'error';
-    },
-    {
-      sensitivity: 'internal';
-      redactionPolicyVersion: 'v1';
       provider: 'gateway';
       mode: 'real';
       endpointHost: 'llm-gw.jd.local';
@@ -492,8 +481,6 @@ export interface EditorialModelEgressDecision {
   decision: 'allow' | 'deny';
   reasonCode:
     | 'EGRESS_ALLOWED'
-    | 'EGRESS_SENSITIVITY_DENIED'
-    | 'EGRESS_REDACTION_POLICY_DENIED'
     | 'EGRESS_PROVIDER_DENIED'
     | 'EGRESS_MODE_DENIED'
     | 'EGRESS_ENDPOINT_DENIED'
@@ -1132,9 +1119,6 @@ function parseEditorialEvidence(value: unknown, path: string): EditorialEvidence
   const toolTier = candidate.toolTier === undefined
     ? undefined
     : enumValue(candidate.toolTier, ['core', 'optional'], `${path}/toolTier`);
-  if (sensitivity === 'sensitive' || redaction === 'blocked') {
-    fail('REFERENCE_INTEGRITY', 'blocked or sensitive Evidence cannot enter Material', 'reference_integrity', path);
-  }
   let sourceUrl: string | undefined;
   if (candidate.sourceUrl !== undefined) {
     const rawUrl = stringValue(candidate.sourceUrl, `${path}/sourceUrl`, 4_096);
@@ -1146,7 +1130,6 @@ function parseEditorialEvidence(value: unknown, path: string): EditorialEvidence
     }
     if (
       evidenceClass !== 'public_source'
-      || sensitivity !== 'public'
       || parsedUrl.protocol !== 'https:'
       || parsedUrl.username !== ''
       || parsedUrl.password !== ''
@@ -1450,17 +1433,6 @@ const MODEL_EGRESS_POLICY_BODY = {
   defaultDecision: 'deny',
   allowed: [
     {
-      sensitivity: 'public',
-      redactionPolicyVersion: 'v1',
-      provider: 'gateway',
-      mode: 'real',
-      endpointHost: 'llm-gw.jd.local',
-      endpointUrl: 'http://llm-gw.jd.local/v1/chat/completions',
-      redirectMode: 'error',
-    },
-    {
-      sensitivity: 'internal',
-      redactionPolicyVersion: 'v1',
       provider: 'gateway',
       mode: 'real',
       endpointHost: 'llm-gw.jd.local',
@@ -1627,11 +1599,7 @@ export function evaluateEditorialModelEgress(input: {
     redirectMode: configuration?.redirectMode ?? null,
   };
   let reasonCode: EditorialModelEgressDecision['reasonCode'];
-  if (sensitivities.some((value) => value !== 'public' && value !== 'internal')) {
-    reasonCode = 'EGRESS_SENSITIVITY_DENIED';
-  } else if (redactionPolicyVersions.some((value) => value !== 'v1')) {
-    reasonCode = 'EGRESS_REDACTION_POLICY_DENIED';
-  } else if (configuration === null) {
+  if (configuration === null) {
     reasonCode = 'EGRESS_MODEL_UNCONFIGURED';
   } else if (configuration.provider !== 'gateway') {
     reasonCode = 'EGRESS_PROVIDER_DENIED';
@@ -3228,8 +3196,6 @@ export function createEditorialVisualWarning<TCode extends EditorialVisualWarnin
 function createPhase1EgressWarning(reasonCode: string): EditorialDiagnosticIssue {
   const messages: Readonly<Record<string, string>> = Object.freeze({
     EGRESS_MODEL_UNCONFIGURED: 'The Phase 1 model port is intentionally unconfigured; the deterministic report was used.',
-    EGRESS_SENSITIVITY_DENIED: 'Source sensitivity is not eligible for model egress; the deterministic report was used.',
-    EGRESS_REDACTION_POLICY_DENIED: 'Source redaction policy is not eligible for model egress; the deterministic report was used.',
   });
   return {
     code: reasonCode,
@@ -3549,7 +3515,7 @@ export function parseEditorialModelEgressDecision(
   }
   const decision = enumValue(candidate.decision, ['allow', 'deny'], `${path}/decision`);
   const reasonCode = enumValue(candidate.reasonCode, [
-    'EGRESS_ALLOWED', 'EGRESS_SENSITIVITY_DENIED', 'EGRESS_REDACTION_POLICY_DENIED',
+    'EGRESS_ALLOWED',
     'EGRESS_PROVIDER_DENIED', 'EGRESS_MODE_DENIED', 'EGRESS_ENDPOINT_DENIED',
     'EGRESS_REDIRECT_POLICY_DENIED', 'EGRESS_MODEL_UNCONFIGURED',
   ], `${path}/reasonCode`);

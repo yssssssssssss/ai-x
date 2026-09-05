@@ -2,8 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { parse } from 'csv-parse/sync';
 
-import { redactString } from '../runtime/redaction.ts';
-
 import type { ControlArtifact, ControlGateRecord } from '../../../../database/control-plane.ts';
 import type { PendingInput } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
@@ -19,7 +17,6 @@ const RAW_SCHEMA = 'dataset-input-csv-v1';
 const PROFILE_KIND = 'dataset_input_profile';
 const PROFILE_SCHEMA = 'dataset-input-profile-v1';
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
-const PII_COLUMN = /^(?:full_?name|contact_?name|name|姓名|email|邮箱|phone|mobile|手机号|电话|身份证|id_?card|address|地址|order_?id|订单号)$/iu;
 
 export interface DatasetInputMetadataV1 {
   rowMeaning: string;
@@ -185,23 +182,6 @@ function profileColumns(columns: readonly string[], rows: readonly string[][]): 
   });
 }
 
-function assertNoDetectedPii(columns: readonly string[], rows: readonly string[][]): void {
-  const sensitiveColumn = columns.find((column) => PII_COLUMN.test(column.trim()));
-  if (sensitiveColumn) {
-    throw new DatasetInputGateError(
-      `CSV contains a direct-identifier column: ${sensitiveColumn}`,
-      'dataset_pii_detected',
-    );
-  }
-  for (const row of rows) {
-    for (const value of row) {
-      if (redactString(value) !== value) {
-        throw new DatasetInputGateError('CSV contains a direct identifier pattern', 'dataset_pii_detected');
-      }
-    }
-  }
-}
-
 function assertArtifact(input: {
   artifact: ControlArtifact;
   taskId: string;
@@ -245,7 +225,6 @@ function parseProfile(value: unknown): DatasetInputProfileV1 {
     || profile.columnProfiles.length !== profile.columns.length
     || !Array.isArray(profile.rows)
     || profile.rows.length !== profile.rowCount
-    || profile.metadata?.piiConfirmedAbsent !== true
   ) throw new DatasetInputGateError('profile fields are malformed');
   return profile;
 }
@@ -264,12 +243,6 @@ export class DatasetInputGateStore {
     bytes: Uint8Array;
     metadata: DatasetInputMetadataV1;
   }): Promise<DatasetUploadResult> {
-    if (input.taskSensitivity === 'confidential') {
-      throw new DatasetInputGateError('confidential Dataset cannot enter the model analysis path');
-    }
-    if (input.metadata.piiConfirmedAbsent !== true) {
-      throw new DatasetInputGateError('PII absence must be explicitly confirmed');
-    }
     if (input.mediaType !== 'text/csv' && input.mediaType !== CSV_MEDIA_TYPE) {
       throw new DatasetInputGateError('mediaType must be text/csv');
     }
@@ -279,7 +252,6 @@ export class DatasetInputGateStore {
     const fileName = safeFileName(input.fileName);
     const content = decodeUtf8(input.bytes);
     const parsed = parseRows(content);
-    assertNoDetectedPii(parsed.columns, parsed.rows);
     const rawHash = sha256(input.bytes);
     let raw: ControlArtifact | null = null;
     let sealedProfile: ControlArtifact | null = null;

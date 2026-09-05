@@ -306,7 +306,7 @@ function actionableBlockingIssues(
   originalInput: string,
   mode: 'plan' | 'answer',
 ): ResearchTaskV2['blocking_issues'] {
-  if (mode !== 'answer' || requirement.pii_detected) return requirement.blocking_issues;
+  if (mode !== 'answer') return requirement.blocking_issues;
   const publicOnly = /(?:公开可访问|公开资料|公开来源|publicly accessible|public sources?)/iu.test(originalInput);
   const requestsRestrictedData = /(?:平台后台数据|私域用户数据|非公开销量数据|个人身份信息|登录后数据|private data|personal data)/iu.test(originalInput);
   if (!publicOnly || requestsRestrictedData) return requirement.blocking_issues;
@@ -563,7 +563,6 @@ function normalizeExplicitWeightedMatrix(requirement: ResearchTaskV2): ResearchT
 function normalizeClarificationGuidance(requirement: ResearchTaskV2): ResearchTaskV2 {
   const ambiguityIds = new Set(requirement.ambiguities.map(({ id }) => id));
   const protectedKeys = new Set(requirement.blocking_issues.map(({ key }) => key));
-  const suppressAllSuggestions = requirement.pii_detected || requirement.sensitivity === 'confidential';
   const questions = requirement.clarification_questions.map((question) => {
     const inferredAmbiguityId = question.ambiguity_id
       ?? (ambiguityIds.has(question.key) ? question.key : undefined);
@@ -577,7 +576,7 @@ function normalizeClarificationGuidance(requirement: ResearchTaskV2): ResearchTa
       throw new Error(`clarification question ${question.key} must contain 2-4 unique options`);
     }
     const suggestion = question.suggestion?.trim();
-    const suggestionAllowed = !suppressAllSuggestions && !protectedKeys.has(question.key);
+    const suggestionAllowed = !protectedKeys.has(question.key);
     return {
       key: question.key,
       question: question.question,

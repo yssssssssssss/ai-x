@@ -399,14 +399,7 @@ function manifestCall(call: EditorialModelCallRecord & { inputBlueprintHash?: Sh
 function expectedModelEgressReason(
   pipeline: EditorialReport['pipeline'],
 ): EditorialReport['pipeline']['modelEgress']['reasonCode'] {
-  const { evaluated } = pipeline.modelEgress;
   const configuration = pipeline.gatewayConfiguration;
-  if (evaluated.sensitivities.some((value) => value !== 'public' && value !== 'internal')) {
-    return 'EGRESS_SENSITIVITY_DENIED';
-  }
-  if (evaluated.redactionPolicyVersions.some((value) => value !== 'v1')) {
-    return 'EGRESS_REDACTION_POLICY_DENIED';
-  }
   if (configuration === null) return 'EGRESS_MODEL_UNCONFIGURED';
   if (configuration.provider !== 'gateway') return 'EGRESS_PROVIDER_DENIED';
   if (configuration.mode !== 'real' || !configuration.eligibleAsReal) return 'EGRESS_MODE_DENIED';

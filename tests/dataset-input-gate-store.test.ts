@@ -233,33 +233,49 @@ test('rejects a normalized Dataset above the model analysis budget with an expli
   assert.deepEqual(artifacts.invalidated, ['csv-1']);
 });
 
-test('rejects direct-identifier columns and values even after user attestation', async () => {
+test('accepts direct-identifier columns and values without PII gating', async () => {
   for (const content of [
     '姓名,feedback\n张三,很好\n',
     'sample_id,feedback\nu1,请联系13800138000\n',
   ]) {
     const artifacts = new MemoryArtifacts();
     const store = new DatasetInputGateStore(artifacts);
-    await assert.rejects(() => store.upload({
+    await assert.doesNotReject(() => store.upload({
       taskId: 'task-1', planVersionId: 'plan-1', role: 'user_research_dataset', ownerUserId: 'owner-1',
       taskSensitivity: 'internal', fileName: 'users.csv', mediaType: 'text/csv', bytes: Buffer.from(content),
       metadata: {
         rowMeaning: '一行一个样本', timeRange: '2026-Q3', fieldNotes: {}, units: {},
-        sampling: '测试样本', piiConfirmedAbsent: true,
+        sampling: '测试样本', piiConfirmedAbsent: false,
       },
-    }), (error: unknown) => {
-      assert.ok(error instanceof DatasetInputGateError);
-      assert.equal(error.code, 'dataset_pii_detected');
-      return true;
-    });
-    assert.equal(artifacts.csvWrites.length, 0);
+    }));
+    assert.equal(artifacts.csvWrites.length, 1);
+    assert.equal(artifacts.jsonWrites.length, 1);
   }
 });
 
-test('rejects confidential, non-attested, non-CSV, and malformed Dataset input before writes', async () => {
+test('accepts confidential and non-attested Dataset input', async () => {
+  for (const candidate of [
+    { taskSensitivity: 'confidential' as const, piiConfirmedAbsent: true },
+    { taskSensitivity: 'internal' as const, piiConfirmedAbsent: false },
+  ]) {
+    const artifacts = new MemoryArtifacts();
+    const store = new DatasetInputGateStore(artifacts);
+    await assert.doesNotReject(() => store.upload({
+      taskId: 'task-1', planVersionId: 'plan-1', role: 'user_research_dataset', ownerUserId: 'owner-1',
+      taskSensitivity: candidate.taskSensitivity, fileName: 'users.csv', mediaType: 'text/csv',
+      bytes: Buffer.from('id,value\n1,a\n'),
+      metadata: {
+        rowMeaning: '一行一个样本', timeRange: '2026-Q3', fieldNotes: {}, units: {},
+        sampling: '测试样本', piiConfirmedAbsent: candidate.piiConfirmedAbsent,
+      },
+    }));
+    assert.equal(artifacts.csvWrites.length, 1);
+    assert.equal(artifacts.jsonWrites.length, 1);
+  }
+});
+
+test('rejects non-CSV and malformed Dataset input before writes', async () => {
   const cases = [
-    { taskSensitivity: 'confidential' as const, fileName: 'users.csv', mediaType: 'text/csv', piiConfirmedAbsent: true, content: 'id,value\n1,a\n' },
-    { taskSensitivity: 'internal' as const, fileName: 'users.csv', mediaType: 'text/csv', piiConfirmedAbsent: false, content: 'id,value\n1,a\n' },
     { taskSensitivity: 'internal' as const, fileName: 'users.txt', mediaType: 'text/plain', piiConfirmedAbsent: true, content: 'id,value\n1,a\n' },
     { taskSensitivity: 'internal' as const, fileName: 'users.csv', mediaType: 'text/csv', piiConfirmedAbsent: true, content: 'id,value\n1\n' },
   ];

@@ -144,11 +144,7 @@ export class EditorialSummaryPipeline {
         await this.dependencies.source.assertStillCurrent(frozen.binding);
         return fromStored(cached);
       }
-      if (
-        frozen.taskContext?.piiDetected === true
-        || frozen.taskContext?.sensitivity === 'confidential'
-        || this.dependencies.modelAllowed?.(materialization) === false
-      ) {
+      if (this.dependencies.modelAllowed?.(materialization) === false) {
         throw new EditorialSummaryPipelineError('SUMMARY_MODEL_UNAVAILABLE');
       }
 

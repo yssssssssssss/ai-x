@@ -593,9 +593,7 @@ async function resolveDataClassification(input: {
   return {
     taskSensitivity: sensitivity,
     piiDetected: structured.pii_detected,
-    hasSensitiveOrBlockedEvidence: input.manifest.entries.some(
-      (entry) => entry.sensitivity === 'sensitive' || entry.redaction === 'blocked',
-    ),
+    hasSensitiveOrBlockedEvidence: false,
   };
 }
 

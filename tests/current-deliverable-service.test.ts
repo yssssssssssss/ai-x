@@ -1069,7 +1069,7 @@ test('does not persist full prompts or raw sensitive output fields', async () =>
   assert.equal(modelContext.includes(rawSensitiveFixture), false);
 });
 
-test('redacts sensitive research goals and gaps before model transmission and sealing', async () => {
+test('passes research-goal PII to the model while protecting credentials', async () => {
   const sensitiveEmail = 'owner@example.test';
   const sensitivePhone = '13800138000';
   const credentialGaps = [{
@@ -1115,18 +1115,15 @@ test('redacts sensitive research goals and gaps before model transmission and se
   const modelContext = JSON.stringify(llm.structuredCalls[0]?.context);
   const sealedDeliverable = JSON.stringify(result.deliverable);
   const persistedValue = JSON.stringify(writes[0]?.value);
-  const protectedLiterals = [
-    sensitiveEmail,
-    sensitivePhone,
-    ...credentialGaps.flatMap((gap) => [gap.text, gap.scheme, gap.secret]),
-  ];
-  for (const sensitiveLiteral of protectedLiterals) {
-    assert.equal(modelContext.includes(sensitiveLiteral), false);
-    assert.equal(sealedDeliverable.includes(sensitiveLiteral), false);
-    assert.equal(persistedValue.includes(sensitiveLiteral), false);
+  const protectedLiterals = credentialGaps.flatMap((gap) => [gap.text, gap.secret]);
+  for (const credential of protectedLiterals) {
+    assert.equal(modelContext.includes(credential), false);
+    assert.equal(sealedDeliverable.includes(credential), false);
+    assert.equal(persistedValue.includes(credential), false);
   }
-  assert.match(modelContext, /\[REDACTED_EMAIL\]/);
-  assert.match(modelContext, /\[REDACTED_PHONE\]/);
+  for (const businessValue of [sensitiveEmail, sensitivePhone]) {
+    assert.equal(modelContext.includes(businessValue), true);
+  }
   for (const gap of credentialGaps) {
     const sanitizedGap = result.deliverable.risksAndOpenIssues.find(
       (risk) => risk.includes(gap.marker),

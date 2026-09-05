@@ -926,9 +926,8 @@ function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): Verifi
       )
       || asset.manifestArtifact.schemaVersion !== asset.manifest.version
       || asset.artifact.id !== asset.manifest.assetId
-      || (asset.manifest.exportPolicy !== 'allow' && asset.manifest.exportPolicy !== 'mask')
     ) {
-      throw new Error(`visual Asset ${asset.artifact.id} is not an exact sealed exportable verified inventory item`);
+      throw new Error(`visual Asset ${asset.artifact.id} is not an exact sealed verified inventory item`);
     }
     if (roles.has(asset.artifact.id)) {
       throw new Error(`verified visual Asset inventory contains duplicate id ${asset.artifact.id}`);

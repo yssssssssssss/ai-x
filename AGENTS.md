@@ -47,6 +47,16 @@ paths inside the requested change; it never justifies adding new
 validators, checks, or compatibility layers.
 - When the user says something is over-designed: cut it, do not defend it.
 
+## Output handling
+
+- Emit business content and PII directly through Dataset, Tool, Skill, synthesis,
+  report, export, and editorial paths; do not mask or block them based on
+  sensitivity or redaction policy.
+- Continue masking credentials such as API keys, authorization headers, tokens,
+  secrets, and passwords.
+- Existing redaction metadata fields are inert audit metadata and must not gate
+  processing, model egress, rendering, or publication.
+
 ## Problem framing and tool choice
 
 - Before the first tool call, identify the exact target, failure direction,and requested access path.

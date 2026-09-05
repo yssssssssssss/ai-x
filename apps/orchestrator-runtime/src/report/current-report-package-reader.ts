@@ -216,9 +216,6 @@ function assertVerifiedVisualReference(
     throw new Error('Visual Asset Manifest does not match its ReportDocument reference');
   }
   assertJsonIdentity(asset.manifest as unknown as Record<string, unknown>, binding, 'Visual Asset Manifest');
-  if (asset.manifest.exportPolicy === 'block') {
-    throw new Error(`Visual Asset ${reference.assetId} is blocked by its export policy`);
-  }
   return asset.manifest;
 }
 

@@ -1069,9 +1069,6 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const plan = await repository.getPlanVersionDetail(input.planVersionId);
       if (!plan || plan.taskId !== task.id) throw new ControlPlaneConflictError('dataset input plan is unavailable');
       const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
-      if (structuredTask.pii_detected === true) {
-        throw new DatasetInputGateError('Task is marked as containing PII', 'dataset_pii_detected');
-      }
       const pending = parsePendingInputContracts(plan.pendingInputs).find(({ role }) => role === input.role);
       if (!pending || pending.kind !== 'dataset' || pending.multiple) {
         throw new DatasetInputGateError(`dataset input role ${input.role} is not pending on the active plan`);

@@ -148,7 +148,7 @@ test('publishes and reuses one LLM Editorial Summary without replacing the Detai
   assert.equal(current.store.value?.manifest.sourceReportPackage.artifactId, materialization().material.sourceReportPackage.artifactId);
 });
 
-test('denies Summary model egress for confidential or PII-marked task context', async () => {
+test('allows Summary model generation for confidential or PII-marked task context', async () => {
   for (const taskContext of [
     { sensitivity: 'confidential' as const, piiDetected: false },
     { sensitivity: 'internal' as const, piiDetected: true },
@@ -172,12 +172,9 @@ test('denies Summary model egress for confidential or PII-marked task context', 
       generationIdentity: canonicalSha256(taskContext),
       modelAllowed: () => true,
     });
-    await assert.rejects(
-      () => pipeline.generate({ taskId: showcaseFixture().material.taskId }),
-      (error: unknown) => error instanceof EditorialSummaryPipelineError
-        && error.code === 'SUMMARY_MODEL_UNAVAILABLE',
-    );
-    assert.equal(generatorCalled, false);
+    const result = await pipeline.generate({ taskId: showcaseFixture().material.taskId });
+    assert.equal(result.status, 'ready');
+    assert.equal(generatorCalled, true);
   }
 });
 

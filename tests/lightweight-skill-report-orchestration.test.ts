@@ -28,7 +28,6 @@ import {
   LightweightReportError,
   finalizeMultiReport,
   finalizeSingleReport,
-  redactMarkdownPreservingSourceUrls,
   renderFinalReportHtml,
 } from '../apps/orchestrator-runtime/src/report/lightweight-reporting.ts';
 
@@ -477,30 +476,6 @@ test('falls back to grouped original Skill reports without retrying synthesis', 
   assert.equal(result.synthesis, 'fallback');
   assert.match(result.report.markdown, /自动综合未完成/u);
   assert.match(result.report.markdown, /# 竞品分析/u);
-});
-
-test('preserves verified source URLs while redacting prose PII', () => {
-  const source: SourceReference = {
-    ...SOURCE,
-    url: 'https://www.cicmag.com/bbx/93858-93891.html?id=7301&newsid=2948841',
-  };
-  const report = finalizeSingleReport({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    attemptId: 'attempt-1',
-    report: skillReport({
-      markdown: '# 结论\n\n客服电话 010-12345678，来源 [S-1]。',
-      sources: [source],
-    }),
-    verifiedSources: [source],
-  });
-  const redacted = {
-    ...report,
-    markdown: redactMarkdownPreservingSourceUrls(report.markdown, report.sources),
-  };
-  assert.match(redacted.markdown, /\[REDACTED_LANDLINE\]/u);
-  assert.ok(redacted.markdown.includes(source.url!));
-  assert.doesNotThrow(() => renderFinalReportHtml(redacted));
 });
 
 test('renders self-contained safe HTML and rejects invented sources', () => {

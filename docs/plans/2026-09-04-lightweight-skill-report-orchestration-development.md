@@ -618,12 +618,13 @@ skill-results/<invocation-id>.md
 
 ### 11.2 权限与安全 Gate
 
-仅根据实际动作判断：
+权限仅约束资源访问和不可逆动作：
 
-- 实际处理 PII；
-- 实际读取受限数据；
-- 实际调用高风险 Tool；
-- 实际进行外部发布或不可逆操作。
+- 当前用户是否有权读取受限数据；
+- 是否调用高风险 Tool；
+- 是否进行外部发布或不可逆操作。
+
+业务内容、内部内容和 PII 不触发脱敏、屏蔽或模型出站拒绝，按原文进入 Tool、Skill、综合、报告和导出链路。API Key、Authorization、JWT、Token、Secret 和密码等凭据仍必须隐藏。
 
 不得根据 Requirement 或报告文字中出现“隐私、授权、内部数据、合规”等关键词自动触发审批。
 
@@ -645,7 +646,8 @@ Markdown 转 HTML 时统一执行：
 - 禁止 JavaScript；
 - 禁止 iframe、form 和运行时网络请求；
 - 外部链接只允许 HTTPS；
-- 防止 PII 泄漏。
+- 业务内容与 PII 原样输出；
+- API Key、Authorization、JWT、Token、Secret 和密码等凭据继续隐藏。
 
 ### 11.5 不再阻断的内容检查
 

@@ -18,7 +18,6 @@ import {
 } from '../control/artifact-publication-group.ts';
 import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
-import { redactString } from '../runtime/redaction.ts';
 
 const CITATION = /\[(S(?:-|\d)[A-Za-z0-9._:-]*)\]/gu;
 const URL_IN_TEXT = /https?:\/\/[^\s<>)\]]+/gu;
@@ -194,34 +193,6 @@ export function assertMarkdownReferences(
       throw new LightweightReportError(`Markdown references unverified URL ${url}`);
     }
   }
-}
-
-export function redactMarkdownPreservingSourceUrls(
-  markdown: string,
-  sources: readonly SourceReference[],
-): string {
-  const urls = [...new Set(sources.flatMap(({ url }) => url === undefined ? [] : [url]))]
-    .sort((left, right) => right.length - left.length);
-  const protectedUrls: Array<{ token: string; url: string }> = [];
-  let protectedMarkdown = markdown;
-  for (const [index, url] of urls.entries()) {
-    let value = index + 1;
-    let letters = '';
-    while (value > 0) {
-      value -= 1;
-      letters = String.fromCharCode(65 + (value % 26)) + letters;
-      value = Math.floor(value / 26);
-    }
-    const token = `\uE000VERIFIEDSOURCE${letters}\uE001`;
-    if (protectedMarkdown.includes(token)) {
-      throw new LightweightReportError('Markdown contains a reserved source token');
-    }
-    protectedMarkdown = protectedMarkdown.replaceAll(url, token);
-    protectedUrls.push({ token, url });
-  }
-  let redacted = redactString(protectedMarkdown);
-  for (const { token, url } of protectedUrls) redacted = redacted.replaceAll(token, url);
-  return redacted;
 }
 
 function mergeSources(reports: readonly SkillReport[]): SourceReference[] {

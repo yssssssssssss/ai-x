@@ -763,7 +763,6 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       if (
         manifest.assetId !== req.params.assetId
         || asset.manifestArtifact.schemaVersion !== manifest.version
-        || (manifest.exportPolicy !== 'allow' && manifest.exportPolicy !== 'mask')
       ) {
         hidden();
         return;

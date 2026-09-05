@@ -85,7 +85,6 @@ import {
 } from '../runtime/tool-adapter.ts';
 import { invokeWithRetry, type ToolRetryAttemptReceipt } from './tool-retry-policy.ts';
 import {
-  containsBlockedSensitiveData,
   isMachineReferenceField,
   machineReferencesPreserved,
   redactSensitiveValue,
@@ -167,7 +166,6 @@ import {
   LightweightReportArtifactService,
   SKILL_REPORT_DRAFT_SCHEMA,
   assertMarkdownReferences,
-  redactMarkdownPreservingSourceUrls,
   type SkillReportDraft,
 } from '../report/lightweight-reporting.ts';
 import {
@@ -581,7 +579,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function reportEditorialPlannerDataClassification(
   structuredTask: unknown,
-  evidenceManifest: EvidenceManifest,
+  _evidenceManifest: EvidenceManifest,
 ): ReportEditorialPlannerDataClassification | undefined {
   if (
     !isRecord(structuredTask)
@@ -598,9 +596,7 @@ function reportEditorialPlannerDataClassification(
   return {
     taskSensitivity: structuredTask.sensitivity,
     piiDetected: structuredTask.pii_detected,
-    hasSensitiveOrBlockedEvidence: evidenceManifest.entries.some(
-      ({ sensitivity, redaction }) => sensitivity === 'sensitive' || redaction === 'blocked',
-    ),
+    hasSensitiveOrBlockedEvidence: false,
   };
 }
 
@@ -953,12 +949,6 @@ function stepGapSummary(failure: Record<string, unknown>, kind: ToolFailureKind)
 }
 
 function sanitizeStepResult(result: StepResult): StepResult {
-  if (
-    containsBlockedSensitiveData(result.output)
-    || (result.artifactValue !== undefined && containsBlockedSensitiveData(result.artifactValue))
-  ) {
-    throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
-  }
   if (result.kind === 'tool_output') return result;
   const output = redactSensitiveValue(result.output);
   const artifactValue = result.artifactValue === undefined
@@ -3470,7 +3460,7 @@ export class LeaseExecutionEngine {
             stepNo: step.stepNo,
             toolProof: { implementationId, executionMode: 'real', redactedOutputHash },
             sensitivity: 'public',
-            redaction: 'masked',
+            redaction: 'none',
           }));
         });
       evidenceEntries.push(...datasetEvidenceEntries(resolvedDatasets));
@@ -3872,25 +3862,16 @@ export class LeaseExecutionEngine {
             }),
             extraGaps: executionGaps,
           })).report;
-      const sanitizedFinalReport = parseFinalReport({
-        ...finalReport,
-        title: redactString(finalReport.title),
-        markdown: redactMarkdownPreservingSourceUrls(finalReport.markdown, finalReport.sources),
-        gaps: finalReport.gaps.map((gap) => redactString(gap)),
-        sources: finalReport.sources.map((source) => ({
-          ...source,
-          title: redactString(source.title),
-        })),
-      });
+      const validatedFinalReport = parseFinalReport(finalReport);
       const sealed = await new LightweightReportArtifactService(
         this.dependencies.artifacts,
       ).sealFinalReport({
         activeLease: input.lease,
-        report: sanitizedFinalReport,
+        report: validatedFinalReport,
       });
       chartPublication?.commit();
       chartPublication = undefined;
-      const status = sanitizedFinalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      const status = validatedFinalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
       await this.dependencies.repository.completeExecution(input.lease, {
         status,
         finalReportArtifactId: sealed.jsonArtifact.id,
@@ -3900,7 +3881,7 @@ export class LeaseExecutionEngine {
           attemptId: input.lease.attemptId,
           evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
           finalReportArtifactId: sealed.jsonArtifact.id,
-          gapCount: sanitizedFinalReport.gaps.length,
+          gapCount: validatedFinalReport.gaps.length,
         };
       }
 
@@ -5658,23 +5639,6 @@ export class LeaseExecutionEngine {
       });
     }
     const redactionPolicy = manifest.redaction_policy ?? {};
-    if (
-      redactionPolicy.sensitive_business_data === 'block'
-      && containsBlockedSensitiveData(result.output)
-    ) {
-      throw new ToolInvocationError(step.actor_id, {
-        kind: 'safety',
-        retryable: false,
-        providerStatus: null,
-        sanitizedMessage: 'tool output blocked by sensitive business data policy',
-        receipt: result.receipt,
-        details: {
-          outputHash: hashJson(result.output),
-          sourceRefs: sourceRefs(result.output),
-          retry: retryContext,
-        },
-      });
-    }
     const originalOutputHash = hashJson(result.output);
     const redactedOutput = redactToolOutput(result.output, redactionPolicy);
     const redactedOutputHash = hashJson(redactedOutput);
@@ -5945,9 +5909,6 @@ export class LeaseExecutionEngine {
       );
     } catch (error) {
       const validationFeedback = skillSchemaErrors(error);
-      if (containsBlockedSensitiveData(result.data)) {
-        throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
-      }
       if (input.cancellationSignal?.aborted) {
         throw input.cancellationSignal.reason
           ?? new LLMInvocationError('cancelled', false, null, 'skill schema repair cancelled');

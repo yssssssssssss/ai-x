@@ -140,7 +140,7 @@ function findArtifact(source: FrozenEditorialSource, artifactId: string, label: 
 }
 
 function publicEvidenceUrl(entry: EvidenceEntry): string | undefined {
-  if (entry.evidenceClass !== 'public_source' || entry.sensitivity !== 'public' || !entry.sourceUrl) {
+  if (entry.evidenceClass !== 'public_source' || !entry.sourceUrl) {
     return undefined;
   }
   try {
@@ -180,9 +180,6 @@ class MaterialBuilder {
     for (const evidenceId of evidenceIds) {
       const evidence = this.evidenceById.get(evidenceId);
       if (!evidence) fail('EDITORIAL_EVIDENCE_INVALID', `Evidence ${evidenceId} is not in the verified manifest`);
-      if (evidence.redaction === 'blocked' || evidence.sensitivity === 'sensitive') {
-        fail('EDITORIAL_SENSITIVE_EVIDENCE', `Evidence ${evidenceId} is not eligible for the Editorial sidecar`);
-      }
       this.usedEvidenceIds.add(evidenceId);
     }
     const id = createEditorialMaterialUnitId({
@@ -1205,14 +1202,6 @@ function materializeVisualAssets(builder: MaterialBuilder, document: ReadableRep
     asset,
   ]));
   const accepted = (asset: VerifiedVisualAsset): boolean => {
-    if (asset.manifest.exportPolicy === 'mask') {
-      builder.warnings.push(createEditorialVisualWarning('VISUAL_MASK_OMITTED'));
-      return false;
-    }
-    if (asset.manifest.exportPolicy === 'block') {
-      builder.warnings.push(createEditorialVisualWarning('VISUAL_BLOCKED_OMITTED'));
-      return false;
-    }
     if (asset.manifest.mediaType === 'image/svg+xml') {
       builder.warnings.push(createEditorialVisualWarning('VISUAL_SVG_OMITTED'));
       return false;

@@ -210,13 +210,9 @@ export type ReportEditorialPlannerDataPolicy = (
 export const productionReportEditorialPlannerDataPolicy: ReportEditorialPlannerDataPolicy = (
   _input,
   provider,
-  classification,
+  _classification,
 ) => provider.mode === 'real'
-  && provider.eligibleAsReal
-  && classification !== undefined
-  && (classification.taskSensitivity === 'public' || classification.taskSensitivity === 'internal')
-  && !classification.piiDetected
-  && !classification.hasSensitiveOrBlockedEvidence;
+  && provider.eligibleAsReal;
 
 interface ReportEditorialPlannerDependencies {
   llm: Pick<LLMClient, 'identity' | 'generateStructured'>;

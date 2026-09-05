@@ -819,10 +819,14 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     assert.equal(ownerV2Response.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await ownerV2Response.arrayBuffer()), assetBytes);
 
+    const blockedResponse = await request(blockedAssetId, ownerToken);
+    assert.equal(blockedResponse.status, 200);
+    assert.equal(blockedResponse.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await blockedResponse.arrayBuffer()), assetBytes);
+
     const hiddenResponses = [
       await request(allowedAssetId, foreignToken),
       await request(missingAssetId, ownerToken),
-      await request(blockedAssetId, ownerToken),
       await request(missingPolicyAssetId, ownerToken),
       await request(malformedSourceAssetId, ownerToken),
       await request(malformedDerivationAssetId, ownerToken),
@@ -857,8 +861,8 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     assert.deepEqual(reads, [
       { taskId: currentTaskId, assetId: allowedAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: allowedV2AssetId, ownerUserId },
-      { taskId: currentTaskId, assetId: missingAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: blockedAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: missingAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: missingPolicyAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: malformedSourceAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: malformedDerivationAssetId, ownerUserId },

@@ -237,12 +237,11 @@ test('accepts legacy and current Skill output artifacts but rejects unknown sche
   );
 });
 
-test('rejects tampered, foreign, unsealed, and sensitive artifacts before materialization', async () => {
+test('rejects tampered, foreign, and unsealed artifacts before materialization', async () => {
   const cases: Array<{ name: string; patch: Partial<ControlArtifact> }> = [
     { name: 'tampered hash', patch: { contentSha256: hash('different') } },
     { name: 'foreign attempt', patch: { attemptId: 'other-attempt' } },
     { name: 'unsealed', patch: { state: 'STAGING' } },
-    { name: 'blocked sensitivity', patch: { sensitivity: 'sensitive' } },
   ];
   for (const item of cases) {
     await assert.rejects(
@@ -257,16 +256,27 @@ test('rejects tampered, foreign, unsealed, and sensitive artifacts before materi
   }
 });
 
-test('redacts prompts, credentials, and PII without mutating verified values', async () => {
+test('materializes sensitive business artifacts directly', async () => {
+  const reader = new Reader(new Map());
+  const source = input(reader);
+  const skill = reader.values.get('artifact-skill');
+  assert.ok(skill);
+  skill.artifact.sensitivity = 'sensitive';
+
+  const materials = await new SynthesisMaterializer(reader).materialize(source);
+  assert.equal(materials.find(({ actorType }) => actorType === 'skill')?.artifactId, 'artifact-skill');
+});
+
+test('passes prompts, PII, and business content while protecting credentials', async () => {
   const reader = new Reader(new Map());
   const source = input(reader);
   const original = structuredClone((reader as unknown as { values: Map<string, { value: unknown }> }).values);
   const materials = await new SynthesisMaterializer(reader).materialize(source);
   const text = JSON.stringify(materials);
-  assert.equal(text.includes('FULL_PROMPT_MUST_NOT_REACH_CONTEXT'), false);
+  assert.equal(text.includes('FULL_PROMPT_MUST_NOT_REACH_CONTEXT'), true);
+  assert.equal(text.includes('person@example.test'), true);
+  assert.equal(text.includes('13800138000'), true);
   assert.equal(text.includes('secret-token'), false);
-  assert.equal(text.includes('person@example.test'), false);
-  assert.equal(text.includes('13800138000'), false);
   assert.match(text, /REDACTED/);
   assert.deepEqual((reader as unknown as { values: Map<string, { value: unknown }> }).values, original);
 });
@@ -297,7 +307,7 @@ test('preserves machine identities and URL arrays while materializing Skill outp
     attemptId: attemptUuid,
     sourceContributionUnitIds: [sourceUnitId],
     source_urls: [sourceUrl],
-    phone: '[REDACTED_PII]',
+    phone: '13800138000',
   });
 });
 

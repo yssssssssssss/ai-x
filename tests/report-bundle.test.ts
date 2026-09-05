@@ -595,7 +595,7 @@ function allText(entries: Record<string, Uint8Array>): string {
     .join('\n');
 }
 
-test('Markdown bundle contains the complete safe report package and only exportable owner-read assets', async () => {
+test('Markdown bundle contains the complete report package and every owner-read asset', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const reads: string[] = [];
   const bytes = await createReportBundle({ report: multimodalReport(), readAsset: assetReader(reads) });
@@ -604,6 +604,7 @@ test('Markdown bundle contains the complete safe report package and only exporta
   assert.deepEqual(Object.keys(bundle.entries).sort(), [
     'assets/',
     'assets/asset-annotation.png',
+    'assets/asset-blocked.png',
     'assets/asset-chart.svg',
     'assets/asset-original.png',
     'deliverable.json',
@@ -615,7 +616,7 @@ test('Markdown bundle contains the complete safe report package and only exporta
     'summary-report.md',
     'visual-assets.json',
   ]);
-  assert.deepEqual(reads.sort(), [annotationAssetId, chartAssetId, originalAssetId]);
+  assert.deepEqual(reads.sort(), [annotationAssetId, blockedAssetId, chartAssetId, originalAssetId]);
   assert.deepEqual(
     multimodalReport().visualAssetManifests.map(({ version }) => version),
     [
@@ -625,8 +626,8 @@ test('Markdown bundle contains the complete safe report package and only exporta
       'visual-asset-manifest-v1',
     ],
   );
-  assert.equal(blockedAssetId in bundle.entries, false);
-  assert.equal(reads.includes(blockedAssetId), false, 'blocked assets must be rejected before owner route reads');
+  assert.deepEqual(bundle.entries['assets/asset-blocked.png'], BLOCKED_PNG);
+  assert.equal(reads.includes(blockedAssetId), true, 'blocked-policy assets are read and exported directly');
   assert.deepEqual(bundle.entries['assets/asset-chart.svg'], CHART_SVG, 'bundle must carry the sealed SVG bytes');
   assert.equal(bundle.text('report.md'), bundle.text('full-report.md'));
   assert.match(bundle.text('summary-report.md'), /Verified market report/u);
@@ -634,7 +635,7 @@ test('Markdown bundle contains the complete safe report package and only exporta
   assert.equal(deliverable.secretToken, undefined, 'canonical export must whitelist reviewed Deliverable fields');
 });
 
-test('Multi-Skill ZIP exports only allowlisted Contribution audit metadata and redacts Review issues', async () => {
+test('Multi-Skill ZIP exports allowlisted Contribution metadata and direct Review issues', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const reviewIssue = 'private-review-issue-must-not-export';
   const contributionTitle = 'omitted-title-must-not-export';
@@ -742,17 +743,17 @@ test('Multi-Skill ZIP exports only allowlisted Contribution audit metadata and r
   const exportedReview = JSON.parse(bundle.text('report-review.json')) as {
     dimensions: Array<{ issues: string[] }>;
   };
-  assert.deepEqual(exportedReview.dimensions[0]?.issues, ['Review issue details redacted from export.']);
-  const privateInputs = [
-    reviewIssue,
+  assert.deepEqual(exportedReview.dimensions[0]?.issues, [reviewIssue]);
+  assert.ok(allText(bundle.entries).includes(reviewIssue));
+  const omittedInputs = [
     revisionIssueMessage,
     contributionTitle,
     contributionStatement,
     contributionLimitation,
     ledgerReason,
   ];
-  assert.ok(privateInputs.every((value) => JSON.stringify(report).includes(value)));
-  assert.ok(privateInputs.every((value) => !allText(bundle.entries).includes(value)));
+  assert.ok(omittedInputs.every((value) => JSON.stringify(report).includes(value)));
+  assert.ok(omittedInputs.every((value) => !allText(bundle.entries).includes(value)));
 });
 
 test('Markdown uses deterministic relative image paths, sealed SVG references, and Chart table alternatives', async () => {
@@ -927,7 +928,7 @@ test('bundle JSON preserves optional image Evidence ids without breaking legacy 
   assert.match(legacyMarkdown, /assets\/asset-annotation\.png/u);
 });
 
-test('bundle JSON files are distribution-safe and do not leak storage URIs, hashes, secrets, or blocked metadata', async () => {
+test('bundle JSON protects credentials while preserving direct business metadata', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const bytes = await createReportBundle({ report: multimodalReport(), readAsset: assetReader([]) });
   const bundle = await unzip(bytes);
@@ -936,11 +937,13 @@ test('bundle JSON files are distribution-safe and do not leak storage URIs, hash
   assert.doesNotMatch(text, /storageUri|contentSha256|manifestHash|artifactContentSha256|redactedOutputHash|specHash/u);
   assert.doesNotMatch(text, /sha256:|\/private\/|secret-token|token=/u);
   assert.doesNotMatch(text, /browser_capture|private-browser-tool-artifact|sourcePageUrl|finalUrl|pageTitle/u);
-  assert.doesNotMatch(text, /asset-blocked|private-secret-token/u);
+  assert.match(text, /asset-blocked/u);
+  assert.doesNotMatch(text, /private-secret-token/u);
 
   const visualAssets = JSON.parse(bundle.text('visual-assets.json')) as Array<Record<string, unknown>>;
   assert.deepEqual(visualAssets.map(({ assetId }) => assetId), [
     annotationAssetId,
+    blockedAssetId,
     chartAssetId,
     originalAssetId,
   ]);

@@ -791,7 +791,7 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
     ? [...report.visualAssetManifests].sort((left, right) => left.assetId.localeCompare(right.assetId))
     : [];
   const manifestByAsset = new Map(manifests.map((manifest) => [manifest.assetId, manifest]));
-  const exportable = manifests.filter(({ exportPolicy }) => exportPolicy === 'allow' || exportPolicy === 'mask');
+  const exportable = manifests;
   const assetPaths = new Map<string, string>();
   const usedPaths = new Set<string>();
   for (const manifest of exportable) {
