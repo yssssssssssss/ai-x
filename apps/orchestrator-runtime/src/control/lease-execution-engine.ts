@@ -167,6 +167,7 @@ import {
   LightweightReportArtifactService,
   SKILL_REPORT_DRAFT_SCHEMA,
   assertMarkdownReferences,
+  redactMarkdownPreservingSourceUrls,
   type SkillReportDraft,
 } from '../report/lightweight-reporting.ts';
 import {
@@ -3874,7 +3875,7 @@ export class LeaseExecutionEngine {
       const sanitizedFinalReport = parseFinalReport({
         ...finalReport,
         title: redactString(finalReport.title),
-        markdown: redactString(finalReport.markdown),
+        markdown: redactMarkdownPreservingSourceUrls(finalReport.markdown, finalReport.sources),
         gaps: finalReport.gaps.map((gap) => redactString(gap)),
         sources: finalReport.sources.map((source) => ({
           ...source,
