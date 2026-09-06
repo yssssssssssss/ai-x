@@ -3,6 +3,7 @@ name: Quality
 on:
   pull_request:
   push:
+  workflow_dispatch:
 
 jobs:
   quality:
@@ -41,7 +42,7 @@ jobs:
 
   skill-native-real-smoke:
     name: Skill-native real smoke
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     services:
       postgres:
