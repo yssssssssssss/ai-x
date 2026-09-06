@@ -5,23 +5,20 @@ import { after, before, test } from 'node:test';
 import { Pool } from 'pg';
 import { runMigrations, type MigrationConnection, type MigrationDatabase } from '../database/migration-runner.ts';
 import type {
-  ReportResult,
-  SkillDefinition,
-  SolutionDefinition,
-  SolutionPlan,
+  ExecutionPlan,
+  RequirementBrief,
+  SkillNativeCandidate,
+  SkillNativeExecutionState,
+  SkillPackageDescriptor,
+  SkillPackageSnapshot,
 } from '../packages/api-contract/skill-native.ts';
 import {
   PostgresSkillNativeTaskStore,
   SkillNativeStoreError,
-  type StoredSkillNativeCandidate,
 } from '../apps/orchestrator-runtime/src/skill-native/store.ts';
 
 class ScopedDatabase implements MigrationDatabase {
-  constructor(
-    private readonly database: Pool,
-    private readonly schema: string,
-  ) {}
-
+  constructor(private readonly database: Pool, private readonly schema: string) {}
   async connect(): Promise<MigrationConnection> {
     const client = await this.database.connect();
     await client.query(`SET search_path TO "${this.schema}", public`);
@@ -30,9 +27,25 @@ class ScopedDatabase implements MigrationDatabase {
         const result = await client.query(sql, [...values]);
         return { rows: result.rows };
       },
-      release() {
-        client.release();
+      release() { client.release(); },
+    };
+  }
+}
+
+class QueryHookDatabase implements MigrationDatabase {
+  constructor(
+    private readonly database: MigrationDatabase,
+    private readonly beforeQuery: (sql: string) => Promise<void>,
+  ) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      query: async (sql, values = []) => {
+        await this.beforeQuery(sql);
+        return connection.query(sql, values);
       },
+      release: () => connection.release(),
     };
   }
 }
@@ -43,101 +56,8 @@ const database = new Pool({
 });
 const scoped = new ScopedDatabase(database, schema);
 const store = new PostgresSkillNativeTaskStore(scoped);
-
-const skill: SkillDefinition = {
-  version: 'skill-definition-v1',
-  id: 'test-skill',
-  name: 'Test Skill',
-  description: 'Test the native store',
-  whenToUse: 'During the store roundtrip test',
-  inputs: [{
-    id: 'research_goal',
-    label: '研究目标',
-    description: '目标',
-    required: true,
-    multiple: false,
-    acceptedSources: ['conversation', 'database'],
-    toolIds: [],
-    question: '目标是什么？',
-    missingPolicy: 'stop',
-  }],
-  knowledge: [],
-  tools: [],
-  report: { title: '测试报告', summaryInstruction: '总结', sections: ['结论'] },
-  allowPartial: true,
-  body: '# Test Skill',
-  sourcePath: 'skills/test/SKILL.md',
-  contentHash: `sha256:${'1'.repeat(64)}`,
-};
-
-const solution: SolutionDefinition = {
-  version: 'solution-definition-v1',
-  id: 'test-solution',
-  title: '测试方案',
-  description: '测试持久化',
-  whenToUse: '测试时',
-  mode: 'single_skill',
-  recommended: true,
-  skills: [{ skillId: skill.id, dependsOn: [], failurePolicy: 'stop' }],
-  finalReportSkillId: skill.id,
-  sourcePath: 'orchestrator/solutions/test.yaml',
-  contentHash: `sha256:${'2'.repeat(64)}`,
-};
-
-function candidate(materialId: string, value: string): StoredSkillNativeCandidate {
-  return {
-    solution,
-    skills: [skill],
-    initialMaterials: [{
-      id: materialId,
-      inputId: 'research_goal',
-      source: 'upload',
-      value,
-    }],
-    resolution: {
-      inputs: [{
-        inputId: 'research_goal',
-        source: 'upload',
-        value,
-        referenceId: materialId,
-        skillIds: [skill.id],
-      }],
-      questions: [],
-      gaps: [],
-      blockedInputIds: [],
-      warnings: [],
-    },
-  };
-}
-
-function plan(taskId: string, value: string): SolutionPlan {
-  return {
-    version: 'skill-native-plan-v1',
-    taskId,
-    solutionId: solution.id,
-    title: solution.title,
-    rationale: solution.description,
-    tradeoffs: solution.whenToUse,
-    mode: 'single_skill',
-    requirement: {
-      version: 'requirement-context-v1',
-      goal: value,
-      scope: [],
-      assumptions: [],
-      gaps: [],
-      inputs: [{
-        inputId: 'research_goal',
-        source: 'upload',
-        value,
-        referenceId: `upload:research_goal:${value}`,
-        skillIds: [skill.id],
-      }],
-    },
-    invocations: [{ id: `skill-1-${skill.id}`, skill, dependsOn: [], failurePolicy: 'stop' }],
-    finalReportInvocationId: `skill-1-${skill.id}`,
-    questions: [],
-  };
-}
+let ownerId = '';
+let otherOwnerId = '';
 
 async function query(sql: string, values: readonly unknown[] = []) {
   const connection = await scoped.connect();
@@ -148,17 +68,14 @@ async function query(sql: string, values: readonly unknown[] = []) {
   }
 }
 
-let ownerId = '';
-let otherOwnerId = '';
-
 before(async () => {
   await database.query(`CREATE SCHEMA "${schema}"`);
   const migration = await runMigrations({
     database: scoped,
     migrationsDir: join(process.cwd(), 'database', 'migrations'),
-    lockKey: 761_832_016,
+    lockKey: 761_832_018,
   });
-  assert.ok(migration.applied.includes('016_skill_native_delivery.sql'));
+  assert.ok(migration.applied.includes('018_unmodified_skill_runtime.sql'));
   ownerId = randomUUID();
   otherOwnerId = randomUUID();
   await query(
@@ -173,379 +90,425 @@ after(async () => {
   await database.end();
 });
 
-test('Postgres native store preserves scope, concurrency, attempts, receipts, and reusable inputs', async () => {
+test('breaking migration removes obsolete material storage and Artifact input metadata', async () => {
+  const tables = await query(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = current_schema() AND table_name = 'skill_native_materials'`,
+  );
+  assert.deepEqual(tables.rows, []);
+  const columns = await query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'skill_native_artifacts'
+       AND column_name IN ('input_id', 'material_label')`,
+  );
+  assert.deepEqual(columns.rows, []);
+});
+
+test('task creation rejects an Artifact outside the task ownership scope', async () => {
   const taskId = randomUUID();
-  const projectId = 'project-a';
-  const initialMaterial = candidate('upload:initial', 'initial evidence').initialMaterials[0]!;
-  const initialBytes = Buffer.from([137, 80, 78, 71]);
-  const initialArtifactId = randomUUID();
-  const supportArtifactId = randomUUID();
-  const unusedArtifactId = randomUUID();
-  const imageMaterial = {
-    id: 'upload:image',
-    inputId: 'design_image',
-    source: 'upload' as const,
-    value: { name: 'input.png', mediaType: 'image/png', artifactId: initialArtifactId },
+  const bytes = Buffer.from('foreign');
+  await assert.rejects(store.create({
+    id: taskId,
+    ownerUserId: ownerId,
+    projectId: 'project-scope',
+    originalInput: 'Reject foreign Artifact',
+    orchestrationMode: 'single_skill',
+    requirement,
+    candidates: [candidate],
+    artifacts: [{
+      id: randomUUID(),
+      taskId,
+      ownerUserId: otherOwnerId,
+      projectId: 'project-scope',
+      relativePath: 'uploads/foreign.txt',
+      fileName: 'foreign.txt',
+      mediaType: 'text/plain',
+      role: 'working',
+      bytes,
+      contentSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      sourceArtifactIds: [],
+    }],
+  }), /Artifact scope does not match its task/u);
+  assert.equal(await store.getOwned(taskId, ownerId), null);
+});
+
+const descriptor: SkillPackageDescriptor = {
+  id: 'test-skill',
+  name: 'Test Skill',
+  description: 'Test persistence',
+  sourcePath: 'test-skill',
+  packageHash: `sha256:${'1'.repeat(64)}`,
+  fileCount: 1,
+  byteSize: 20,
+  frontmatter: { name: 'Test Skill', description: 'Test persistence' },
+};
+
+function snapshot(taskId: string): SkillPackageSnapshot {
+  return {
+    version: 'skill-package-snapshot-v1',
+    package: descriptor,
+    packageHash: descriptor.packageHash,
+    files: [{ path: 'SKILL.md', byteSize: 20, contentSha256: `sha256:${'2'.repeat(64)}`, executable: false }],
+    directories: [],
+    snapshotPath: `${taskId}/packages/test-skill`,
+    createdAt: new Date().toISOString(),
   };
+}
+
+const candidate: SkillNativeCandidate = {
+  id: 'single-test-skill',
+  title: 'Test Skill',
+  description: 'Test persistence',
+  rationale: 'Test',
+  tradeoffs: 'None',
+  mode: 'single_skill',
+  recommended: true,
+  packages: [descriptor],
+  finalReport: { kind: 'skill', packageId: 'test-skill' },
+};
+
+const requirement: RequirementBrief = {
+  version: 'requirement-brief-v1',
+  goal: 'Test persistence',
+  desiredOutputs: ['Persisted result'],
+  scope: ['Test fixture'],
+  constraints: [],
+  assumptions: [],
+  openQuestions: [],
+};
+
+function plan(taskId: string): ExecutionPlan {
+  return {
+    version: 'skill-native-plan-v2',
+    taskId,
+    candidateId: candidate.id,
+    title: candidate.title,
+    rationale: candidate.rationale,
+    tradeoffs: candidate.tradeoffs,
+    mode: 'single_skill',
+    requirement: {
+      version: 'requirement-context-v2',
+      goal: 'Test persistence',
+      desiredOutputs: ['Persisted result'],
+      scope: ['Test fixture'],
+      constraints: [],
+      materials: [{
+        id: 'conversation:task-request',
+        label: 'task-request',
+        source: 'conversation',
+        value: 'Test persistence',
+        artifactIds: [],
+      }],
+      assumptions: [],
+      openQuestions: [],
+    },
+    invocations: [{ id: 'invocation-1', package: snapshot(taskId), dependsOn: [] }],
+    finalReport: { kind: 'skill', invocationId: 'invocation-1' },
+  };
+}
+
+test('Postgres store persists package plans, checkpoints, dynamic questions, generic Artifacts, and outcomes', async () => {
+  const taskId = randomUUID();
   const created = await store.create({
     id: taskId,
     ownerUserId: ownerId,
-    projectId,
-    originalInput: 'test native task',
+    projectId: 'project-a',
+    originalInput: 'Test persistence',
     orchestrationMode: 'single_skill',
-    candidates: [candidate(initialMaterial.id, String(initialMaterial.value))],
-    materials: [initialMaterial, imageMaterial],
-    artifacts: [{
-      id: initialArtifactId,
-      taskId,
-      ownerUserId: ownerId,
-      projectId,
-      inputId: 'research_goal',
-      fileName: 'input.png',
-      mediaType: 'image/png',
-      bytes: initialBytes,
-      contentSha256: `sha256:${createHash('sha256').update(initialBytes).digest('hex')}`,
-    }, {
-      id: supportArtifactId,
-      taskId,
-      ownerUserId: ownerId,
-      projectId,
-      inputId: 'support_image',
-      fileName: 'support.png',
-      mediaType: 'image/png',
-      bytes: initialBytes,
-      contentSha256: `sha256:${createHash('sha256').update(initialBytes).digest('hex')}`,
-    }, {
-      id: unusedArtifactId,
-      taskId,
-      ownerUserId: ownerId,
-      projectId,
-      inputId: 'unused_image',
-      fileName: 'unused.png',
-      mediaType: 'image/png',
-      bytes: initialBytes,
-      contentSha256: `sha256:${createHash('sha256').update(initialBytes).digest('hex')}`,
+    requirement,
+    candidates: [candidate],
+    materials: [{
+      id: 'conversation:task-request', label: 'task-request', source: 'conversation',
+      value: 'Test persistence', artifactIds: [],
     }],
   });
-
-  assert.equal(created.stateVersion, 0);
+  assert.equal(created.state, 'awaiting_selection');
   assert.equal(await store.getOwned(taskId, otherOwnerId), null);
-  assert.equal((await store.listOwned(otherOwnerId)).length, 0);
-  assert.equal(await store.getArtifactOwned({ artifactId: initialArtifactId, taskId, ownerUserId: otherOwnerId, projectId }), null);
-  assert.equal(await store.getArtifactOwned({ artifactId: initialArtifactId, taskId, ownerUserId: ownerId, projectId: 'project-b' }), null);
-  assert.deepEqual((await store.getArtifactOwned({ artifactId: initialArtifactId, taskId, ownerUserId: ownerId, projectId }))?.bytes, initialBytes);
 
-  const reusable = await store.listReusableMaterials({ ownerUserId: ownerId, projectId, inputIds: ['research_goal'] });
-  assert.deepEqual(reusable.map(({ inputId, value }) => [inputId, value]), [['research_goal', 'initial evidence']]);
-  assert.equal((await store.listReusableMaterials({ ownerUserId: ownerId, projectId, inputIds: ['unrelated'] })).length, 0);
-  assert.equal((await store.listReusableMaterials({ ownerUserId: ownerId, projectId: 'project-b', inputIds: ['research_goal'] })).length, 0);
-  assert.equal((await store.listReusableMaterials({ ownerUserId: otherOwnerId, projectId, inputIds: ['research_goal'] })).length, 0);
+  const selected = await store.select({
+    taskId, ownerUserId: ownerId, expectedVersion: created.stateVersion, candidateId: candidate.id,
+  });
+  assert.equal(selected.selectedCandidateId, candidate.id);
+  assert.equal(selected.state, 'awaiting_confirmation');
 
-  await assert.rejects(
-    store.reserveSelection({ taskId, ownerUserId: ownerId, expectedVersion: 1, solutionId: solution.id }),
-    (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict',
-  );
-  const reserved = await store.reserveSelection({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: 0,
-    solutionId: solution.id,
-  });
-  const selected = await store.completeSelection({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: reserved.stateVersion,
-    solutionId: solution.id,
-    candidates: created.candidates,
-  });
   const confirmed = await store.confirm({
     taskId,
     ownerUserId: ownerId,
     expectedVersion: selected.stateVersion,
-    plan: plan(taskId, 'confirmed evidence'),
-    materials: [{ id: 'upload:confirmed', inputId: 'research_goal', source: 'upload', value: 'confirmed evidence' }],
+    plan: plan(taskId),
+    materials: selected.materials,
   });
-  const attemptId = randomUUID();
+  assert.equal(confirmed.state, 'ready');
+  assert.equal(confirmed.plan?.version, 'skill-native-plan-v2');
+
+  const firstAttempt = randomUUID();
   const executing = await store.beginExecution({
+    taskId, ownerUserId: ownerId, expectedVersion: confirmed.stateVersion,
+    attemptId: firstAttempt, from: 'ready', materials: confirmed.materials,
+  });
+  const waitingExecution: SkillNativeExecutionState = {
+    steps: [{ invocationId: 'invocation-1', skillId: 'test-skill', state: 'waiting_for_user', turn: 1 }],
+    checkpoint: {
+      invocationIndex: 0,
+      invocationId: 'invocation-1',
+      turn: 1,
+      toolCalls: 0,
+      stateSummary: 'Need audience',
+      pendingQuestions: [{ id: 'audience', prompt: 'Who?', required: true, answerType: 'text' }],
+      answers: {},
+    },
+    externalKnowledge: [],
+  };
+  assert.equal(await store.saveExecution({
+    taskId, ownerUserId: ownerId, attemptId: firstAttempt, execution: waitingExecution,
+  }), true);
+  const waiting = await store.waitForUser({
+    taskId, ownerUserId: ownerId, attemptId: firstAttempt, execution: waitingExecution, warnings: [],
+  });
+  assert.equal(waiting?.state, 'waiting_for_user');
+  assert.equal(waiting?.execution.checkpoint?.pendingQuestions[0]?.id, 'audience');
+
+  const secondAttempt = randomUUID();
+  const resumed = await store.beginExecution({
     taskId,
     ownerUserId: ownerId,
-    expectedVersion: confirmed.stateVersion,
-    attemptId,
-  });
-  assert.equal(executing.state, 'executing');
-
-  await store.recordModelCall({
-    attemptId,
-    stage: 'skill_native_final_report',
-    provider: 'test-provider',
-    endpointHost: 'localhost',
-    requestedModel: 'test-model',
-    actualModel: 'test-model',
-    modelVersion: '1',
-    promptHash: `sha256:${'3'.repeat(64)}`,
-    status: 'succeeded',
-    failure: null,
-    startedAt: new Date('2026-09-04T00:00:00Z'),
-    finishedAt: new Date('2026-09-04T00:00:01Z'),
-  });
-  await store.recordToolCall({
-    attemptId,
-    invocationId: `skill-1-${skill.id}`,
-    toolId: 'tavily-web-search',
-    inputHash: `sha256:${'4'.repeat(64)}`,
-    output: { results: [] },
-    sources: [],
-    receipt: {
-      declaredAdapterType: 'tavily',
-      resolvedAdapterType: 'tavily',
-      implementationId: 'test',
-      executionMode: 'fake',
-      endpointHost: null,
-      status: 'ok',
-      latencyMs: 1,
-    },
-    status: 'succeeded',
-    startedAt: new Date('2026-09-04T00:00:00Z'),
-    finishedAt: new Date('2026-09-04T00:00:01Z'),
-  });
-
-  const report: ReportResult = {
-    version: 'report-result-v1',
-    title: '测试报告',
-    summary: '完成',
-    status: 'complete',
-    sections: [{
-      id: 'one',
-      title: '结论',
-      blocks: [
-        { type: 'text', text: '结果' },
-        { type: 'image', artifactId: initialArtifactId, alt: '保留图片' },
-      ],
+    expectedVersion: waiting!.stateVersion,
+    attemptId: secondAttempt,
+    from: 'waiting_for_user',
+    materials: [...waiting!.materials, {
+      id: 'conversation:audience', label: 'audience', source: 'conversation', value: 'Executives', artifactIds: [],
     }],
-    sources: [{ id: `artifact:${initialArtifactId}`, kind: 'upload', label: 'input.png', artifactId: initialArtifactId }],
-    gaps: [],
-  };
-  const supportReport: ReportResult = {
-    ...report,
-    title: '支持结果',
-    sections: [{
-      id: 'support',
-      title: '支持结果',
-      blocks: [{ type: 'image', artifactId: supportArtifactId, alt: '支持图片' }],
+  });
+  assert.equal(resumed.state, 'executing');
+
+  const bytes = Buffer.from('# Result');
+  const artifactId = randomUUID();
+  await store.writeArtifact({
+    id: artifactId,
+    taskId,
+    ownerUserId: ownerId,
+    projectId: 'project-a',
+    invocationId: 'invocation-1',
+    relativePath: 'outputs/result.md',
+    fileName: 'result.md',
+    mediaType: 'text/markdown',
+    role: 'report',
+    bytes,
+    contentSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    sourceArtifactIds: [],
+  }, secondAttempt);
+  const completeExecution: SkillNativeExecutionState = {
+    steps: [{
+      invocationId: 'invocation-1',
+      skillId: 'test-skill',
+      state: 'succeeded',
+      turn: 2,
+      outcome: {
+        status: 'complete', summary: 'Done', primaryArtifactId: artifactId,
+        artifactIds: [artifactId], gaps: [], missingCapabilities: [],
+      },
     }],
-    sources: [{ id: `artifact:${supportArtifactId}`, kind: 'upload', label: 'support.png', artifactId: supportArtifactId }],
+    checkpoint: null,
+    externalKnowledge: [],
   };
-  const supportStep = { invocationId: 'skill-1-support', skillId: 'support', state: 'succeeded' as const, report: supportReport };
-  const step = { invocationId: `skill-2-${skill.id}`, skillId: skill.id, state: 'succeeded' as const, report };
-  const steps = [supportStep, step];
-  assert.equal(await store.saveExecutionSteps({ taskId, ownerUserId: ownerId, attemptId, steps }), true);
   const finished = await store.finishExecution({
     taskId,
     ownerUserId: ownerId,
-    attemptId,
+    attemptId: secondAttempt,
     state: 'completed',
-    steps,
-    report,
-    html: '<!doctype html>',
-    markdown: '# 测试报告\n',
+    execution: completeExecution,
+    result: completeExecution.steps[0]!.outcome!,
     warnings: [],
     failure: null,
   });
   assert.equal(finished?.state, 'completed');
-  assert.equal(finished?.stateVersion, 5);
-  assert.equal(finished?.candidates[0]?.initialMaterials[0]?.value, null);
-  assert.equal(finished?.plan?.requirement.inputs[0]?.value, null);
-  assert.equal((await store.listReusableMaterials({ ownerUserId: ownerId, projectId, inputIds: ['research_goal'] })).length, 0);
-  assert.deepEqual((await store.getArtifactOwned({
-    artifactId: initialArtifactId,
-    taskId,
-    ownerUserId: ownerId,
-    projectId,
-  }))?.bytes, initialBytes);
-  assert.deepEqual((await store.getArtifactOwned({
-    artifactId: supportArtifactId,
-    taskId,
-    ownerUserId: ownerId,
-    projectId,
-  }))?.bytes, initialBytes);
-  assert.equal(await store.getArtifactOwned({
-    artifactId: unusedArtifactId,
-    taskId,
-    ownerUserId: ownerId,
-    projectId,
-  }), null);
+  assert.equal(finished?.materials.every(({ value }) => value === null), true);
+  assert.equal(finished?.artifacts[0]?.mediaType, 'text/markdown');
+  assert.equal((await store.getArtifactOwned({
+    artifactId, taskId, ownerUserId: ownerId, projectId: 'project-a',
+  }))?.bytes.toString(), '# Result');
 
-  assert.deepEqual(await store.reserveZeroPublication({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-  }), { status: 'reserved' });
-  await assert.rejects(store.replan({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-    candidates: created.candidates,
-  }), (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict');
-  await store.failZeroPublication({ taskId, ownerUserId: ownerId, failure: 'temporary outage' });
-  assert.deepEqual(await store.reserveZeroPublication({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-  }), { status: 'reserved' });
-  const publication = {
-    taskId,
-    fileKey: 'file-1',
-    pageId: 'page-1',
-    pageName: '报告',
-    rootNodeId: 'node-1',
-  };
-  const draft = {
-    taskId,
-    fileKey: publication.fileKey,
-    pageId: publication.pageId,
-    pageName: publication.pageName,
-    draftRootNodeId: publication.rootNodeId,
-    finalName: '测试报告',
-  };
-  await store.prepareZeroPublication({ taskId, ownerUserId: ownerId, draft });
-  await assert.rejects(store.replan({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-    candidates: created.candidates,
-  }), (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict');
-  assert.equal(await store.recoverInterrupted(), 0);
-  assert.deepEqual(await store.reserveZeroPublication({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-  }), { status: 'prepared', draft });
-  await store.completeZeroPublication({ taskId, ownerUserId: ownerId, publication });
-  assert.deepEqual(await store.reserveZeroPublication({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-  }), { status: 'completed', publication });
-
-  const audit = await query(
-    `SELECT
-       (SELECT status FROM skill_native_attempts WHERE id = $1) AS attempt_status,
-       (SELECT count(*)::int FROM skill_native_model_calls WHERE attempt_id = $1) AS model_calls,
-       (SELECT count(*)::int FROM skill_native_tool_calls WHERE attempt_id = $1) AS tool_calls`,
-    [attemptId],
+  await assert.rejects(
+    store.select({ taskId, ownerUserId: ownerId, expectedVersion: created.stateVersion, candidateId: candidate.id }),
+    (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict',
   );
-  assert.deepEqual(audit.rows[0], { attempt_status: 'completed', model_calls: 1, tool_calls: 1 });
-
-  const replanned = await store.replan({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: finished!.stateVersion,
-    candidates: created.candidates,
-  });
-  assert.equal(replanned.state, 'awaiting_selection');
-  assert.equal(replanned.report, null);
-  const publicationAfterReplan = await query(
-    `SELECT zero_publication_status, zero_publication_json, zero_publication_failure
-     FROM skill_native_tasks WHERE id = $1`,
-    [taskId],
-  );
-  assert.deepEqual(publicationAfterReplan.rows[0], {
-    zero_publication_status: null,
-    zero_publication_json: null,
-    zero_publication_failure: null,
-  });
 });
 
-test('a cancelled execution cannot persist a late Tool artifact', async () => {
+test('cancelling an execution prevents a late Artifact write bound to its attempt', async () => {
   const taskId = randomUUID();
-  const projectId = 'cancelled-tool-artifact';
   const created = await store.create({
     id: taskId,
     ownerUserId: ownerId,
-    projectId,
-    originalInput: 'test cancellation fence',
+    projectId: 'project-b',
+    originalInput: 'Cancel me',
     orchestrationMode: 'single_skill',
-    candidates: [candidate('conversation:goal', 'goal')],
+    requirement,
+    candidates: [candidate],
   });
-  const reserved = await store.reserveSelection({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: created.stateVersion,
-    solutionId: solution.id,
-  });
-  const selected = await store.completeSelection({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: reserved.stateVersion,
-    solutionId: solution.id,
-    candidates: created.candidates,
+  const selected = await store.select({
+    taskId, ownerUserId: ownerId, expectedVersion: created.stateVersion, candidateId: candidate.id,
   });
   const confirmed = await store.confirm({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: selected.stateVersion,
-    plan: plan(taskId, 'goal'),
-    materials: [],
+    taskId, ownerUserId: ownerId, expectedVersion: selected.stateVersion, plan: plan(taskId), materials: [],
   });
   const attemptId = randomUUID();
   const executing = await store.beginExecution({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: confirmed.stateVersion,
-    attemptId,
+    taskId, ownerUserId: ownerId, expectedVersion: confirmed.stateVersion, attemptId, from: 'ready',
   });
-  const cancelled = await store.cancel({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: executing.stateVersion,
-  });
-  assert.equal(cancelled.state, 'cancelled');
-
-  const bytes = Buffer.from([137, 80, 78, 71]);
-  const artifactId = randomUUID();
+  await store.cancel({ taskId, ownerUserId: ownerId, expectedVersion: executing.stateVersion });
+  const bytes = Buffer.from('late');
   await assert.rejects(store.writeArtifact({
-    id: artifactId,
-    taskId,
-    ownerUserId: ownerId,
-    projectId,
-    fileName: 'late.png',
-    mediaType: 'image/png',
-    bytes,
+    id: randomUUID(), taskId, ownerUserId: ownerId, projectId: 'project-b',
+    invocationId: 'invocation-1', relativePath: 'outputs/late.txt', fileName: 'late.txt',
+    mediaType: 'text/plain', role: 'output', bytes,
     contentSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
-  }, attemptId), (error: unknown) => (
-    error instanceof SkillNativeStoreError && error.code === 'not_found'
-  ));
-  assert.equal(await store.getArtifactOwned({ artifactId, taskId, ownerUserId: ownerId, projectId }), null);
+    sourceArtifactIds: [],
+  }, attemptId), SkillNativeStoreError);
 });
 
-test('selection reservation excludes concurrent select and replan mutations', async () => {
+test('replanning removes generated Artifacts but retains user uploads', async () => {
   const taskId = randomUUID();
+  const uploadBytes = Buffer.from('source');
+  const uploadId = randomUUID();
   const created = await store.create({
     id: taskId,
     ownerUserId: ownerId,
-    projectId: 'selection-reservation',
-    originalInput: 'test selection reservation',
+    projectId: 'project-replan',
+    originalInput: 'Replan me',
     orchestrationMode: 'single_skill',
-    candidates: [candidate('conversation:goal', 'goal')],
+    requirement,
+    candidates: [candidate],
+    artifacts: [{
+      id: uploadId,
+      taskId,
+      ownerUserId: ownerId,
+      projectId: 'project-replan',
+      relativePath: 'uploads/source.txt',
+      fileName: 'source.txt',
+      mediaType: 'text/plain',
+      role: 'working',
+      bytes: uploadBytes,
+      contentSha256: `sha256:${createHash('sha256').update(uploadBytes).digest('hex')}`,
+      sourceArtifactIds: [],
+    }],
   });
-  const reserved = await store.reserveSelection({
+  const selected = await store.select({
+    taskId, ownerUserId: ownerId, expectedVersion: created.stateVersion, candidateId: candidate.id,
+  });
+  const confirmed = await store.confirm({
+    taskId, ownerUserId: ownerId, expectedVersion: selected.stateVersion, plan: plan(taskId), materials: [],
+  });
+  const attemptId = randomUUID();
+  await store.beginExecution({
+    taskId, ownerUserId: ownerId, expectedVersion: confirmed.stateVersion, attemptId, from: 'ready',
+  });
+  const generatedBytes = Buffer.from('generated');
+  const generatedId = randomUUID();
+  await store.writeArtifact({
+    id: generatedId,
     taskId,
     ownerUserId: ownerId,
-    expectedVersion: created.stateVersion,
-    solutionId: solution.id,
+    projectId: 'project-replan',
+    invocationId: 'invocation-1',
+    relativePath: 'outputs/generated.txt',
+    fileName: 'generated.txt',
+    mediaType: 'text/plain',
+    role: 'output',
+    bytes: generatedBytes,
+    contentSha256: `sha256:${createHash('sha256').update(generatedBytes).digest('hex')}`,
+    sourceArtifactIds: [uploadId],
+  }, attemptId);
+  const paused = await store.pauseExecution({
+    taskId,
+    ownerUserId: ownerId,
+    attemptId,
+    execution: { steps: [], checkpoint: null, externalKnowledge: [] },
+    failure: 'interrupted',
+  });
+  const replanned = await store.replan({
+    taskId,
+    ownerUserId: ownerId,
+    expectedVersion: paused!.stateVersion,
+    requirement,
+    candidates: [candidate],
   });
 
-  await assert.rejects(store.reserveSelection({
-    taskId,
-    ownerUserId: ownerId,
-    expectedVersion: reserved.stateVersion,
-    solutionId: solution.id,
-  }), (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict');
+  assert.deepEqual(replanned.artifacts.map(({ id }) => id), [uploadId]);
+  assert.equal(await store.getArtifactOwned({
+    artifactId: generatedId, taskId, ownerUserId: ownerId, projectId: 'project-replan',
+  }), null);
+});
 
-  await assert.rejects(store.replan({
+test('completion material cleanup cannot overwrite a concurrent replan', async () => {
+  const taskId = randomUUID();
+  const materials = [{
+    id: 'conversation:secret',
+    label: 'secret',
+    source: 'conversation' as const,
+    value: 'raw material',
+    artifactIds: [],
+  }];
+  const created = await store.create({
+    id: taskId,
+    ownerUserId: ownerId,
+    projectId: 'project-race',
+    originalInput: 'Race replan',
+    orchestrationMode: 'single_skill',
+    requirement,
+    candidates: [candidate],
+    materials,
+  });
+  const selected = await store.select({
+    taskId, ownerUserId: ownerId, expectedVersion: created.stateVersion, candidateId: candidate.id,
+  });
+  const confirmed = await store.confirm({
+    taskId, ownerUserId: ownerId, expectedVersion: selected.stateVersion, plan: plan(taskId), materials,
+  });
+  const attemptId = randomUUID();
+  await store.beginExecution({
+    taskId, ownerUserId: ownerId, expectedVersion: confirmed.stateVersion,
+    attemptId, from: 'ready', materials,
+  });
+  let raced = false;
+  const racingStore = new PostgresSkillNativeTaskStore(new QueryHookDatabase(scoped, async (sql) => {
+    if (raced || !sql.includes('SET materials_json = $3, plan_json = $4')) return;
+    raced = true;
+    const completed = await store.getOwned(taskId, ownerId);
+    assert.equal(completed?.state, 'completed');
+    await store.replan({
+      taskId,
+      ownerUserId: ownerId,
+      expectedVersion: completed!.stateVersion,
+      requirement,
+      candidates: [candidate],
+    });
+  }));
+  const outcome = {
+    status: 'complete' as const,
+    summary: 'Done',
+    artifactIds: [],
+    gaps: [],
+    missingCapabilities: [],
+  };
+  const finished = await racingStore.finishExecution({
     taskId,
     ownerUserId: ownerId,
-    expectedVersion: reserved.stateVersion,
-    candidates: created.candidates,
-  }), (error: unknown) => error instanceof SkillNativeStoreError && error.code === 'conflict');
+    attemptId,
+    state: 'completed',
+    execution: {
+      steps: [{ invocationId: 'invocation-1', skillId: 'test-skill', state: 'succeeded', turn: 1, outcome }],
+      checkpoint: null,
+      externalKnowledge: [],
+    },
+    result: outcome,
+    warnings: [],
+    failure: null,
+  });
+
+  assert.equal(raced, true);
+  assert.equal(finished?.state, 'completed');
+  assert.equal(finished?.materials[0]?.value, null);
+  const persisted = await store.getOwned(taskId, ownerId);
+  assert.equal(persisted?.state, 'awaiting_selection');
+  assert.equal(persisted?.plan, null);
 });

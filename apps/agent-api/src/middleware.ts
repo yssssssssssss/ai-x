@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken } from './auth.ts';
-import { getUserById } from '../../../database/repository.ts';
+import { getUserById } from '../../../database/users.ts';
 
 // requireAuth:校验 Bearer JWT → 挂 req.userId / req.userEmail。
 // 无 token 或非法 → 401。所有业务路由挂此中间件,配合 owner 隔离。

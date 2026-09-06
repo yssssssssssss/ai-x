@@ -8,7 +8,7 @@ import {
   historyTaskPresentation,
   type HistoryTaskSummary,
   type TaskHistoryGroup,
-} from '../current-flow-state.ts';
+} from '../task-history.ts';
 
 const HISTORY_TABS: Array<{ id: TaskHistoryGroup; label: string }> = [
   { id: 'pending', label: '待处理' },
@@ -18,11 +18,11 @@ const HISTORY_TABS: Array<{ id: TaskHistoryGroup; label: string }> = [
 ];
 
 function taskKey(task: HistoryTaskSummary): string {
-  return `${task.kind}:${task.id}`;
+  return task.id;
 }
 
 function taskTitle(task: HistoryTaskSummary): string {
-  return task.displayName ?? task.original_input;
+  return task.displayName ?? task.originalInput;
 }
 
 // 左侧栏:新建任务 + 状态化历史 + 资源库入口 + 用户/登出。
@@ -107,7 +107,7 @@ export function Sidebar({
             <HistoryTaskRow
               key={taskKey(task)}
               task={task}
-              active={task.kind === 'native' && task.id === activeTaskId}
+              active={task.id === activeTaskId}
               onOpen={() => onOpenTask(task)}
               onUpdate={(patch) => onUpdateTask(task, patch)}
             />
@@ -128,13 +128,12 @@ export function Sidebar({
             <summary>运行能力</summary>
             <span>App {capabilities.applicationVersion} · Build {capabilities.build.id}</span>
             <span>Source {capabilities.build.sourceRevision?.slice(0, 12) ?? 'unavailable'}</span>
-            <span>Plan {capabilities.planContractVersions.join(', ')}</span>
-            <span>Report {capabilities.reportDocumentVersions.join(', ')}</span>
-            <span>Task types: {capabilities.activeTaskTypes.join(', ')}</span>
-            <span>Deliverables: {capabilities.activeDeliverables.join(', ')}</span>
-            <span>Compiled Skills: {capabilities.compiledSkills.join(', ')}</span>
+            <span>Plan {capabilities.planContractVersion}</span>
+            <span>Skill packages {capabilities.skillPackages.length}</span>
+            <span>Unavailable packages {capabilities.unavailableSkillPackages}</span>
+            <span>Sandbox {capabilities.sandboxAvailable ? 'available' : 'unavailable'}</span>
+            <span>Zero publishing {capabilities.zeroPublicationEnabled ? 'enabled' : 'disabled'}</span>
             <span>Config {capabilities.build.configurationHash.slice(0, 19)}…</span>
-            <span>Knowledge {capabilities.knowledgeIndexHash?.slice(0, 19) ?? 'unavailable'}…</span>
             <span>Tools {capabilities.toolRegistryHash.slice(0, 19)}…</span>
           </details>
         ) : null}
@@ -244,7 +243,7 @@ function HistoryTaskRow({
               <span className={`history-status-dot tone-${presentation.tone}`} aria-hidden="true" />
               <span>{presentation.label}</span>
               <span aria-hidden="true">·</span>
-              <span>{task.task_type ?? '未分类'}</span>
+              <span>{task.orchestrationMode === 'single_skill' ? '单 Skill' : '多 Skill'}</span>
             </span>
           </button>
           <button

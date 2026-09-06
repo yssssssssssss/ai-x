@@ -3,6 +3,7 @@ import type {
   ConfirmSkillNativeTaskRequest,
   CreateSkillNativeTaskRequest,
   PublishSkillNativeReportRequest,
+  ResumeSkillNativeTaskRequest,
   SkillNativeInputAnswer,
 } from '../../../../packages/api-contract/skill-native.ts';
 import {
@@ -22,11 +23,10 @@ function expectedVersion(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function inputAnswers(value: unknown): Record<string, SkillNativeInputAnswer | null> | null {
+function inputAnswers(value: unknown): Record<string, SkillNativeInputAnswer> | null {
   const answers = record(value);
   if (!answers) return null;
   for (const answer of Object.values(answers)) {
-    if (answer === null) continue;
     const item = record(answer);
     if (
       !item
@@ -35,7 +35,7 @@ function inputAnswers(value: unknown): Record<string, SkillNativeInputAnswer | n
       || Object.keys(item).some((key) => key !== 'source' && key !== 'value')
     ) return null;
   }
-  return answers as Record<string, SkillNativeInputAnswer | null>;
+  return answers as Record<string, SkillNativeInputAnswer>;
 }
 
 function publicError(res: Response, error: unknown): void {
@@ -102,7 +102,6 @@ export function createSkillNativeTasksRouter(
       || (body.orchestrationMode !== 'single_skill' && body.orchestrationMode !== 'multi_skill')
       || (body.projectId !== undefined && typeof body.projectId !== 'string')
       || !providedInputs
-      || Object.values(providedInputs).some((answer) => answer === null)
     ) {
       res.status(400).json({ error: 'originalInput、orchestrationMode 或 inputs 无效' });
       return;
@@ -112,7 +111,7 @@ export function createSkillNativeTasksRouter(
         originalInput: body.originalInput,
         orchestrationMode: body.orchestrationMode,
         ...(typeof body.projectId === 'string' ? { projectId: body.projectId } : {}),
-        inputs: providedInputs as Record<string, SkillNativeInputAnswer>,
+        inputs: providedInputs,
       };
       res.status(201).json(await service.create(req.userId!, request));
     } catch (error) {
@@ -131,8 +130,8 @@ export function createSkillNativeTasksRouter(
   router.post('/:id/select', asyncRoute(async (req, res) => {
     const body = record(req.body);
     const version = expectedVersion(body?.expectedVersion);
-    if (version === null || typeof body?.solutionId !== 'string' || !body.solutionId.trim()) {
-      res.status(400).json({ error: 'expectedVersion 和 solutionId 必填' });
+    if (version === null || typeof body?.candidateId !== 'string' || !body.candidateId.trim()) {
+      res.status(400).json({ error: 'expectedVersion 和 candidateId 必填' });
       return;
     }
     try {
@@ -140,7 +139,7 @@ export function createSkillNativeTasksRouter(
         taskId: routeParam(req.params.id),
         ownerUserId: req.userId!,
         expectedVersion: version,
-        solutionId: body.solutionId,
+        candidateId: body.candidateId,
       }));
     } catch (error) {
       publicError(res, error);
@@ -150,7 +149,7 @@ export function createSkillNativeTasksRouter(
   router.post('/:id/confirm', asyncRoute(async (req, res) => {
     const body = record(req.body);
     const version = expectedVersion(body?.expectedVersion);
-    const answers = inputAnswers(body?.answers);
+    const answers = inputAnswers(body?.answers ?? {});
     if (version === null || !answers) {
       res.status(400).json({ error: 'expectedVersion 和 answers 必填' });
       return;
@@ -163,7 +162,7 @@ export function createSkillNativeTasksRouter(
     }
   }));
 
-  for (const action of ['execute', 'cancel', 'resume', 'replan'] as const) {
+  for (const action of ['execute', 'cancel', 'replan'] as const) {
     router.post(`/:id/${action}`, asyncRoute(async (req, res) => {
       const version = expectedVersion(record(req.body)?.expectedVersion);
       if (version === null) {
@@ -177,6 +176,26 @@ export function createSkillNativeTasksRouter(
       }
     }));
   }
+
+  router.post('/:id/resume', asyncRoute(async (req, res) => {
+    const body = record(req.body);
+    const version = expectedVersion(body?.expectedVersion);
+    const answers = inputAnswers(body?.answers ?? {});
+    if (version === null || !answers) {
+      res.status(400).json({ error: 'expectedVersion 和 answers 必填' });
+      return;
+    }
+    try {
+      const request: ResumeSkillNativeTaskRequest = { expectedVersion: version, answers };
+      res.json(await service.resume({
+        taskId: routeParam(req.params.id),
+        ownerUserId: req.userId!,
+        body: request,
+      }));
+    } catch (error) {
+      publicError(res, error);
+    }
+  }));
 
   router.get('/:id/report.html', asyncRoute(async (req, res) => {
     try {
@@ -211,7 +230,9 @@ export function createSkillNativeTasksRouter(
       }
       res.set({
         'Cache-Control': 'private, no-store',
-        'Content-Disposition': 'inline',
+        'Content-Disposition': ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mediaType)
+          ? 'inline'
+          : 'attachment',
         'Content-Length': String(artifact.bytes.byteLength),
         'Content-Security-Policy': "default-src 'none'; sandbox",
         'Content-Type': artifact.mediaType,

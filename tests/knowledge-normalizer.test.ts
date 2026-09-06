@@ -12,8 +12,8 @@ test('路径推断 type/domain', () => {
   assert.equal(inferTypeDomain('README.md'), null);
 });
 
-test('skills 下只有 SKILL.md 是条目, skeleton 返回 null', () => {
-  assert.deepEqual(inferTypeDomain('skills/competitive-analysis/SKILL.md'), { type: 'skill', domain: 'general' });
+test('Skill packages are not part of the knowledge index', () => {
+  assert.equal(inferTypeDomain('skills/competitive-analysis/SKILL.md'), null);
   assert.equal(inferTypeDomain('skills/competitive-analysis/references/competitive-analysis-skeleton.md'), null);
 });
 

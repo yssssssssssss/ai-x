@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "skill-native-real-smoke-receipt-v1",
+  "status": "passed",
+  "completedAt": "2026-09-06T08:48:02.309643Z",
+  "database": {
+    "kind": "ephemeral-local-postgresql",
+    "name": "user_research_ai_skill_native_smoke_20260906_01",
+    "droppedAfterReceipt": true
+  },
+  "externalKnowledge": {
+    "mountId": "research-wiki",
+    "logicalPath": "/knowledge/research-wiki",
+    "contentHash": "sha256:211ca966bf75b5aebb429df904b98c318734ad85ca635d8040ad44df76e6fce0"
+  },
+  "single": {
+    "taskId": "606a588a-2035-4e08-9e5a-7db3649fb8ec",
+    "mode": "single_skill",
+    "skillIds": [
+      "issue-prioritization"
+    ],
+    "state": "completed",
+    "primaryArtifact": {
+      "id": "7af96206-b560-4d56-9b50-227334a51877",
+      "mediaType": "text/markdown",
+      "byteSize": 7550,
+      "contentSha256": "sha256:03c20aabfcf4fe3682c4a734d579f4bc0c447a5dd80742079d088220466a4a3e"
+    },
+    "modelCalls": {
+      "succeeded": 4,
+      "failed": 0
+    }
+  },
+  "multi": {
+    "taskId": "5396bb6a-5ca7-4629-bd6a-4ecae640ecc5",
+    "mode": "multi_skill",
+    "skillIds": [
+      "code-open-feedback",
+      "issue-prioritization"
+    ],
+    "state": "completed",
+    "primaryArtifact": {
+      "id": "175b5705-1dc8-473e-bf3f-2c3bda793da3",
+      "mediaType": "text/markdown",
+      "byteSize": 8100,
+      "contentSha256": "sha256:816563ea6a127047a6f441c0a88f9b918387f0b21063d7eacb775952fd7e1ce1"
+    },
+    "modelCalls": {
+      "succeeded": 24,
+      "failed": 0
+    }
+  },
+  "models": [
+    {
+      "requested": "GPT-5-joybuilder",
+      "actual": "gpt-5-2025-08-07"
+    },
+    {
+      "requested": "GPT-5.2-joybuilder",
+      "actual": "gpt-5.2-2025-12-11"
+    },
+    {
+      "requested": "GPT-5.4-joybuilder",
+      "actual": "gpt-5.4-2026-03-05"
+    },
+    {
+      "requested": "GPT-5.5-joybuilder",
+      "actual": "gpt-5.5-2026-04-24"
+    }
+  ],
+  "sandbox": {
+    "packageId": "journey-map",
+    "image": "ghcr.io/yssssssssssss/ai-x-skill-runtime@sha256:0a3b0eaa7c1e1e0094f15bb6fdd0015443832b3f0136b1fe1b53bfee98f4f7c5",
+    "runtimes": {
+      "node": "22.23.2",
+      "python": "3.11.2",
+      "bash": "5.2.15"
+    },
+    "outputByteSize": 3585,
+    "outputSha256": "sha256:d8abd9cacc6e0b6ba44da11156b4d928149fd4a0a3e39549c5f2fe39ac3a9acc"
+  },
+  "zeroPublicationEnabled": false
+}

@@ -1,4 +1,8 @@
-import { isZeroNodeId } from '../../../../../packages/api-contract/zero-publication.ts';
+const ZERO_NODE_ID = /^\d+:\d+$/u;
+
+function isZeroNodeId(value: unknown): value is string {
+  return typeof value === 'string' && ZERO_NODE_ID.test(value);
+}
 
 const REQUIRED_TOOLS = [
   'resources_list',

@@ -1,6 +1,6 @@
 import { isIPv4 } from 'node:net';
 import { Router, type Request } from 'express';
-import { createUser, getUserByEmail, getUserById } from '../../../../database/repository.ts';
+import { createUser, getUserByEmail, getUserById } from '../../../../database/users.ts';
 import { hashPassword, verifyPassword, signToken } from '../auth.ts';
 import { requireAuth } from '../middleware.ts';
 

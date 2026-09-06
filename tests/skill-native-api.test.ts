@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { after, before, test } from 'node:test';
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from 'express';
 import type {
+  SkillOutcome,
   SkillNativeTaskView,
   SkillNativeZeroPublication,
 } from '../packages/api-contract/skill-native.ts';
@@ -10,9 +11,17 @@ import { createSkillNativeTasksRouter, type SkillNativeTasksHttpPort } from '../
 import { SkillNativeWorkflowError } from '../apps/orchestrator-runtime/src/skill-native/service.ts';
 import { SkillNativeStoreError, type SkillNativeArtifactRecord } from '../apps/orchestrator-runtime/src/skill-native/store.ts';
 import { SkillNativeZeroPublisher } from '../apps/agent-api/src/integrations/zero/skill-native-zero-publisher.ts';
-import type { ZeroPublicationMcp } from '../apps/agent-api/src/integrations/zero/zero-publication-service.ts';
+import type { SkillNativeZeroMcp } from '../apps/agent-api/src/integrations/zero/skill-native-zero-publisher.ts';
 
 const now = new Date('2026-09-04T00:00:00Z').toISOString();
+const outcome: SkillOutcome = {
+  status: 'complete',
+  summary: '报告已完成',
+  primaryArtifactId: 'artifact-1',
+  artifactIds: ['artifact-1'],
+  gaps: [],
+  missingCapabilities: [],
+};
 const task: SkillNativeTaskView = {
   id: 'task-1',
   projectId: 'project-1',
@@ -20,20 +29,39 @@ const task: SkillNativeTaskView = {
   orchestrationMode: 'single_skill',
   state: 'completed',
   stateVersion: 4,
-  selectedSolutionId: 'solution',
-  currentAttemptId: 'attempt',
+  selectedCandidateId: 'candidate',
+  currentAttemptId: null,
+  requirement: {
+    version: 'requirement-brief-v1',
+    goal: '研究目标',
+    desiredOutputs: ['研究报告'],
+    scope: [],
+    constraints: [],
+    assumptions: [],
+    openQuestions: [],
+  },
   candidates: [],
   plan: null,
-  executionSteps: [],
-  report: {
-    version: 'report-result-v1',
-    title: '报告',
-    summary: '摘要',
-    status: 'complete',
-    sections: [{ id: 'one', title: '结论', blocks: [{ type: 'text', text: '内容' }] }],
-    sources: [],
-    gaps: [],
-  },
+  executionSteps: [{
+    invocationId: 'support',
+    skillId: 'research-skill',
+    state: 'succeeded',
+    turn: 2,
+    outcome,
+  }],
+  pendingQuestions: [],
+  artifacts: [{
+    id: 'artifact-1',
+    invocationId: 'support',
+    relativePath: 'outputs/report.md',
+    fileName: 'report.md',
+    mediaType: 'text/markdown',
+    role: 'report',
+    byteSize: 4,
+    contentSha256: 'sha256:test',
+    sourceArtifactIds: [],
+  }],
+  result: outcome,
   warnings: [],
   failure: null,
   createdAt: now,
@@ -45,11 +73,24 @@ const artifact: SkillNativeArtifactRecord = {
   taskId: task.id,
   ownerUserId: 'owner',
   projectId: task.projectId,
-  inputId: 'designImage',
+  invocationId: 'support',
+  relativePath: 'outputs/screen.png',
   fileName: 'screen.png',
   mediaType: 'image/png',
+  role: 'output',
   bytes: Buffer.from([137, 80, 78, 71]),
   contentSha256: 'sha256:test',
+  sourceArtifactIds: [],
+};
+
+const downloadArtifact: SkillNativeArtifactRecord = {
+  ...artifact,
+  id: 'artifact-2',
+  relativePath: 'outputs/report.html',
+  fileName: 'report.html',
+  mediaType: 'text/html',
+  role: 'report',
+  bytes: Buffer.from('<!doctype html><p>report</p>'),
 };
 
 let lastOwner = '';
@@ -77,12 +118,13 @@ const service: SkillNativeTasksHttpPort = {
     ? '<!doctype html><meta charset="utf-8"><img src="data:image/png;base64,iVBORw0KGgo=">'
     : null,
   markdown: async () => '# 报告\n',
-  artifact: async (taskId, ownerUserId, artifactId) => (
-    taskId === task.id && ownerUserId === 'owner' && artifactId === artifact.id ? artifact : null
-  ),
+  artifact: async (taskId, ownerUserId, artifactId) => {
+    if (taskId !== task.id || ownerUserId !== 'owner') return null;
+    return [artifact, downloadArtifact].find(({ id }) => id === artifactId) ?? null;
+  },
   skillResult: async (taskId, ownerUserId, invocationId) => (
     taskId === task.id && ownerUserId === 'owner' && invocationId === 'support'
-      ? task.report
+      ? outcome
       : null
   ),
   publishZero: async (): Promise<SkillNativeZeroPublication> => {
@@ -196,7 +238,7 @@ test('native task routes distinguish not found and optimistic-concurrency confli
   const conflict = await request('/api/research-tasks/task-1/select', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedVersion: 3, solutionId: 'solution' }),
+    body: JSON.stringify({ expectedVersion: 3, candidateId: 'candidate' }),
   });
   assert.equal(conflict.status, 409);
 });
@@ -211,8 +253,14 @@ test('report and Artifact responses are private, nosniff, scoped, and allow only
   const image = await request('/api/research-tasks/task-1/artifacts/artifact-1');
   assert.equal(image.status, 200);
   assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('content-disposition'), 'inline');
   assert.equal(image.headers.get('cross-origin-resource-policy'), 'same-origin');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), artifact.bytes);
+
+  const download = await request('/api/research-tasks/task-1/artifacts/artifact-2');
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(download.headers.get('content-disposition'), 'attachment');
 
   const foreign = await fetch(`${origin}/api/research-tasks/task-1/artifacts/artifact-1`, {
     headers: { Authorization: 'Bearer other' },
@@ -223,7 +271,7 @@ test('report and Artifact responses are private, nosniff, scoped, and allow only
   assert.equal(result.status, 200);
   assert.equal(result.headers.get('content-type'), 'application/json; charset=utf-8');
   assert.match(result.headers.get('content-disposition') ?? '', /attachment/u);
-  assert.equal((await result.json() as { title: string }).title, '报告');
+  assert.equal((await result.json() as SkillOutcome).summary, '报告已完成');
 
   const foreignResult = await fetch(`${origin}/api/research-tasks/task-1/results/support.json`, {
     headers: { Authorization: 'Bearer other' },
@@ -256,7 +304,7 @@ test('native Zero publisher prepares and finalizes a draft without cleanup', asy
     },
     async finalizeDraft() { events.push('finalize'); return { finalRootNodeId: '3:4' }; },
     async cleanupDraft() { events.push('cleanup'); },
-  } as unknown as ZeroPublicationMcp;
+  } as unknown as SkillNativeZeroMcp;
   const publisher = new SkillNativeZeroPublisher(zero);
   const draft = await publisher.prepare({
     taskId: 'task-1',
@@ -279,7 +327,7 @@ test('native Zero publisher keeps a prepared draft when finalization fails so it
     async createHtmlDraft() { events.push('create'); return { rootNodeId: '3:4', x: 0, y: 0, width: 100, height: 100 }; },
     async finalizeDraft() { events.push('finalize'); throw new Error('finalize failed'); },
     async cleanupDraft(input: { rootNodeId: string }) { events.push(`cleanup:${input.rootNodeId}`); },
-  } as unknown as ZeroPublicationMcp;
+  } as unknown as SkillNativeZeroMcp;
   const publisher = new SkillNativeZeroPublisher(zero);
   const draft = await publisher.prepare({ taskId: 'task-1', title: '报告', html: '<!doctype html>' });
   await assert.rejects(publisher.finalize(draft), /finalize failed/u);

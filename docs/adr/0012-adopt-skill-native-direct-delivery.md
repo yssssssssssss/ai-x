@@ -1,6 +1,6 @@
 # ADR-0012：采用 Skill 原生直连交付
 
-- 状态：Accepted
+- 状态：Superseded by ADR-0013
 - 日期：2026-09-04
 - 实施方案：`docs/plans/2026-09-04-skill-native-direct-delivery-development.md`
 - 取代：ADR-0003、ADR-0005、ADR-0006、ADR-0007、ADR-0008、ADR-0009、ADR-0010、ADR-0011 中关于新任务编排与报告生成的决策

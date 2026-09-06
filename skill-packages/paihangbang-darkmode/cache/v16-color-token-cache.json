@@ -1,0 +1,44 @@
+{
+  "version": "seed-2026-08-07",
+  "source": {
+    "componentLibrary": "https://relay.jd.com/file/design?id=2029484645871009793&page_id=6%3A9",
+    "wikiMd": "http://xingyun.jd.com/codingRoot/JD-Design-Wiki/2C-DesignWiki/blob/main/jd-design-system-md-v16/foundations/%E8%AE%BE%E8%AE%A1%E8%AF%AD%E8%A8%80%E5%9F%BA%E7%A1%80%EF%BC%88Design%20Tokens%EF%BC%89/%E8%89%B2%E5%BD%A9Token/design.md"
+  },
+  "modes": {
+    "lightNames": ["日间模式"],
+    "darkNames": ["暗色模式", "暗黑模式", "Dark", "Night"]
+  },
+  "tokens": [
+    {"tokenName":"灰阶/gray_7","role":"text/title","lightHex":"#11141a","darkHex":"#e1e6eb"},
+    {"tokenName":"灰阶/gray_6","role":"text/body","lightHex":"#4f5259","darkHex":"#a1a9b3"},
+    {"tokenName":"灰阶/gray_5","role":"text/help","lightHex":"#8d9199","darkHex":"#717985"},
+    {"tokenName":"灰阶/gray_4","role":"text/disabled,border,icon","lightHex":"#b4b8bf","darkHex":"#4b5159"},
+    {"tokenName":"页面最底/custom_page_black","role":"background/page-root","lightHex":"#ffffff","darkHex":"#000000"},
+    {"tokenName":"灰阶/gray_7","role":"surface/card,background/support","lightHex":"#11141a","darkHex":"#11141a"},
+    {"tokenName":"灰阶/gray_2","role":"background/component,tab-unselected","lightHex":"#ebedf2","darkHex":"#2a2f36"},
+    {"tokenName":"灰阶/gray_1","role":"surface/legacy-card,overlay","lightHex":"#ffffff","darkHex":"#11141a"},
+    {"tokenName":"蒙层/mask_1","role":"mask/light","lightHex":"#11141a05","darkHex":"#0000001a"},
+    {"tokenName":"蒙层/mask_2","role":"border,mask","lightHex":"#11141a14","darkHex":"#ffffff1f"},
+    {"tokenName":"蒙层/mask_5","role":"mask/part","lightHex":"#11141a66","darkHex":"#00000066"},
+    {"tokenName":"蒙层/mask_6","role":"mask/block","lightHex":"#11141ab2","darkHex":"#000000b2"},
+    {"tokenName":"品牌色/jdred_6","role":"primary,brand","lightHex":"#ff0f23","darkHex":"#ff0f23"},
+    {"tokenName":"品牌色/red_1","role":"primary-light-bg","lightHex":"#ffe8ee","darkHex":"#40262a"},
+    {"tokenName":"品牌色/red_2","role":"primary-light-pressed","lightHex":"#ffccd7","darkHex":"#3d2128"},
+    {"tokenName":"服务金/servicegold_1","role":"service-bg","lightHex":"#fff4e0","darkHex":"#3a2b1a"},
+    {"tokenName":"服务金/servicegold_2","role":"service","lightHex":"#f2ba79","darkHex":"#d1995a"},
+    {"tokenName":"服务金/servicegold_4","role":"service-text","lightHex":"#80512d","darkHex":"#b38b6d"}
+  ],
+  "semanticTokens": [
+    {"tokenName":"主色 primary/color_primary","role":"primary","alias":"品牌色/jdred_6"},
+    {"tokenName":"主色 primary/color_primary_light","role":"primary-light-bg","alias":"品牌色/red_1"},
+    {"tokenName":"主色 primary/color_primary_light_pressed","role":"primary-light-pressed","alias":"品牌色/red_2"},
+    {"tokenName":"文本 Text/color_title","role":"text/title","alias":"灰阶/gray_7"},
+    {"tokenName":"文本 Text/color_text","role":"text/body","alias":"灰阶/gray_6"},
+    {"tokenName":"文本 Text/color_text_help","role":"text/help","alias":"灰阶/gray_5"},
+    {"tokenName":"背景 Background/color_background","role":"background/page","alias":"灰阶/gray_3"},
+    {"tokenName":"背景 Background/color_background_overlay","role":"surface/overlay","alias":"灰阶/gray_1"},
+    {"tokenName":"背景 Background/color_background_component","role":"surface/component","alias":"灰阶/gray_2"},
+    {"tokenName":"线 Line（颜色）/color_border","role":"border/divider","alias":"蒙层/mask_2"}
+  ]
+}
+

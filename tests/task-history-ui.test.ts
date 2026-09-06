@@ -25,14 +25,11 @@ test('workbench has one contained scroll chain and a non-scrolling bottom compos
   assert.match(composerSource, /className="composer"/u);
 });
 
-test('new workbench tasks use the Skill-native API while both older task stores stay read-only', async () => {
+test('workbench history uses only the Skill-native task API', async () => {
   const source = await readFile(workbench, 'utf8');
   assert.match(source, /useSkillNativeFlow/u);
   assert.match(source, /api\.listResearchTasks\(\)/u);
-  assert.match(source, /api\.listControlTasks\(\)/u);
-  assert.match(source, /api\.controlTask\(task\.id\)/u);
-  assert.match(source, /api\.taskDetail\(task\.id\)/u);
-  assert.match(source, /<CurrentStage4Report[\s\S]*?readOnly/u);
+  assert.doesNotMatch(source, /listControlTasks|controlTask|taskDetail|CurrentStage4Report/u);
   assert.doesNotMatch(source, /useTaskFlow/u);
 });
 
@@ -49,34 +46,35 @@ test('new task timeline renders the native flow and keeps the composer outside t
 
 test('Skill-native task failures expose frozen-plan retry and explicit replan', async () => {
   const source = await readFile(nativeFlow, 'utf8');
-  assert.match(source, /phase === 'paused' \|\| phase === 'failed'/u);
+  assert.match(source, /phase === 'paused' && task\.pendingQuestions\.length > 0/u);
+  assert.match(source, /phase === 'paused' && !asksRuntimeQuestions\) \|\| phase === 'failed'/u);
   assert.match(source, /void onRetry\(\)/u);
   assert.match(source, /void onReplan\(\)/u);
-  assert.match(source, /使用冻结 Plan 重试/u);
-  assert.match(source, /phase === 'done'[\s\S]*?读取最新 Skill 定义重新规划/u);
+  assert.match(source, />恢复</u);
+  assert.match(source, /phase === 'done'[\s\S]*?读取最新 Skill 包重新规划/u);
 });
 
 test('Skill-native report iframe permits printing without enabling scripts', async () => {
   const source = await readFile(nativeFlow, 'utf8');
-  assert.match(source, /sandbox="allow-modals allow-same-origin"/u);
+  assert.match(source, /sandbox="allow-modals"/u);
+  assert.doesNotMatch(source, /allow-same-origin/u);
   assert.doesNotMatch(source, /allow-scripts/u);
 });
 
-test('automatic input bindings are visible and correctable before confirmation', async () => {
+test('runtime questions support text, choice, and file answers', async () => {
   const source = await readFile(nativeFlow, 'utf8');
-  assert.match(source, /已自动绑定，可在确认前纠正/u);
-  assert.match(source, /\{input\.preview\}/u);
-  assert.match(source, />纠正<\/button>/u);
-  assert.match(source, /不使用，记为 Gap/u);
-  assert.match(source, /Array\.isArray\(value\.value\)[\s\S]*?\.join\('\\n'\)/u);
+  assert.match(source, /question\.answerType === 'choice'/u);
+  assert.match(source, /question\.answerType === 'file'/u);
+  assert.match(source, /type="file"/u);
+  assert.match(source, /source: 'upload'/u);
+  assert.match(source, /fileDataUrl/u);
 });
 
-test('replacement plans explain the fallback and require an explicit unavailable choice', async () => {
+test('plan confirmation freezes whole Skill packages without fixed input forms', async () => {
   const source = await readFile(nativeFlow, 'utf8');
-  assert.match(source, /失败或关键资料缺失时改用 \$\{skill\.replacementSkillName\}/u);
-  assert.match(source, /requirement\.missingPolicy === 'replace' \? '无法提供，按方案替换 Skill'/u);
-  assert.match(source, /question\.missingPolicy === 'replace' \? '无法提供，按方案替换 Skill'/u);
-  assert.match(source, /event\.target\.checked \? null/u);
+  assert.match(source, /确认后会冻结这些 Skill 包的全部文件/u);
+  assert.match(source, /Skill 私有问题将在执行到对应步骤时再询问/u);
+  assert.doesNotMatch(source, /replacementSkillName|missingPolicy/u);
 });
 
 test('native async responses are fenced when the active task changes', async () => {

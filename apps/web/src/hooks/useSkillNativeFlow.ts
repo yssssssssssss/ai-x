@@ -3,6 +3,7 @@ import {
   api,
   type ConfirmSkillNativeTaskRequest,
   type OrchestrationMode,
+  type ResumeSkillNativeTaskRequest,
   type SkillNativeTaskView,
   type SkillNativeZeroPublication,
 } from '../api/client.ts';
@@ -17,6 +18,7 @@ export type SkillNativePhase =
   | 'planned'
   | 'ready'
   | 'executing'
+  | 'waiting-for-user'
   | 'paused'
   | 'done'
   | 'failed'
@@ -28,6 +30,7 @@ function phaseOf(task: SkillNativeTaskView): SkillNativePhase {
   if (task.state === 'awaiting_confirmation') return 'planned';
   if (task.state === 'ready') return 'ready';
   if (task.state === 'executing') return 'executing';
+  if (task.state === 'waiting_for_user') return 'waiting-for-user';
   if (task.state === 'paused') return 'paused';
   if (task.state === 'completed' || task.state === 'completed_with_gaps') return 'done';
   if (task.state === 'failed') return 'failed';
@@ -123,7 +126,7 @@ export function useSkillNativeFlow() {
     }
   }
 
-  async function selectSolution(solutionId: string): Promise<void> {
+  async function selectSolution(candidateId: string): Promise<void> {
     if (!task) return;
     const currentTask = task;
     const currentGeneration = generation.current;
@@ -131,7 +134,7 @@ export function useSkillNativeFlow() {
     try {
       await applyTask(await api.selectResearchSolution(currentTask.id, {
         expectedVersion: currentTask.stateVersion,
-        solutionId,
+        candidateId,
       }), currentGeneration);
     } catch (cause) {
       if (currentGeneration !== generation.current) return;
@@ -186,19 +189,16 @@ export function useSkillNativeFlow() {
     }
   }
 
-  async function retry(): Promise<void> {
+  async function resume(answers: ResumeSkillNativeTaskRequest['answers'] = {}): Promise<void> {
     if (!task) return;
     const currentTask = task;
     const currentGeneration = generation.current;
     try {
-      const ready = await api.resumeResearchTask(currentTask.id, currentTask.stateVersion);
-      if (currentGeneration !== generation.current) return;
-      setTask(ready);
       setPhase('executing');
-      await applyTask(
-        await api.executeResearchTask(ready.id, ready.stateVersion),
-        currentGeneration,
-      );
+      await applyTask(await api.resumeResearchTask(currentTask.id, {
+        expectedVersion: currentTask.stateVersion,
+        answers,
+      }), currentGeneration);
     } catch (cause) {
       if (currentGeneration !== generation.current) return;
       setError(errorMessage(cause, '恢复失败'));
@@ -250,7 +250,8 @@ export function useSkillNativeFlow() {
     confirm,
     execute,
     cancel,
-    retry,
+    retry: resume,
+    resume,
     replan,
     publishToZero,
   };

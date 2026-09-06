@@ -1,65 +1,50 @@
-// API client:fetch 封装 + JWT header + 错误处理。
-// 与 agent-api 契约对齐(见 apps/agent-api/src/routes/*)。
-
 const TOKEN_KEY = 'ur_token';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
-export function setToken(t: string): void {
-  localStorage.setItem(TOKEN_KEY, t);
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
 }
+
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-async function req<T>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...opts.headers };
+function authorizationHeaders(): Record<string, string> {
   const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, {
-    method: opts.method ?? 'GET',
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function requestJson<T>(
+  path: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: options.method ?? 'GET',
+    headers: { 'Content-Type': 'application/json', ...authorizationHeaders() },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new ApiError(
-      res.status,
-      data?.error ?? `HTTP ${res.status}`,
-      typeof data?.code === 'string' ? data.code : undefined,
-    );
-  }
-  return data as T;
-}
-
-async function reqForm<T>(path: string, form: FormData, idempotencyKey: string): Promise<T> {
-  const headers: Record<string, string> = { 'Idempotency-Key': idempotencyKey };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new ApiError(
-      res.status,
-      data?.error ?? `HTTP ${res.status}`,
-      typeof data?.code === 'string' ? data.code : undefined,
-    );
-  }
-  return data as T;
-}
-
-async function reqBlob(path: string): Promise<Response> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`/api${path}`, { headers });
+  const body = await response.json().catch(() => ({})) as { error?: unknown; code?: unknown };
   if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string; code?: string };
     throw new ApiError(
       response.status,
-      data.error ?? `HTTP ${response.status}`,
-      typeof data.code === 'string' ? data.code : undefined,
+      typeof body.error === 'string' ? body.error : `HTTP ${response.status}`,
+      typeof body.code === 'string' ? body.code : undefined,
+    );
+  }
+  return body as T;
+}
+
+async function requestFile(path: string): Promise<Response> {
+  const response = await fetch(`/api${path}`, { headers: authorizationHeaders() });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: unknown; code?: unknown };
+    throw new ApiError(
+      response.status,
+      typeof body.error === 'string' ? body.error : `HTTP ${response.status}`,
+      typeof body.code === 'string' ? body.code : undefined,
     );
   }
   return response;
@@ -75,104 +60,22 @@ export class ApiError extends Error {
   }
 }
 
-export interface DatasetUpload {
-  role: string;
-  file: File;
-  metadata: DatasetUploadMetadata;
-}
-
-// ---- 类型 ----
-// 契约类型集中在 packages/api-contract(前后端共享同一份,漂移编译期即炸)。
-// 这里 re-export,让前端各组件的 import 路径('./api/client.ts')保持不变。
 export type {
-  CandidateProfile,
-  PlanningProvenance,
-  Assumption,
-  PlanStep,
-  ResearchTaskData,
-  ResearchTaskV2,
-  PendingUpload,
-  PlanCandidate,
-  PlanPhaseKey,
-  PlanProgress,
-} from '../../../../packages/api-contract/plan.ts';
-export type {
-  User,
-  Upload,
-  DatasetUploadMetadata,
-  DatasetUploadResponse,
-  Finding,
-  Report,
-  ExecLogRow,
-  FinalizedPlan,
-  PlanCandidatesResponse,
-  SelectResponse,
-  PlanResponse,
-  ExecuteResponse,
-  TaskDetail,
-  TaskSummary,
+  SkillItem,
   TaskHistoryKind,
   TaskHistoryPreference,
   TaskHistoryPreferencePatch,
-  SkillItem,
+  User,
 } from '../../../../packages/api-contract/http.ts';
-
-import type {
-  DatasetUploadMetadata,
-  DatasetUploadResponse,
-} from '../../../../packages/api-contract/http.ts';
-import type {
-  CurrentPlanningResponse,
-} from '../../../agent-api/src/routes/control-planning.ts';
-
-export type {
-  ApprovalControlPlanRequest,
-  CancelControlPlanRequest,
-  ControlApprovalRequirement,
-  ControlApprovalTaskSummary,
-  ControlPlanRecovery,
-  ConfirmControlPlanRequest,
-  ControlCommandResponse,
-  ControlExecutionResult,
-  ControlPlanCandidatesResponse,
-  ControlTaskResponse,
-  ControlWorkflowState as ControlTaskState,
-  CurrentTaskReadResponse,
-  CurrentPlanCandidate,
-  ExecutionControlPlanRequest,
-  OrchestrationModeV1,
-  PlanControlTaskRequest,
-  ResumeControlPlanRequest,
-  ReviseControlPlanRequest,
-  ReviseControlPlanResponse,
-  SelectControlPlanRequest,
-  SelectControlPlanResponse,
-} from '../../../../packages/api-contract/control-workflow.ts';
-export type {
-  CapabilityProvenance,
-  CurrentRecommendation,
-  EvidenceEntry,
-  FindingGraph,
-  ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
-} from '../../../../packages/api-contract/research-deliverable.ts';
-export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
-export type {
-  SystemCapabilitiesResponse,
-} from '../../../../packages/api-contract/system-capabilities.ts';
-export type {
-  ZeroIntegrationStatusResponse,
-  ZeroPublicationResponse,
-  ZeroPublicationStage,
-  ZeroPublicationStatus,
-} from '../../../../packages/api-contract/zero-publication.ts';
+export type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
 export type {
   ConfirmSkillNativeTaskRequest,
   CreateSkillNativeTaskRequest,
   OrchestrationMode,
   PublishSkillNativeReportRequest,
-  ReportResult,
+  ResumeSkillNativeTaskRequest,
   SkillNativeCandidateView,
+  SkillNativeCatalogResponse,
   SkillNativeInputAnswer,
   SkillNativePlanView,
   SkillNativeTaskState,
@@ -182,328 +85,88 @@ export type {
 } from '../../../../packages/api-contract/skill-native.ts';
 
 import type {
-  ApprovalControlPlanRequest,
-  CancelControlPlanRequest,
-  ControlApprovalTaskSummary,
-  ConfirmControlPlanRequest,
-  ControlCommandResponse,
-  ControlExecutionResult,
-  CurrentTaskReadResponse,
-  ExecutionControlPlanRequest,
-  PlanControlTaskRequest,
-  ResumeControlPlanRequest,
-  ReviseControlPlanRequest,
-  ReviseControlPlanResponse,
-  SelectControlPlanRequest,
-  SelectControlPlanResponse,
-} from '../../../../packages/api-contract/control-workflow.ts';
-import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
-import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+  TaskHistoryKind,
+  TaskHistoryPreference,
+  TaskHistoryPreferencePatch,
+  User,
+} from '../../../../packages/api-contract/http.ts';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
-import type {
-  CreateZeroPublicationRequest,
-  ZeroIntegrationStatusResponse,
-  ZeroPublicationResponse,
-} from '../../../../packages/api-contract/zero-publication.ts';
 import type {
   ConfirmSkillNativeTaskRequest,
   CreateSkillNativeTaskRequest,
   PublishSkillNativeReportRequest,
+  ResumeSkillNativeTaskRequest,
+  SkillNativeCatalogResponse,
   SkillNativeTaskSummary,
   SkillNativeTaskView,
   SkillNativeZeroPublication,
 } from '../../../../packages/api-contract/skill-native.ts';
-import type {
-  User,
-  TaskDetail,
-  TaskSummary,
-  TaskHistoryKind,
-  TaskHistoryPreference,
-  TaskHistoryPreferencePatch,
-  SkillItem,
-} from '../../../../packages/api-contract/http.ts';
-import { parseControlDeliverableResponse } from '../report-package-response.ts';
-export type { ControlDeliverableResponse } from '../report-package-response.ts';
-
-
-export interface ClarifyControlTaskRequest {
-  expectedVersion: number;
-  clarificationAnswers: Record<string, unknown>;
-  assumptionEdits: Record<string, string>;
-  selectedScenarioId?: string;
-  idempotencyKey: string;
-}
-
-export interface ControlVisualAssetResponse {
-  blob: Blob;
-  mediaType: VisualAssetManifest['mediaType'];
-}
-
-export interface ControlHtmlBundleResponse {
-  blob: Blob;
-}
-
-interface PlanningStreamHandlers {
-  onConversation?: (conversationId: string) => void;
-  onProgress?: (event: PlanProgress) => void;
-}
-
-async function postPlanningStream(
-  path: string,
-  body: unknown,
-  handlers: PlanningStreamHandlers,
-  requestHeaders: Record<string, string> = {},
-): Promise<CurrentPlanningResponse> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...requestHeaders,
-  };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`/api${path}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const failure = await response.json().catch(() => ({})) as { error?: unknown; code?: unknown };
-    throw new ApiError(
-      response.status,
-      typeof failure.error === 'string' ? failure.error : `HTTP ${response.status}`,
-      typeof failure.code === 'string' ? failure.code : undefined,
-    );
-  }
-  if (!response.body) throw new ApiError(502, '规划响应缺少流式内容');
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: CurrentPlanningResponse | null = null;
-  const consume = (block: string): void => {
-    let event = 'message';
-    let data = '';
-    for (const line of block.split('\n')) {
-      if (line.startsWith('event:')) event = line.slice(6).trim();
-      else if (line.startsWith('data:')) data += line.slice(5).trim();
-    }
-    if (!data) return;
-    const parsed: unknown = JSON.parse(data);
-    if (event === 'conversation') {
-      const conversation = parsed as { conversationId?: unknown };
-      if (typeof conversation.conversationId === 'string') {
-        handlers.onConversation?.(conversation.conversationId);
-      }
-    } else if (event === 'progress') {
-      handlers.onProgress?.(parsed as PlanProgress);
-    } else if (event === 'result') {
-      result = parsed as CurrentPlanningResponse;
-    } else if (event === 'error') {
-      const failure = parsed as { error?: unknown; status?: unknown; code?: unknown };
-      throw new ApiError(
-        typeof failure.status === 'number' ? failure.status : 502,
-        typeof failure.error === 'string' ? failure.error : '规划失败',
-        typeof failure.code === 'string' ? failure.code : undefined,
-      );
-    }
-  };
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replaceAll('\r\n', '\n');
-      let separator = buffer.indexOf('\n\n');
-      while (separator >= 0) {
-        consume(buffer.slice(0, separator));
-        buffer = buffer.slice(separator + 2);
-        separator = buffer.indexOf('\n\n');
-      }
-      if (done) break;
-    }
-    if (buffer.trim()) consume(buffer);
-  } finally {
-    reader.releaseLock();
-  }
-  if (!result) throw new ApiError(502, '规划未返回结果');
-  return result;
-}
 
 export const api = {
-  systemCapabilities: () => req<SystemCapabilitiesResponse>('/system/capabilities'),
-  authMethods: () => req<{ quickLogin: boolean }>('/auth/methods'),
-  quickLogin: () => req<{ token: string; user: User }>('/auth/quick-login', { method: 'POST' }),
-  register: (b: { email: string; password: string; displayName: string }) =>
-    req<{ token: string; user: User }>('/auth/register', { method: 'POST', body: b }),
-  login: (b: { email: string; password: string }) =>
-    req<{ token: string; user: User }>('/auth/login', { method: 'POST', body: b }),
-  me: () => req<{ user: User }>('/auth/me'),
-  createResearchTask: (body: CreateSkillNativeTaskRequest) =>
-    req<SkillNativeTaskView>('/research-tasks', { method: 'POST', body }),
-  listResearchTasks: () => req<{ tasks: SkillNativeTaskSummary[] }>('/research-tasks'),
-  researchCatalog: () => req<{
-    skills: Array<{ id: string; name: string; description: string; contentHash: string; available: true }>;
-    unavailableSkills: Array<{ id: string; sourcePath: string; reason: string }>;
-    solutions: Array<{ id: string; title: string; description: string; mode: 'single_skill' | 'multi_skill'; recommended: boolean; contentHash: string }>;
-    invalidSolutions: Array<{ sourcePath: string; reason: string }>;
-  }>('/research-tasks/catalog'),
-  researchTask: (taskId: string) => req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}`),
-  selectResearchSolution: (taskId: string, body: { expectedVersion: number; solutionId: string }) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/select`, { method: 'POST', body }),
-  confirmResearchTask: (taskId: string, body: ConfirmSkillNativeTaskRequest) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/confirm`, { method: 'POST', body }),
-  executeResearchTask: (taskId: string, expectedVersion: number) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/execute`, { method: 'POST', body: { expectedVersion } }),
-  cancelResearchTask: (taskId: string, expectedVersion: number) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST', body: { expectedVersion } }),
-  resumeResearchTask: (taskId: string, expectedVersion: number) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST', body: { expectedVersion } }),
-  replanResearchTask: (taskId: string, expectedVersion: number) =>
-    req<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/replan`, { method: 'POST', body: { expectedVersion } }),
-  publishResearchTaskToZero: (taskId: string, body: PublishSkillNativeReportRequest) =>
-    req<SkillNativeZeroPublication>(`/research-tasks/${encodeURIComponent(taskId)}/publications/zero`, { method: 'POST', body }),
-  researchReportHtml: async (taskId: string) => (await reqBlob(`/research-tasks/${encodeURIComponent(taskId)}/report.html`)).text(),
-  researchReportMarkdown: async (taskId: string) => (await reqBlob(`/research-tasks/${encodeURIComponent(taskId)}/report.md`)).blob(),
-  // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
-  planControlStream: async (
-    body: PlanControlTaskRequest,
-    handlers: PlanningStreamHandlers = {},
-  ): Promise<CurrentPlanningResponse> => postPlanningStream(
-    '/control-tasks/plan/stream',
-    body,
-    handlers,
+  systemCapabilities: () => requestJson<SystemCapabilitiesResponse>('/system/capabilities'),
+  authMethods: () => requestJson<{ quickLogin: boolean }>('/auth/methods'),
+  quickLogin: () => requestJson<{ token: string; user: User }>('/auth/quick-login', { method: 'POST' }),
+  register: (body: { email: string; password: string; displayName: string }) => (
+    requestJson<{ token: string; user: User }>('/auth/register', { method: 'POST', body })
   ),
-  clarifyControlTask: (
-    taskId: string,
-    body: ClarifyControlTaskRequest,
-  ) => req<CurrentPlanningResponse>(`/control-tasks/${taskId}/clarify`, {
-    method: 'POST',
-    body,
-    headers: { 'Idempotency-Key': body.idempotencyKey },
-  }),
-  clarifyControlTaskStream: (
-    taskId: string,
-    body: ClarifyControlTaskRequest,
-    handlers: Pick<PlanningStreamHandlers, 'onProgress'> = {},
-  ) => postPlanningStream(
-    `/control-tasks/${encodeURIComponent(taskId)}/clarify/stream`,
-    body,
-    handlers,
-    { 'Idempotency-Key': body.idempotencyKey },
+  login: (body: { email: string; password: string }) => (
+    requestJson<{ token: string; user: User }>('/auth/login', { method: 'POST', body })
   ),
-  listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
-  listControlTasks: () => req<{
-    kind: 'current';
-    tasks: Array<{
-      id: string;
-      originalInput: string;
-      taskType: string | null;
-      state: string;
-      createdAt: string;
-      updatedAt: string;
-    }>;
-  }>('/control-tasks'),
-  listApprovalTasks: () => req<{ tasks: ControlApprovalTaskSummary[] }>('/control-tasks/approvals'),
-  listTaskHistoryPreferences: () => req<{ preferences: TaskHistoryPreference[] }>('/task-history'),
+  me: () => requestJson<{ user: User }>('/auth/me'),
+
+  createResearchTask: (body: CreateSkillNativeTaskRequest) => (
+    requestJson<SkillNativeTaskView>('/research-tasks', { method: 'POST', body })
+  ),
+  listResearchTasks: () => requestJson<{ tasks: SkillNativeTaskSummary[] }>('/research-tasks'),
+  researchCatalog: () => requestJson<SkillNativeCatalogResponse>('/research-tasks/catalog'),
+  researchTask: (taskId: string) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}`)
+  ),
+  selectResearchSolution: (taskId: string, body: { expectedVersion: number; candidateId: string }) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/select`, { method: 'POST', body })
+  ),
+  confirmResearchTask: (taskId: string, body: ConfirmSkillNativeTaskRequest) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/confirm`, { method: 'POST', body })
+  ),
+  executeResearchTask: (taskId: string, expectedVersion: number) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/execute`, {
+      method: 'POST', body: { expectedVersion },
+    })
+  ),
+  cancelResearchTask: (taskId: string, expectedVersion: number) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/cancel`, {
+      method: 'POST', body: { expectedVersion },
+    })
+  ),
+  resumeResearchTask: (taskId: string, body: ResumeSkillNativeTaskRequest) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST', body })
+  ),
+  replanResearchTask: (taskId: string, expectedVersion: number) => (
+    requestJson<SkillNativeTaskView>(`/research-tasks/${encodeURIComponent(taskId)}/replan`, {
+      method: 'POST', body: { expectedVersion },
+    })
+  ),
+  publishResearchTaskToZero: (taskId: string, body: PublishSkillNativeReportRequest) => (
+    requestJson<SkillNativeZeroPublication>(`/research-tasks/${encodeURIComponent(taskId)}/publications/zero`, {
+      method: 'POST', body,
+    })
+  ),
+  researchReportHtml: async (taskId: string) => (
+    requestFile(`/research-tasks/${encodeURIComponent(taskId)}/report.html`).then((response) => response.text())
+  ),
+  researchReportMarkdown: async (taskId: string) => (
+    requestFile(`/research-tasks/${encodeURIComponent(taskId)}/report.md`).then((response) => response.blob())
+  ),
+
+  listTaskHistoryPreferences: () => (
+    requestJson<{ preferences: TaskHistoryPreference[] }>('/task-history')
+  ),
   updateTaskHistoryPreference: (
     kind: TaskHistoryKind,
     taskId: string,
     body: TaskHistoryPreferencePatch,
-  ) => req<{ preference: TaskHistoryPreference }>(
+  ) => requestJson<{ preference: TaskHistoryPreference }>(
     `/task-history/${kind}/${encodeURIComponent(taskId)}`,
     { method: 'PATCH', body },
-  ),
-  taskDetail: (id: string) =>
-    req<TaskDetail>(`/tasks/${id}`),
-  feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
-    req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
-  skills: () => req<{ skills: SkillItem[] }>('/skills'),
-  controlTask: (taskId: string) =>
-    req<CurrentTaskReadResponse>(`/control-tasks/${taskId}`),
-  selectControlPlan: (taskId: string, body: SelectControlPlanRequest) =>
-    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  uploadControlDataset: (
-    taskId: string,
-    planVersionId: string,
-    role: string,
-    file: File,
-    metadata: DatasetUploadMetadata,
-    idempotencyKey: string,
-  ) => {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('metadata', JSON.stringify(metadata));
-    return reqForm<DatasetUploadResponse>(
-      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/dataset`,
-      form,
-      idempotencyKey,
-    );
-  },
-  approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>
-    req<ReviseControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  cancelControlPlan: (taskId: string, body: CancelControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/cancel`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
-    req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  controlVisualAsset: async (taskId: string, assetId: string): Promise<ControlVisualAssetResponse> => {
-    const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
-    );
-    const mediaType = response.headers.get('content-type')?.split(';', 1)[0];
-    if (
-      mediaType !== 'image/png'
-      && mediaType !== 'image/jpeg'
-      && mediaType !== 'image/webp'
-      && mediaType !== 'image/svg+xml'
-    ) {
-      throw new ApiError(502, '视觉资产媒体类型无效');
-    }
-    return { blob: await response.blob(), mediaType };
-  },
-  controlHtmlBundle: async (
-    taskId: string,
-    attemptId: string,
-  ): Promise<ControlHtmlBundleResponse> => {
-    const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/html-bundle`,
-    );
-    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
-    if (mediaType !== 'application/zip') {
-      throw new ApiError(502, '离线 HTML 报告包媒体类型无效');
-    }
-    return { blob: await response.blob() };
-  },
-  controlEditorialSummary: async (
-    taskId: string,
-    attemptId: string,
-  ): Promise<ControlHtmlBundleResponse> => {
-    const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-summary.html`,
-    );
-    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
-    if (mediaType !== 'text/html') {
-      throw new ApiError(502, '编辑摘要媒体类型无效');
-    }
-    return { blob: await response.blob() };
-  },
-  controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
-    await req<unknown>(`/control-tasks/${taskId}/deliverable`),
-  ),
-  zeroStatus: () => req<ZeroIntegrationStatusResponse>('/integrations/zero/status'),
-  createZeroPublication: (
-    taskId: string,
-    body: CreateZeroPublicationRequest,
-    idempotencyKey: string,
-  ) => req<ZeroPublicationResponse>(`/control-tasks/${encodeURIComponent(taskId)}/publications/zero`, {
-    method: 'POST',
-    body,
-    headers: { 'Idempotency-Key': idempotencyKey },
-  }),
-  zeroPublication: (taskId: string, publicationId: string) => req<ZeroPublicationResponse>(
-    `/control-tasks/${encodeURIComponent(taskId)}/publications/zero/${encodeURIComponent(publicationId)}`,
   ),
 };

@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import type { ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
-import { buildRuntime } from '../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
-import { ToolInvocationError, ToolRouter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
+import { ToolInvocationError } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import {
   O2JoyspaceReadAdapter,
   type O2CommandRunner,
@@ -42,27 +41,6 @@ function runner(results: Array<{ stdout?: string; stderr?: string; error?: unkno
 }
 
 const versions = { o2: '0.0.8', webcli: '1.1.3' };
-
-test('real Runtime registers the read-only O2 Joyspace adapter', () => {
-  const priorTool = process.env.TOOL_ADAPTER;
-  const priorLlm = process.env.LLM_PROVIDER;
-  try {
-    process.env.TOOL_ADAPTER = 'real';
-    process.env.LLM_PROVIDER = 'mock';
-    const runtime = buildRuntime();
-    assert.ok(runtime.deps.toolAdapter instanceof ToolRouter);
-    const resolution = runtime.deps.toolAdapter.resolve(manifest);
-    assert.deepEqual(resolution, {
-      declaredAdapterType: 'o2', resolvedAdapterType: 'o2',
-      implementationId: 'o2-joyspace-read', executionMode: 'real', endpointHost: 'joyspace.jd.com',
-    });
-  } finally {
-    if (priorTool === undefined) delete process.env.TOOL_ADAPTER;
-    else process.env.TOOL_ADAPTER = priorTool;
-    if (priorLlm === undefined) delete process.env.LLM_PROVIDER;
-    else process.env.LLM_PROVIDER = priorLlm;
-  }
-});
 
 test('Joyspace search uses an argv-only o2 invocation and normalizes safe results', async () => {
   const fake = runner([{ stdout: JSON.stringify([{

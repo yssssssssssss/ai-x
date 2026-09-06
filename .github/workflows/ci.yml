@@ -5,34 +5,6 @@ on:
   push:
 
 jobs:
-  playwright-contract:
-    name: Playwright in-memory no-request contract
-    runs-on: ubuntu-22.04
-    env:
-      LLM_PROVIDER: mock
-      TOOL_ADAPTER: fake
-      PLAYWRIGHT_CONTRACT: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
-      - run: corepack prepare pnpm@9.12.1 --activate
-      - run: pnpm install --frozen-lockfile
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm exec playwright install --with-deps chromium
-      - name: Run in-memory Chromium contracts
-        run: >-
-          pnpm exec tsx --test
-          tests/playwright-page-capture-adapter.test.ts
-          tests/editorial-report-renderer.test.ts
-          tests/report-editorial-showcase-chromium.test.ts
-          tests/standalone-html-report-chromium.test.ts
-
   quality:
     runs-on: ubuntu-latest
     services:
@@ -67,8 +39,8 @@ jobs:
       - run: pnpm quality
       - run: pnpm --dir apps/web build
 
-  current-real-smoke:
-    name: Current real smoke (seven profiles)
+  skill-native-real-smoke:
+    name: Skill-native real smoke
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     services:
@@ -87,32 +59,28 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/user_research_ai
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
       LLM_GATEWAY_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
       LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
       LLM_MODEL_NAME: ${{ secrets.LLM_MODEL_NAME }}
       LLM_EXPECTED_ACTUAL_MODEL: ${{ secrets.LLM_EXPECTED_ACTUAL_MODEL }}
       LLM_MODEL_ROUTES: ${{ secrets.LLM_MODEL_ROUTES }}
-      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      SKILL_SANDBOX_IMAGE: ${{ secrets.SKILL_SANDBOX_IMAGE }}
       ALLOW_REAL_PROVIDER: '1'
       LLM_PROVIDER: gateway
       TOOL_ADAPTER: real
-      JOYSPACE_REAL_SMOKE_ENABLED: ${{ vars.JOYSPACE_REAL_SMOKE_ENABLED }}
-      O2_BIN: ${{ vars.O2_BIN }}
-      CURRENT_DESIGN_SMOKE_IMAGE_PATH: ${{ github.workspace }}/knowledge-base/assets/playbooks/images/jingxi-img-01.png
+      ZERO_PUBLICATION_ENABLED: 'false'
     steps:
-      - name: Check real smoke secrets
-        id: secret_gate
+      - name: Require real smoke secrets
         shell: bash
         run: |
           required=(
-            JWT_SECRET
             LLM_GATEWAY_BASE_URL
             LLM_GATEWAY_API_KEY
-            LLM_MODEL_NAME
-            LLM_EXPECTED_ACTUAL_MODEL
-            TAVILY_API_KEY
+            SKILL_SANDBOX_IMAGE
           )
+          if [[ -z "${LLM_MODEL_ROUTES:-}" ]]; then
+            required+=(LLM_MODEL_NAME LLM_EXPECTED_ACTUAL_MODEL)
+          fi
           missing=()
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
@@ -120,87 +88,27 @@ jobs:
             fi
           done
           if (( ${#missing[@]} > 0 )); then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Current real smoke skipped; missing repository secrets: ${missing[*]}" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Missing required Skill-native real smoke secrets: ${missing[*]}" >&2
+            exit 1
           fi
       - uses: actions/checkout@v4
-        if: steps.secret_gate.outputs.enabled == 'true'
       - uses: actions/setup-node@v4
-        if: steps.secret_gate.outputs.enabled == 'true'
         with:
           node-version: 22
       - name: Enable pnpm
-        if: steps.secret_gate.outputs.enabled == 'true'
         run: |
           corepack enable
           corepack prepare pnpm@9.12.1 --activate
-      - name: Install application and design lab dependencies
-        if: steps.secret_gate.outputs.enabled == 'true'
-        run: |
-          pnpm install --frozen-lockfile
-          npm ci --prefix external-tools/aesthetic-quant-lab
-          npm ci --prefix external-tools/attention-analysis-lab
-          npm ci --prefix external-tools/vision-brand-lab
+      - name: Install application dependencies
+        run: pnpm install --frozen-lockfile
       - name: Migrate and seed smoke database
-        if: steps.secret_gate.outputs.enabled == 'true'
         run: |
           pnpm db:migrate
           pnpm db:seed
-      - name: Run seven profiles sequentially
-        if: steps.secret_gate.outputs.enabled == 'true'
+      - name: Run native Single, Multi, and OCI smoke
         shell: bash
         env:
-          RUN_WORKSPACE_ROOT: ${{ runner.temp }}/current-real-smoke
+          RUN_WORKSPACE_ROOT: ${{ runner.temp }}/skill-native-real-smoke
         run: |
           set -euo pipefail
-          lab_pids=()
-          stop_labs() {
-            if (( ${#lab_pids[@]} > 0 )); then
-              kill "${lab_pids[@]}" 2>/dev/null || true
-            fi
-          }
-          trap stop_labs EXIT
-          npm --prefix external-tools/aesthetic-quant-lab run dev:server > "$RUNNER_TEMP/aesthetic-quant-lab.log" 2>&1 &
-          lab_pids+=("$!")
-          npm --prefix external-tools/attention-analysis-lab run dev:server > "$RUNNER_TEMP/attention-analysis-lab.log" 2>&1 &
-          lab_pids+=("$!")
-          npm --prefix external-tools/vision-brand-lab run dev:server > "$RUNNER_TEMP/vision-brand-lab.log" 2>&1 &
-          lab_pids+=("$!")
-          for port in 8801 8802 8805; do
-            curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 \
-              "http://127.0.0.1:${port}/api/health" > /dev/null
-          done
-          for profile in \
-            competitive_research \
-            user_research_planning \
-            voc_diagnosis \
-            design_audit \
-            a11y_audit; do
-            case "$profile" in
-              competitive_research) scenario_id=competitive-ai-shopping-assistant ;;
-              user_research_planning) scenario_id=planning-checkout-abandonment ;;
-              voc_diagnosis) scenario_id=voc-checkout ;;
-              design_audit) scenario_id=design-product-detail ;;
-              a11y_audit) scenario_id=a11y-mobile-checkout ;;
-            esac
-            CURRENT_SMOKE_PROFILE="$profile" \
-              CURRENT_SMOKE_SCENARIO="$scenario_id" \
-              CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
-              pnpm smoke:current:real
-          done
-          CURRENT_REAL_SMOKE_FIXTURE=tests/fixtures/research-synthesis-real-smoke.json \
-            CURRENT_SMOKE_PROFILE=research_synthesis \
-            CURRENT_SMOKE_SCENARIO=answer-pet-food-mindshare \
-            CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
-            pnpm smoke:current:real
-          if [[ "${JOYSPACE_REAL_SMOKE_ENABLED:-}" == "1" && -n "${O2_BIN:-}" && -x "${O2_BIN}" ]]; then
-            CURRENT_REAL_SMOKE_FIXTURE=tests/fixtures/industry-real-smoke.json \
-              CURRENT_SMOKE_PROFILE=industry_market_analysis \
-              CURRENT_SMOKE_SCENARIO=industry-pet-food-public \
-              CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
-              pnpm smoke:current:real
-          else
-            echo "Industry Joyspace real smoke skipped; requires authenticated O2_BIN and JOYSPACE_REAL_SMOKE_ENABLED=1" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          pnpm smoke:skill-native:real

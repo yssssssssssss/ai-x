@@ -1,513 +1,380 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { afterEach, test } from 'node:test';
+import type { SkillNativeCandidate } from '../packages/api-contract/skill-native.ts';
 import type {
-  SkillDefinition,
-  SolutionDefinition,
-} from '../packages/api-contract/skill-native.ts';
+  LLMClient,
+  LLMProviderIdentity,
+  LLMResult,
+  StructuredLLMCallOptions,
+  TextLLMCallOptions,
+  TextLLMResult,
+} from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SkillNativeCatalog } from '../apps/orchestrator-runtime/src/skill-native/catalog.ts';
-import {
-  resolveSkillInputs,
-  type InputMaterial,
-} from '../apps/orchestrator-runtime/src/skill-native/input-resolution.ts';
-import { buildSolutionPlan } from '../apps/orchestrator-runtime/src/skill-native/plan.ts';
+import { SkillPackageStore } from '../apps/orchestrator-runtime/src/skill-native/package-store.ts';
+import { buildExecutionPlan } from '../apps/orchestrator-runtime/src/skill-native/plan.ts';
+import { RequirementPlanner } from '../apps/orchestrator-runtime/src/skill-native/requirement-planner.ts';
 
-function skill(id: string, options: { required?: boolean; missingPolicy?: 'stop' | 'gap' } = {}): SkillDefinition {
+const temporaryRoots: string[] = [];
+
+async function temporaryRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'skill-packages-'));
+  temporaryRoots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+function writePackage(root: string, id: string, options: { name?: string; extraFrontmatter?: string } = {}): void {
+  const packageRoot = join(root, 'skill-packages', id);
+  mkdirSync(join(packageRoot, 'references', 'nested'), { recursive: true });
+  mkdirSync(join(packageRoot, 'empty'), { recursive: true });
+  writeFileSync(join(packageRoot, 'SKILL.md'), `---
+name: ${options.name ?? id}
+description: A complete test package for ${id}
+status: draft
+${options.extraFrontmatter ?? ''}---
+
+# ${id}
+
+Read references/nested/method.md before finishing.
+`);
+  writeFileSync(join(packageRoot, 'references', 'nested', 'method.md'), '# Method\n');
+  writeFileSync(join(packageRoot, 'scripts', '..', 'run.sh'), '#!/bin/sh\nprintf test\n');
+  chmodSync(join(packageRoot, 'run.sh'), 0o755);
+}
+
+class PlanningLLM implements LLMClient {
+  readonly identity: LLMProviderIdentity = {
+    provider: 'mock', endpointHost: 'local', requestedModel: 'mock', mode: 'mock', eligibleAsReal: false,
+  };
+  readonly calls: StructuredLLMCallOptions[] = [];
+
+  constructor(private readonly responses: unknown[]) {}
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    this.calls.push(structuredClone(options));
+    if (this.responses.length === 0) throw new Error('missing planning response');
+    return {
+      data: structuredClone(this.responses.shift()) as T,
+      promptHash: 'hash',
+      modelName: 'mock',
+      modelVersion: 'v1',
+      traceId: 'trace',
+    };
+  }
+
+  async generateText(_options: TextLLMCallOptions): Promise<TextLLMResult> {
+    throw new Error('planning must not generate text');
+  }
+}
+
+function analyzed(shortlistSkillIds: string[]) {
   return {
-    version: 'skill-definition-v1',
-    id,
-    name: id,
-    description: `${id} description`,
-    whenToUse: `${id} use`,
-    inputs: [{
-      id: 'shared',
-      label: '共享输入',
-      description: '两个 Skill 共用',
-      required: options.required ?? true,
-      multiple: false,
-      acceptedSources: ['conversation', 'database'],
-      toolIds: [],
-      question: '请提供共享输入',
-      missingPolicy: options.missingPolicy ?? 'stop',
-    }],
-    knowledge: [],
-    tools: [],
-    report: { title: `${id} report`, summaryInstruction: 'summary', sections: ['结果'] },
-    allowPartial: true,
-    body: `# ${id}`,
-    sourcePath: `skills/${id}/SKILL.md`,
-    contentHash: `sha256:${id}`,
+    goal: 'Understand a market and recommend priorities',
+    desiredOutputs: ['Decision-ready report'],
+    scope: ['China market'],
+    constraints: ['Use supplied evidence'],
+    assumptions: [],
+    openQuestions: ['Confirm the forecast horizon during execution'],
+    needsClarification: false,
+    clarifyingQuestion: '',
+    shortlistSkillIds,
   };
 }
 
-function solution(skills: SkillDefinition[]): SolutionDefinition {
-  return {
-    version: 'solution-definition-v1',
-    id: skills.length === 1 ? 'single' : 'multi',
-    title: '方案',
-    description: '方案说明',
-    whenToUse: '需要时',
-    mode: skills.length === 1 ? 'single_skill' : 'multi_skill',
+test('Catalog discovers direct child packages without native_delivery and preserves unknown frontmatter', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'research-one', { extraFrontmatter: 'custom_field:\n  nested: true\n' });
+  writeFileSync(join(root, 'skill-packages', 'research-one', 'references', 'nested', 'SKILL.md'), 'nested resource');
+
+  const catalog = new SkillNativeCatalog(root).load();
+
+  assert.equal(catalog.skills.length, 1);
+  assert.equal(catalog.skills[0]!.id, 'research-one');
+  assert.equal(catalog.skills[0]!.fileCount, 4);
+  assert.equal(catalog.skills[0]!.frontmatter.status, 'draft');
+  assert.deepEqual(catalog.skills[0]!.frontmatter.custom_field, { nested: true });
+  assert.equal(catalog.unavailableSkills.length, 0);
+});
+
+test('Package snapshots preserve the full tree and never read a changed source package', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'research-one');
+  const store = new SkillPackageStore({
+    sourceRoot: join(root, 'skill-packages'),
+    snapshotRoot: join(root, 'snapshots'),
+  });
+  const descriptor = store.discover().packages[0]!;
+  const snapshot = store.snapshot('task-1', descriptor);
+
+  assert.equal(snapshot.files.length, 3);
+  assert.ok(snapshot.directories.includes('empty'));
+  assert.equal(snapshot.files.find(({ path }) => path === 'run.sh')?.executable, true);
+  assert.equal(store.read(snapshot, 'references/nested/method.md').toString(), '# Method\n');
+
+  writeFileSync(join(root, 'skill-packages', 'research-one', 'references', 'nested', 'method.md'), '# Changed\n');
+  assert.equal(store.read(snapshot, 'references/nested/method.md').toString(), '# Method\n');
+  assert.throws(() => store.snapshot('task-2', descriptor), /changed after planning/u);
+});
+
+test('Package discovery isolates symlinks and duplicate names', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'first', { name: 'same-name' });
+  writePackage(root, 'second', { name: 'same-name' });
+  writePackage(root, 'unsafe');
+  symlinkSync('/tmp', join(root, 'skill-packages', 'unsafe', 'references', 'escape'));
+
+  const catalog = new SkillNativeCatalog(root).load();
+
+  assert.deepEqual(catalog.skills, []);
+  assert.equal(catalog.unavailableSkills.length, 3);
+  assert.ok(catalog.unavailableSkills.some(({ id, reason }) => id === 'unsafe' && reason.includes('symlink')));
+  assert.equal(catalog.unavailableSkills.filter(({ reason }) => reason.includes('duplicate package name')).length, 2);
+});
+
+test('Execution Plan contains immutable package snapshots and serial Multi dependencies', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'first');
+  writePackage(root, 'second');
+  const packages = new SkillPackageStore({
+    sourceRoot: join(root, 'skill-packages'),
+    snapshotRoot: join(root, 'snapshots'),
+  });
+  const descriptors = packages.discover().packages;
+  const candidate: SkillNativeCandidate = {
+    id: 'multi-first--second',
+    title: 'Two skills',
+    description: 'Run both',
+    rationale: 'Both are needed',
+    tradeoffs: 'Takes longer',
+    mode: 'multi_skill',
     recommended: true,
-    skills: skills.map((item, index) => ({
-      skillId: item.id,
-      dependsOn: index === skills.length - 1 ? skills.slice(0, index).map(({ id }) => id) : [],
-      failurePolicy: index === skills.length - 1 ? 'stop' : 'gap',
-    })),
-    finalReportSkillId: skills.at(-1)!.id,
-    sourcePath: 'orchestrator/solutions/test.yaml',
-    contentHash: 'sha256:solution',
+    packages: descriptors,
+    finalReport: { kind: 'platform_default' },
   };
-}
+  const snapshots = descriptors.map((descriptor) => packages.snapshot('task-1', descriptor));
 
-interface CatalogInputFixture {
-  id: string;
-  required: boolean;
-  multiple?: boolean;
-  acceptedSources: Array<'conversation' | 'upload'>;
-  missingPolicy: 'stop' | 'replace' | 'gap';
-}
-
-function nativeSkill(id: string, inputs: CatalogInputFixture[]): string {
-  const inputYaml = inputs.map((input) => `
-    - id: ${input.id}
-      label: ${input.id}
-      description: ${input.id} input
-      required: ${input.required}
-      multiple: ${input.multiple ?? false}
-      accepted_sources: [${input.acceptedSources.join(', ')}]
-      question: Provide ${input.id}
-      missing_policy: ${input.missingPolicy}`).join('');
-  return `---
-name: ${id}
-description: ${id} description
-native_delivery:
-  version: 1
-  id: ${id}
-  allow_partial: true
-  inputs:${inputYaml || ' []'}
-  knowledge: []
-  tools: []
-  report:
-    title: ${id} report
-    summary_instruction: Summarize
-    sections: [Result]
----
-# ${id}
-`;
-}
-
-function replacementSolution(id: string, replacementSkillId: string): string {
-  return `version: 1
-id: ${id}
-title: ${id}
-description: ${id} solution
-when_to_use: Test
-mode: single_skill
-skills:
-  - skill_id: primary
-    depends_on: []
-    failure_policy: replace
-    replacement_skill_id: ${replacementSkillId}
-final_report_skill_id: primary
-`;
-}
-
-test('input resolution follows source priority, rejects cross-scope database data, and asks once', () => {
-  const skills = [skill('support'), skill('final')];
-  skills[1]!.inputs.push({
-    id: 'optional',
-    label: '可选资料',
-    description: '可降级',
-    required: false,
-    multiple: false,
-    acceptedSources: ['upload', 'database'],
-    toolIds: [],
-    question: '是否提供可选资料？',
-    missingPolicy: 'gap',
-  });
-  const materials: InputMaterial[] = [
-    {
-      id: 'foreign', inputId: 'shared', source: 'database', value: '不应读取',
-      ownerUserId: 'other', projectId: 'project-a', validUntil: '2099-01-01T00:00:00Z',
+  const plan = buildExecutionPlan({
+    taskId: 'task-1',
+    candidate,
+    snapshots,
+    requirement: {
+      version: 'requirement-context-v2',
+      goal: 'Compare two approaches',
+      desiredOutputs: ['Comparison'],
+      scope: ['Two approaches'],
+      constraints: [],
+      materials: [],
+      assumptions: [],
+      openQuestions: [],
     },
-    { id: 'upload', inputId: 'shared', source: 'upload', value: '上传值' },
-    { id: 'conversation', inputId: 'shared', source: 'conversation', value: '对话值' },
-  ];
-  const resolved = resolveSkillInputs({
-    skills,
-    materials,
-    scope: { ownerUserId: 'owner', projectId: 'project-a', now: new Date('2026-09-04T00:00:00Z') },
   });
 
-  assert.equal(resolved.inputs.length, 1);
-  assert.equal(resolved.inputs[0]?.value, '对话值');
-  assert.deepEqual(resolved.inputs[0]?.skillIds, ['support', 'final']);
-  assert.deepEqual(resolved.questions.map(({ inputId }) => inputId), ['optional']);
-  assert.equal(resolved.warnings.length, 1);
-
-  const confirmed = resolveSkillInputs({
-    skills,
-    materials,
-    unavailableInputIds: ['optional'],
-    scope: { ownerUserId: 'owner', projectId: 'project-a', now: new Date('2026-09-04T00:00:00Z') },
-  });
-  assert.deepEqual(confirmed.blockedInputIds, []);
-  assert.deepEqual(confirmed.gaps.map(({ id }) => id), ['input:optional']);
-
-  const wrongCardinality = resolveSkillInputs({
-    skills: [skill('single-value')],
-    materials: [{ id: 'many', inputId: 'shared', source: 'conversation', value: ['one', 'two'] }],
-    scope: { ownerUserId: 'owner', projectId: 'project-a' },
-  });
-  assert.deepEqual(wrongCardinality.inputs, []);
-  assert.deepEqual(wrongCardinality.questions.map(({ inputId }) => inputId), ['shared']);
+  assert.equal(plan.version, 'skill-native-plan-v2');
+  assert.deepEqual(plan.invocations[0]!.dependsOn, []);
+  assert.deepEqual(plan.invocations[1]!.dependsOn, [plan.invocations[0]!.id]);
+  assert.deepEqual(plan.finalReport, { kind: 'platform_default' });
+  assert.equal(readFileSync(join(root, 'snapshots', plan.invocations[0]!.package.snapshotPath, 'SKILL.md'), 'utf8').includes('# first'), true);
 });
 
-test('required unavailable inputs stop plan creation', () => {
-  const required = skill('required');
-  const resolution = resolveSkillInputs({
-    skills: [required],
-    materials: [],
-    unavailableInputIds: ['shared'],
-    scope: { ownerUserId: 'owner', projectId: 'project' },
-  });
-  assert.deepEqual(resolution.blockedInputIds, ['shared']);
-  assert.throws(() => buildSolutionPlan({
-    taskId: 'task',
-    solution: solution([required]),
-    catalog: { skills: [required] },
-    requirement: { version: 'requirement-context-v1', goal: 'goal', scope: [], assumptions: [] },
-    resolution,
-  }), /required inputs are unavailable/u);
-});
-
-test('catalog reloads new definitions while an existing plan keeps its Skill snapshot', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-catalog-'));
-  try {
-    await mkdir(join(root, 'skills', 'example'), { recursive: true });
-    await mkdir(join(root, 'skills', 'legacy'), { recursive: true });
-    await mkdir(join(root, 'orchestrator', 'solutions'), { recursive: true });
-    const definition = (description: string) => `---
-name: example
-description: ${description}
-when_to_use: example use
-native_delivery:
-  version: 1
-  id: example
-  allow_partial: true
-  inputs:
-    - id: shared
-      label: Shared
-      description: Shared value
-      required: true
-      accepted_sources: [conversation]
-      question: Provide it
-      missing_policy: stop
-  knowledge: []
-  tools: []
-  report:
-    title: Example report
-    summary_instruction: Summarize
-    sections: [Result]
----
-# Example
-${description}
-`;
-    const skillPath = join(root, 'skills', 'example', 'SKILL.md');
-    await writeFile(skillPath, definition('first'));
-    await writeFile(join(root, 'skills', 'legacy', 'SKILL.md'), '---\nname: legacy\ndescription: old\n---\n# Legacy\n');
-    await writeFile(join(root, 'orchestrator', 'solutions', 'single.yaml'), `version: 1
-id: single
-title: Single
-description: Single solution
-when_to_use: Example
-mode: single_skill
-skills:
-  - skill_id: example
-    depends_on: []
-    failure_policy: stop
-final_report_skill_id: example
-`);
-
-    const catalog = new SkillNativeCatalog(root);
-    const first = catalog.load();
-    assert.equal(first.skills.length, 1);
-    assert.equal(first.unavailableSkills[0]?.id, 'legacy');
-    const resolution = resolveSkillInputs({
-      skills: first.skills,
-      materials: [{ id: 'conversation', inputId: 'shared', source: 'conversation', value: 'value' }],
-      scope: { ownerUserId: 'owner', projectId: 'project' },
-    });
-    const plan = buildSolutionPlan({
-      taskId: 'task',
-      solution: first.solutions[0]!,
-      catalog: first,
-      requirement: { version: 'requirement-context-v1', goal: 'goal', scope: [], assumptions: [] },
-      resolution,
-    });
-
-    await writeFile(skillPath, definition('second'));
-    const second = catalog.load();
-    assert.notEqual(second.skills[0]?.contentHash, plan.invocations[0]?.skill.contentHash);
-    assert.match(plan.invocations[0]!.skill.body, /first/u);
-    assert.match(second.skills[0]!.body, /second/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog isolates malformed Skill frontmatter instead of failing the whole reload', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-malformed-'));
-  try {
-    await mkdir(join(root, 'skills', 'valid'), { recursive: true });
-    await mkdir(join(root, 'skills', 'broken'), { recursive: true });
-    await writeFile(join(root, 'skills', 'valid', 'SKILL.md'), `---
-name: valid
-description: valid description
-native_delivery:
-  version: 1
-  id: valid
-  allow_partial: true
-  inputs: []
-  knowledge: []
-  tools: []
-  report:
-    title: Valid report
-    summary_instruction: Summarize
-    sections: [Result]
----
-# Valid
-`);
-    await writeFile(join(root, 'skills', 'broken', 'SKILL.md'), '---\nname: [broken\n---\n# Broken\n');
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.deepEqual(catalog.skills.map(({ id }) => id), ['valid']);
-    assert.equal(catalog.unavailableSkills.length, 1);
-    assert.equal(catalog.unavailableSkills[0]?.id, 'broken');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog keeps a Skill when only an optional Tool is inactive', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-optional-tool-'));
-  const withTool = (id: string, required: boolean) => nativeSkill(id, []).replace(
-    'tools: []',
-    `tools:\n    - id: missing-tool\n      required: ${required}`,
-  );
-  try {
-    await mkdir(join(root, 'skills', 'optional'), { recursive: true });
-    await mkdir(join(root, 'skills', 'required'), { recursive: true });
-    await writeFile(join(root, 'skills', 'optional', 'SKILL.md'), withTool('optional', false));
-    await writeFile(join(root, 'skills', 'required', 'SKILL.md'), withTool('required', true));
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.deepEqual(catalog.skills.map(({ id }) => id), ['optional']);
-    assert.deepEqual(catalog.unavailableSkills.map(({ id }) => id), ['required']);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog isolates a solution whose shared input has no common source', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-incompatible-input-'));
-  const definition = (id: string, source: 'conversation' | 'upload') => `---
-name: ${id}
-description: ${id} description
-native_delivery:
-  version: 1
-  id: ${id}
-  allow_partial: true
-  inputs:
-    - id: shared
-      label: Shared
-      description: Shared value
-      required: true
-      accepted_sources: [${source}]
-      question: Provide it
-      missing_policy: stop
-  knowledge: []
-  tools: []
-  report:
-    title: ${id} report
-    summary_instruction: Summarize
-    sections: [Result]
----
-# ${id}
-`;
-  try {
-    await mkdir(join(root, 'skills', 'one'), { recursive: true });
-    await mkdir(join(root, 'skills', 'two'), { recursive: true });
-    await mkdir(join(root, 'orchestrator', 'solutions'), { recursive: true });
-    await writeFile(join(root, 'skills', 'one', 'SKILL.md'), definition('one', 'conversation'));
-    await writeFile(join(root, 'skills', 'two', 'SKILL.md'), definition('two', 'upload'));
-    await writeFile(join(root, 'orchestrator', 'solutions', 'multi.yaml'), `version: 1
-id: incompatible
-title: Incompatible
-description: Incompatible shared input
-when_to_use: Never
-mode: multi_skill
-skills:
-  - skill_id: one
-    depends_on: []
-    failure_policy: gap
-  - skill_id: two
-    depends_on: [one]
-    failure_policy: stop
-final_report_skill_id: two
-`);
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.equal(catalog.solutions.length, 0);
-    assert.match(catalog.invalidSolutions[0]?.reason ?? '', /shared input shared/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog rejects missing, chained, and stricter replacement contracts', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-replacements-'));
-  const goal: CatalogInputFixture = {
-    id: 'goal', required: true, acceptedSources: ['conversation'], missingPolicy: 'stop',
-  };
-  const context: CatalogInputFixture = {
-    id: 'context', required: false, acceptedSources: ['conversation', 'upload'], missingPolicy: 'gap',
-  };
-  try {
-    const definitions: Record<string, CatalogInputFixture[]> = {
-      primary: [goal, {
-        id: 'screenshot', required: true, acceptedSources: ['upload'], missingPolicy: 'replace',
-      }, context],
-      chained: [goal, {
-        id: 'fallback_input', required: false, acceptedSources: ['conversation'], missingPolicy: 'replace',
-      }],
-      cardinality: [goal, { ...context, multiple: true }],
-      required: [goal, { ...context, required: true }],
-      stopped: [goal, { ...context, missingPolicy: 'stop' }],
-    };
-    for (const [id, inputs] of Object.entries(definitions)) {
-      await mkdir(join(root, 'skills', id), { recursive: true });
-      await writeFile(join(root, 'skills', id, 'SKILL.md'), nativeSkill(id, inputs));
-    }
-    await mkdir(join(root, 'orchestrator', 'solutions'), { recursive: true });
-    const replacements = {
-      missing: 'not-installed',
-      chained: 'chained',
-      cardinality: 'cardinality',
-      required: 'required',
-      stopped: 'stopped',
-    };
-    for (const [id, replacementSkillId] of Object.entries(replacements)) {
-      await writeFile(
-        join(root, 'orchestrator', 'solutions', `${id}.yaml`),
-        replacementSolution(id, replacementSkillId),
-      );
-    }
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.equal(catalog.solutions.length, 0);
-    const reason = (id: string) => catalog.invalidSolutions
-      .find(({ sourcePath }) => sourcePath.endsWith(`/${id}.yaml`))?.reason ?? '';
-    assert.match(reason('missing'), /replacement skill not-installed is unavailable/u);
-    assert.match(reason('chained'), /cannot require another replacement/u);
-    assert.match(reason('cardinality'), /context has inconsistent cardinality/u);
-    assert.match(reason('required'), /context is stricter than the primary input/u);
-    assert.match(reason('stopped'), /context is stricter than the primary input/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog rejects replacement-only shared inputs that conflict with another active Skill', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-replacement-shared-input-'));
-  const goal: CatalogInputFixture = {
-    id: 'goal', required: true, acceptedSources: ['conversation'], missingPolicy: 'stop',
-  };
-  try {
-    const definitions: Record<string, CatalogInputFixture[]> = {
-      primary: [goal, {
-        id: 'screenshot', required: true, acceptedSources: ['upload'], missingPolicy: 'replace',
-      }],
-      replacement: [goal, {
-        id: 'shared_context', required: false, multiple: true,
-        acceptedSources: ['conversation'], missingPolicy: 'gap',
-      }],
-      final: [goal, {
-        id: 'shared_context', required: false, multiple: false,
-        acceptedSources: ['conversation'], missingPolicy: 'gap',
-      }],
-    };
-    for (const [id, inputs] of Object.entries(definitions)) {
-      await mkdir(join(root, 'skills', id), { recursive: true });
-      await writeFile(join(root, 'skills', id, 'SKILL.md'), nativeSkill(id, inputs));
-    }
-    await mkdir(join(root, 'orchestrator', 'solutions'), { recursive: true });
-    await writeFile(join(root, 'orchestrator', 'solutions', 'multi.yaml'), `version: 1
-id: replacement-shared-input
-title: Replacement shared input
-description: Replacement shared input
-when_to_use: Test
-mode: multi_skill
-skills:
-  - skill_id: primary
-    depends_on: []
-    failure_policy: replace
-    replacement_skill_id: replacement
-  - skill_id: final
-    depends_on: [primary]
-    failure_policy: stop
-final_report_skill_id: final
-`);
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.equal(catalog.solutions.length, 0);
-    assert.match(catalog.invalidSolutions[0]?.reason ?? '', /shared input shared_context has inconsistent cardinality/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog rejects a Multi solution whose final Skill cannot reach every support Skill', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'skill-native-disconnected-'));
-  try {
-    for (const id of ['support', 'orphan', 'final']) {
-      await mkdir(join(root, 'skills', id), { recursive: true });
-      await writeFile(join(root, 'skills', id, 'SKILL.md'), nativeSkill(id, []));
-    }
-    await mkdir(join(root, 'orchestrator', 'solutions'), { recursive: true });
-    await writeFile(join(root, 'orchestrator', 'solutions', 'disconnected.yaml'), `version: 1
-id: disconnected
-title: Disconnected
-description: Disconnected support
-when_to_use: Never
-mode: multi_skill
-skills:
-  - skill_id: support
-    depends_on: []
-    failure_policy: gap
-  - skill_id: orphan
-    depends_on: []
-    failure_policy: gap
-  - skill_id: final
-    depends_on: [support]
-    failure_policy: stop
-final_report_skill_id: final
-`);
-
-    const catalog = new SkillNativeCatalog(root).load();
-    assert.equal(catalog.solutions.length, 0);
-    assert.match(catalog.invalidSolutions[0]?.reason ?? '', /final report skill does not depend on orphan/u);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('production catalog exposes every active Skill and keeps the draft Skill unavailable', () => {
+test('the production catalog contains all 22 original packages without platform metadata', () => {
   const catalog = new SkillNativeCatalog().load();
-  assert.equal(catalog.skills.length, 25);
-  assert.deepEqual(catalog.unavailableSkills.map(({ id }) => id), ['solution-generation']);
-  assert.equal(catalog.invalidSolutions.length, 0);
+  assert.equal(catalog.unavailableSkills.length, 0);
+  assert.equal(catalog.skills.length, 22);
+  assert.deepEqual(catalog.skills.map(({ id }) => id).sort(), [
+    'AI-Decision-Lab',
+    'accessibility-review',
+    'analyze-satisfaction',
+    'build-experience-metrics',
+    'code-open-feedback',
+    'competitive-analysis',
+    'conversion-funnel-analysis',
+    'feature-adoption-analysis',
+    'generate-interview-guide',
+    'generate-persona',
+    'generate-research-plan',
+    'generate-survey',
+    'generate-usability-test',
+    'industry-market-analysis',
+    'issue-prioritization',
+    'jobs-to-be-done',
+    'journey-map',
+    'paihangbang-darkmode',
+    'research-screenshot-analyzer',
+    'run-heuristic-evaluation',
+    'structure-interview-transcript',
+    'synthesize-qualitative-insights',
+  ]);
+  const skill = catalog.skills.find(({ id }) => id === 'industry-market-analysis');
+  assert.ok(skill);
+  assert.equal(skill.fileCount, 28);
+  assert.equal(skill.frontmatter.native_delivery, undefined);
+});
+
+test('RequirementPlanner analyzes cards first, then reads shortlisted full SKILL.md for Single candidates', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'market');
+  writePackage(root, 'survey');
+  const packages = new SkillPackageStore({ sourceRoot: join(root, 'skill-packages') });
+  const skills = packages.discover().packages;
+  const llm = new PlanningLLM([
+    analyzed(['market', 'survey']),
+    {
+      candidates: [{
+        title: 'Market analysis',
+        description: 'Use the market method',
+        rationale: 'The full instructions cover the requested decision',
+        tradeoffs: 'Does not run a survey',
+        skillIds: ['market'],
+        finalReportSkillId: 'market',
+      }],
+    },
+  ]);
+
+  const result = await new RequirementPlanner({ llm, packages }).plan({
+    originalInput: 'Assess the China market',
+    mode: 'single_skill',
+    skills,
+    materials: [],
+  });
+
+  assert.equal(result.requirement.goal, 'Understand a market and recommend priorities');
+  assert.deepEqual(result.candidates[0]?.packages.map(({ id }) => id), ['market']);
+  assert.deepEqual(result.candidates[0]?.finalReport, { kind: 'skill', packageId: 'market' });
+  assert.equal(llm.calls.length, 2);
+  assert.deepEqual(Object.keys((llm.calls[0]!.context as { catalog: object[] }).catalog[0]!).sort(), [
+    'description', 'id', 'name', 'whenToUse',
+  ]);
+  const inspected = (llm.calls[1]!.context as { candidates: Array<{ skillMarkdown: string }> }).candidates;
+  assert.equal(inspected.length, 2);
+  assert.match(inspected[0]!.skillMarkdown, /Read references\/nested\/method\.md/u);
+});
+
+test('RequirementPlanner collapses duplicate candidate Skill sequences', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'market');
+  const packages = new SkillPackageStore({ sourceRoot: join(root, 'skill-packages') });
+  const skills = packages.discover().packages;
+  const llm = new PlanningLLM([
+    analyzed(['market']),
+    {
+      candidates: [
+        {
+          title: 'Primary plan', description: 'Use the market method',
+          rationale: 'Matches the requested decision', tradeoffs: 'Uses one Skill',
+          skillIds: ['market'], finalReportSkillId: 'market',
+        },
+        {
+          title: 'Duplicate plan', description: 'The same Skill sequence',
+          rationale: 'No additional capability', tradeoffs: 'Duplicates the first plan',
+          skillIds: ['market'], finalReportSkillId: 'market',
+        },
+      ],
+    },
+  ]);
+
+  const result = await new RequirementPlanner({ llm, packages }).plan({
+    originalInput: 'Assess the market',
+    mode: 'single_skill',
+    skills,
+    materials: [],
+  });
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0]?.title, 'Primary plan');
+});
+
+test('RequirementPlanner produces ordered serial Multi plans without fixed Solution YAML', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'market');
+  writePackage(root, 'survey');
+  writePackage(root, 'prioritize');
+  const packages = new SkillPackageStore({ sourceRoot: join(root, 'skill-packages') });
+  const skills = packages.discover().packages;
+  const llm = new PlanningLLM([
+    analyzed(['market', 'survey', 'prioritize']),
+    {
+      candidates: [
+        {
+          title: 'Research then prioritize', description: 'Two-stage plan',
+          rationale: 'Combines evidence and prioritization', tradeoffs: 'More execution time',
+          skillIds: ['survey', 'prioritize'], finalReportSkillId: null,
+        },
+        {
+          title: 'Full market path', description: 'Three-stage plan',
+          rationale: 'Adds market context', tradeoffs: 'Highest material demand',
+          skillIds: ['market', 'survey', 'prioritize'], finalReportSkillId: 'prioritize',
+        },
+      ],
+    },
+  ]);
+
+  const result = await new RequirementPlanner({ llm, packages }).plan({
+    originalInput: 'Research the market and prioritize opportunities',
+    mode: 'multi_skill',
+    skills,
+    materials: [],
+  });
+
+  assert.deepEqual(result.candidates[0]?.packages.map(({ id }) => id), ['survey', 'prioritize']);
+  assert.deepEqual(result.candidates[0]?.finalReport, { kind: 'platform_default' });
+  assert.deepEqual(result.candidates[1]?.finalReport, { kind: 'skill', packageId: 'prioritize' });
+  assert.equal(result.candidates.filter(({ recommended }) => recommended).length, 1);
+});
+
+test('RequirementPlanner rejects a final report Skill that runs before downstream Skills', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'market');
+  writePackage(root, 'survey');
+  const packages = new SkillPackageStore({ sourceRoot: join(root, 'skill-packages') });
+  const skills = packages.discover().packages;
+  const llm = new PlanningLLM([
+    analyzed(['market', 'survey']),
+    {
+      candidates: [{
+        title: 'Invalid report order',
+        description: 'Runs more work after the report',
+        rationale: 'Invalid fixture',
+        tradeoffs: 'The report cannot see downstream Artifacts',
+        skillIds: ['market', 'survey'],
+        finalReportSkillId: 'market',
+      }],
+    },
+  ]);
+
+  await assert.rejects(
+    new RequirementPlanner({ llm, packages }).plan({
+      originalInput: 'Research the market and survey users',
+      mode: 'multi_skill',
+      skills,
+      materials: [],
+    }),
+    /最终报告 Skill 必须是候选方案的最后一个 Skill/u,
+  );
+});
+
+test('RequirementPlanner sends explicit $skill requests directly to the package without an LLM call', async () => {
+  const root = await temporaryRoot();
+  writePackage(root, 'market');
+  const packages = new SkillPackageStore({ sourceRoot: join(root, 'skill-packages') });
+  const skills = packages.discover().packages;
+  const llm = new PlanningLLM([]);
+
+  const result = await new RequirementPlanner({ llm, packages }).plan({
+    originalInput: 'Compare pet retail',
+    mode: 'single_skill',
+    skills,
+    materials: [],
+    requestedSkillId: 'MARKET',
+  });
+
+  assert.equal(result.requirement.goal, 'Compare pet retail');
+  assert.equal(result.candidates[0]?.packages[0]?.id, 'market');
+  assert.equal(llm.calls.length, 0);
 });

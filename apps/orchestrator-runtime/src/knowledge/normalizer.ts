@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
-import { seedTagsGuideStage, seedSkillTaskTypes } from './seed.ts';
+import { loadTaxonomy } from './taxonomy.ts';
 
 const NAV_FILES = new Set(['index.md', 'readme.md']);
 
@@ -11,10 +11,6 @@ export function inferTypeDomain(relPath: string): { type: string; domain: string
   if (NAV_FILES.has(file)) return null;
 
   if (parts[0] === 'models') return { type: 'model', domain: 'general' };
-  // skills 下只有 <name>/SKILL.md 是条目;references/*.md、scripts/* 是 skill 的一部分, 不单独索引
-  if (parts[0] === 'skills') {
-    return file === 'skill.md' ? { type: 'skill', domain: 'general' } : null;
-  }
   if (parts[0] === 'methods') {
     if (parts[1] === 'standards') return { type: 'standard', domain: 'general' };
     if (parts[1] === 'toolbox' && parts[2] === 'analysis') return { type: 'toolbox-analysis', domain: 'general' };
@@ -22,6 +18,45 @@ export function inferTypeDomain(relPath: string): { type: string; domain: string
     if (parts[1] === 'scenarios') return { type: 'scenario', domain: parts[2] ?? 'general' };
   }
   return null;
+}
+
+const KEYWORD_TAGS: Array<[RegExp, string[]]> = [
+  [/persona|画像|人群/iu, ['persona', 'audience']],
+  [/interview|访谈/iu, ['qualitative', 'method']],
+  [/survey|questionnaire|问卷|量表/iu, ['quantitative', 'method']],
+  [/competitive|竞品|对标/iu, ['business-competitive', 'ui-competitive']],
+  [/a11y|accessibility|无障碍/iu, ['a11y', 'ux-audit']],
+  [/heuristic|usability|可用性|走查|启发/iu, ['ux-audit']],
+  [/report|报告|pyramid|金字塔/iu, ['report', 'output']],
+  [/sampling|抽样|recruit|招募|consent|授权|知情/iu, ['audience', 'method', 'privacy', 'compliance']],
+  [/goal|目标|question|问题定义|5w2h/iu, ['research_goal']],
+  [/privacy|隐私|compliance|合规/iu, ['privacy', 'compliance']],
+  [/digital.?human|数字人/iu, ['digital_human']],
+  [/jtbd|kano|model|模型|framework|框架/iu, ['framework']],
+];
+
+function seededGuidance(type: string, stem: string, title: string): {
+  guideTags: string[];
+  guideStages: string[];
+} {
+  const taxonomy = loadTaxonomy();
+  const allowedTags = new Set(taxonomy.tags);
+  const tags = new Set<string>();
+  for (const [pattern, matches] of KEYWORD_TAGS) {
+    if (pattern.test(`${stem} ${title}`)) matches.forEach((tag) => tags.add(tag));
+  }
+  const stages: Record<string, string[]> = {
+    model: ['need-discovery'],
+    standard: ['output-standard'],
+    'toolbox-collection': ['method-selection'],
+    'toolbox-analysis': ['method-selection'],
+    scenario: ['intent', 'goal-definition'],
+  };
+  const allowedStages = new Set(taxonomy.guide_stages);
+  return {
+    guideTags: [...tags].filter((tag) => allowedTags.has(tag)),
+    guideStages: (stages[type] ?? []).filter((stage) => allowedStages.has(stage)),
+  };
 }
 
 export function contentHash(content: string): string {
@@ -47,10 +82,9 @@ export function normalizeEntry(relPath: string, rawMd: string): { md: string; ch
   const { frontmatter: existing, content } = parseFrontmatter(rawMd);
   const hash = contentHash(content);
   const title = firstHeading(content, relPath);
-  // skill 的身份是其所在文件夹(SKILL.md 恒为同名), 用文件夹名而非文件名 stem, 否则所有 skill id 都塌成 skill_SKILL
-  const stem = td.type === 'skill' ? (relPath.split('/').slice(-2)[0] ?? fileStem(relPath)) : fileStem(relPath);
+  const stem = fileStem(relPath);
   const id = `${td.type.replace(/-/g, '_')}_${stem.replace(/-/g, '_')}`;
-  const seed = seedTagsGuideStage(td.type, stem, title);
+  const seed = seededGuidance(td.type, stem, title);
 
   const changed = existing.content_hash !== hash
     || existing.source_path !== relPath
@@ -63,21 +97,11 @@ export function normalizeEntry(relPath: string, rawMd: string): { md: string; ch
   fm.source_path = relPath;       // 始终覆盖为实际路径
   fm.content_hash = hash;         // 始终
   fm.guide_tags = existing.guide_tags ?? seed.guideTags;   // 受控引导标签(独立于 wiki tags)
-  fm.guide_stage = existing.guide_stage ?? seed.guide_stage;
+  fm.guide_stage = existing.guide_stage ?? seed.guideStages;
   // 无 frontmatter 文件兜底:补最小可索引字段
   fm.type ??= td.type;
   fm.domain ??= td.domain;
   fm.title ??= title;
-
-  // skill 额外补路由字段(spec §6.2):wiki SKILL.md 无 task_types/inputs/outputs/status
-  if (td.type === 'skill') {
-    fm.name ??= title;
-    fm.description ??= '';
-    fm.task_types ??= seedSkillTaskTypes(stem, title);
-    fm.inputs ??= [];
-    fm.outputs ??= [];
-    fm.status ??= 'approved'; // registry 需要 status 映射为 active;wiki SKILL.md 缺省视为已发布
-  }
 
   const md = serializeFrontmatter(fm, content);
   return { md, changed };

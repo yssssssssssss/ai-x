@@ -3,10 +3,21 @@ import type {
   SkillNativeZeroPublicationDraft,
 } from '../../../../../packages/api-contract/skill-native.ts';
 import type { SkillNativeReportPublisher } from '../../../../orchestrator-runtime/src/skill-native/service.ts';
-import type { ZeroPublicationMcp } from './zero-publication-service.ts';
+
+export interface SkillNativeZeroMcp {
+  getStatus(): Promise<{ available: boolean; authenticated: boolean }>;
+  getCurrentTarget(): Promise<{ fileKey: string | null; pageId: string; pageName: string }>;
+  createHtmlDraft(input: { html: string; name: string }): Promise<{ rootNodeId: string }>;
+  finalizeDraft(input: {
+    pageId: string;
+    draftRootNodeId: string;
+    finalName: string;
+  }): Promise<{ finalRootNodeId: string }>;
+  cleanupDraft(input: { pageId: string; rootNodeId: string }): Promise<void>;
+}
 
 export class SkillNativeZeroPublisher implements SkillNativeReportPublisher {
-  constructor(private readonly zero: ZeroPublicationMcp) {}
+  constructor(private readonly zero: SkillNativeZeroMcp) {}
 
   async prepare(input: {
     taskId: string;

@@ -1,210 +1,167 @@
-export const SKILL_NATIVE_PLAN_VERSION = 'skill-native-plan-v1' as const;
-export const REPORT_RESULT_VERSION = 'report-result-v1' as const;
+export const SKILL_NATIVE_PLAN_VERSION = 'skill-native-plan-v2' as const;
+export const SKILL_PACKAGE_SNAPSHOT_VERSION = 'skill-package-snapshot-v1' as const;
 
 export type OrchestrationMode = 'single_skill' | 'multi_skill';
-export type InputSourceKind = 'conversation' | 'upload' | 'database' | 'knowledge' | 'tool';
-export type MissingInputPolicy = 'stop' | 'replace' | 'gap';
-export type SkillFailurePolicy = 'stop' | 'replace' | 'gap';
-export type ReportStatus = 'complete' | 'partial' | 'failed';
+export type SkillOutcomeStatus = 'complete' | 'partial' | 'incompatible' | 'failed';
+export type ArtifactRole = 'working' | 'output' | 'report';
 
-export interface SkillInputDefinition {
-  id: string;
-  label: string;
-  description: string;
-  required: boolean;
-  multiple: boolean;
-  acceptedSources: InputSourceKind[];
-  toolIds: string[];
-  question: string;
-  missingPolicy: MissingInputPolicy;
+export interface SkillPackageFile {
+  path: string;
+  byteSize: number;
+  contentSha256: string;
+  executable: boolean;
 }
 
-export interface SkillResourceDefinition {
-  id: string;
-  required: boolean;
-}
-
-export interface SkillKnowledgeDefinition extends SkillResourceDefinition {
-  title: string;
-  sourcePath: string;
-  contentHash: string;
-  status: 'approved' | 'draft';
-  content: string;
-  inputId?: string;
-}
-
-export interface SkillReportDefinition {
-  title: string;
-  summaryInstruction: string;
-  sections: string[];
-}
-
-export interface SkillDefinition {
-  version: 'skill-definition-v1';
+export interface SkillPackageDescriptor {
   id: string;
   name: string;
   description: string;
-  whenToUse: string;
-  inputs: SkillInputDefinition[];
-  knowledge: SkillKnowledgeDefinition[];
-  tools: SkillResourceDefinition[];
-  report: SkillReportDefinition;
-  allowPartial: boolean;
-  body: string;
+  whenToUse?: string;
   sourcePath: string;
+  packageHash: string;
+  fileCount: number;
+  byteSize: number;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface SkillPackageSnapshot {
+  version: typeof SKILL_PACKAGE_SNAPSHOT_VERSION;
+  package: SkillPackageDescriptor;
+  packageHash: string;
+  files: SkillPackageFile[];
+  directories: string[];
+  snapshotPath: string;
+  createdAt: string;
+}
+
+export interface ExternalKnowledgeSnapshot {
+  mountId: string;
+  logicalPath: string;
   contentHash: string;
+  files: SkillPackageFile[];
+  directories: string[];
+  snapshotPath: string;
+  createdAt: string;
 }
 
-export interface ResolvedInput {
-  inputId: string;
-  source: InputSourceKind;
+export interface SkillTaskMaterial {
+  id: string;
+  label: string;
+  source: 'conversation' | 'upload' | 'artifact';
   value: unknown;
-  referenceId?: string;
-  skillIds: string[];
+  artifactIds: string[];
 }
 
-export interface ResolvedInputView {
-  inputId: string;
-  source: InputSourceKind;
-  preview: string;
-  referenceId?: string;
-  skillIds: string[];
-}
-
-export interface ReportGap {
-  id: string;
-  message: string;
-  skillIds: string[];
-}
-
-export interface RequirementContext {
-  version: 'requirement-context-v1';
+export interface RequirementBrief {
+  version: 'requirement-brief-v1';
   goal: string;
+  desiredOutputs: string[];
   scope: string[];
-  inputs: ResolvedInput[];
+  constraints: string[];
   assumptions: string[];
-  gaps: ReportGap[];
+  openQuestions: string[];
 }
 
-export interface SkillInvocation {
+export interface RequirementContext extends Omit<RequirementBrief, 'version'> {
+  version: 'requirement-context-v2';
+  materials: SkillTaskMaterial[];
+}
+
+export interface SkillPlanInvocation {
   id: string;
-  skill: SkillDefinition;
+  package: SkillPackageSnapshot;
   dependsOn: string[];
-  failurePolicy: SkillFailurePolicy;
-  replacementSkill?: SkillDefinition;
-  replacedSkillId?: string;
 }
 
-export interface SolutionSkillDefinition {
-  skillId: string;
-  dependsOn: string[];
-  failurePolicy: SkillFailurePolicy;
-  replacementSkillId?: string;
-}
+export type FinalReportOwner =
+  | { kind: 'skill'; invocationId: string }
+  | { kind: 'platform_default' };
 
-export interface SolutionDefinition {
-  version: 'solution-definition-v1';
+export interface SkillNativeCandidate {
   id: string;
   title: string;
   description: string;
-  whenToUse: string;
+  rationale: string;
+  tradeoffs: string;
   mode: OrchestrationMode;
   recommended: boolean;
-  skills: SolutionSkillDefinition[];
-  finalReportSkillId: string;
-  sourcePath: string;
-  contentHash: string;
+  packages: SkillPackageDescriptor[];
+  finalReport: { kind: 'skill'; packageId: string } | { kind: 'platform_default' };
 }
 
-export interface InputQuestion {
-  inputId: string;
-  label: string;
-  question: string;
-  description: string;
-  required: boolean;
-  multiple: boolean;
-  acceptedSources: InputSourceKind[];
-  missingPolicy: MissingInputPolicy;
-  skillIds: string[];
-}
-
-export interface SolutionPlan {
+export interface ExecutionPlan {
   version: typeof SKILL_NATIVE_PLAN_VERSION;
   taskId: string;
-  solutionId: string;
+  candidateId: string;
   title: string;
   rationale: string;
   tradeoffs: string;
   mode: OrchestrationMode;
   requirement: RequirementContext;
-  invocations: SkillInvocation[];
-  finalReportInvocationId: string;
-  questions: InputQuestion[];
+  invocations: SkillPlanInvocation[];
+  finalReport: FinalReportOwner;
 }
 
-interface ReportBlockBase {
-  sourceIds?: string[];
-}
-
-export interface ReportTextBlock extends ReportBlockBase {
-  type: 'text';
-  text: string;
-}
-
-export interface ReportListBlock extends ReportBlockBase {
-  type: 'list';
-  items: string[];
-}
-
-export interface ReportTableBlock extends ReportBlockBase {
-  type: 'table';
-  columns: string[];
-  rows: string[][];
-}
-
-export interface ReportImageBlock extends ReportBlockBase {
-  type: 'image';
-  artifactId: string;
-  alt: string;
-  caption?: string;
-}
-
-export type ReportBlock = ReportTextBlock | ReportListBlock | ReportTableBlock | ReportImageBlock;
-
-export interface ReportSection {
+export interface PendingQuestion {
   id: string;
-  title: string;
-  blocks: ReportBlock[];
+  prompt: string;
+  required: boolean;
+  answerType: 'text' | 'choice' | 'file';
+  options?: string[];
 }
 
-export interface ReportSource {
+export interface RuntimeCheckpoint {
+  invocationIndex: number;
+  invocationId: string;
+  turn: number;
+  toolCalls: number;
+  stateSummary: string;
+  recentResult?: unknown;
+  pendingQuestions: PendingQuestion[];
+  answers: Record<string, unknown>;
+}
+
+export interface TaskArtifact {
   id: string;
-  kind: InputSourceKind;
-  label: string;
-  url?: string;
-  artifactId?: string;
+  invocationId?: string;
+  relativePath: string;
+  fileName: string;
+  mediaType: string;
+  role: ArtifactRole;
+  byteSize: number;
+  contentSha256: string;
+  sourceArtifactIds: string[];
+  createdAt?: string;
 }
 
-export interface ReportResult {
-  version: typeof REPORT_RESULT_VERSION;
-  title: string;
+export interface SkillOutcome {
+  status: SkillOutcomeStatus;
   summary: string;
-  status: ReportStatus;
-  sections: ReportSection[];
-  sources: ReportSource[];
-  gaps: ReportGap[];
+  primaryArtifactId?: string;
+  artifactIds: string[];
+  gaps: string[];
+  missingCapabilities: string[];
+}
+
+export interface SkillNativeExecutionStepView {
+  invocationId: string;
+  skillId: string;
+  state: 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'skipped';
+  turn: number;
+  outcome?: SkillOutcome;
+  error?: string;
+}
+
+export interface SkillNativeExecutionState {
+  steps: SkillNativeExecutionStepView[];
+  checkpoint: RuntimeCheckpoint | null;
+  externalKnowledge: ExternalKnowledgeSnapshot[];
 }
 
 export interface SkillNativeExecutionResult {
-  status: ReportStatus;
-  report: ReportResult | null;
-  skillResults: Array<{
-    invocationId: string;
-    skillId: string;
-    status: ReportStatus;
-    report?: ReportResult;
-    error?: string;
-  }>;
+  state: 'waiting_for_user' | 'completed' | 'completed_with_gaps' | 'failed';
+  execution: SkillNativeExecutionState;
+  outcome: SkillOutcome | null;
   warnings: string[];
 }
 
@@ -213,6 +170,7 @@ export type SkillNativeTaskState =
   | 'awaiting_confirmation'
   | 'ready'
   | 'executing'
+  | 'waiting_for_user'
   | 'paused'
   | 'completed'
   | 'completed_with_gaps'
@@ -220,52 +178,41 @@ export type SkillNativeTaskState =
   | 'cancelled';
 
 export interface SkillNativeCandidateView {
-  solutionId: string;
+  candidateId: string;
   title: string;
   description: string;
-  whenToUse: string;
+  rationale: string;
+  tradeoffs: string;
   mode: OrchestrationMode;
   recommended: boolean;
   skills: Array<{
     skillId: string;
     name: string;
-    dependsOn: string[];
-    failurePolicy: SkillFailurePolicy;
-    replacementSkillId?: string;
-    replacementSkillName?: string;
-    replacementContentHash?: string;
-    replacedSkillId?: string;
+    description: string;
+    packageHash: string;
   }>;
-  finalReportSkillId: string;
-  inputRequirements: InputQuestion[];
-  resolvedInputs: ResolvedInputView[];
-  questions: InputQuestion[];
-  gaps: ReportGap[];
+  finalReport: { kind: 'skill'; packageId: string } | { kind: 'platform_default' };
 }
 
 export interface SkillNativePlanView {
   version: typeof SKILL_NATIVE_PLAN_VERSION;
   taskId: string;
-  solutionId: string;
+  candidateId: string;
   title: string;
   rationale: string;
   tradeoffs: string;
   mode: OrchestrationMode;
-  requirement: Omit<RequirementContext, 'inputs'> & { inputs: ResolvedInputView[] };
+  requirement: Omit<RequirementContext, 'materials'> & {
+    materials: Array<Omit<SkillTaskMaterial, 'value'> & { preview: string }>;
+  };
   invocations: Array<{
     id: string;
     skillId: string;
     name: string;
     dependsOn: string[];
-    failurePolicy: SkillFailurePolicy;
-    replacementSkillId?: string;
-    replacementSkillName?: string;
-    replacementContentHash?: string;
-    replacedSkillId?: string;
-    contentHash: string;
+    packageHash: string;
   }>;
-  finalReportInvocationId: string;
-  questions: InputQuestion[];
+  finalReport: FinalReportOwner;
 }
 
 export interface SkillNativeTaskView {
@@ -275,24 +222,19 @@ export interface SkillNativeTaskView {
   orchestrationMode: OrchestrationMode;
   state: SkillNativeTaskState;
   stateVersion: number;
-  selectedSolutionId: string | null;
+  selectedCandidateId: string | null;
   currentAttemptId: string | null;
+  requirement: RequirementBrief;
   candidates: SkillNativeCandidateView[];
   plan: SkillNativePlanView | null;
   executionSteps: SkillNativeExecutionStepView[];
-  report: ReportResult | null;
+  pendingQuestions: PendingQuestion[];
+  artifacts: TaskArtifact[];
+  result: SkillOutcome | null;
   warnings: string[];
   failure: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface SkillNativeExecutionStepView {
-  invocationId: string;
-  skillId: string;
-  state: 'running' | 'succeeded' | 'failed' | 'skipped';
-  report?: ReportResult;
-  error?: string;
 }
 
 export interface SkillNativeInputAnswer {
@@ -309,7 +251,12 @@ export interface CreateSkillNativeTaskRequest {
 
 export interface ConfirmSkillNativeTaskRequest {
   expectedVersion: number;
-  answers: Record<string, SkillNativeInputAnswer | null>;
+  answers?: Record<string, SkillNativeInputAnswer>;
+}
+
+export interface ResumeSkillNativeTaskRequest {
+  expectedVersion: number;
+  answers: Record<string, SkillNativeInputAnswer>;
 }
 
 export interface PublishSkillNativeReportRequest {
@@ -343,110 +290,15 @@ export interface SkillNativeTaskSummary {
   updatedAt: string;
 }
 
-export const REPORT_RESULT_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['version', 'title', 'summary', 'status', 'sections', 'sources', 'gaps'],
-  properties: {
-    version: { const: REPORT_RESULT_VERSION },
-    title: { type: 'string', minLength: 1 },
-    summary: { type: 'string', minLength: 1 },
-    status: { enum: ['complete', 'partial', 'failed'] },
-    sections: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['id', 'title', 'blocks'],
-        properties: {
-          id: { type: 'string', minLength: 1 },
-          title: { type: 'string', minLength: 1 },
-          blocks: {
-            type: 'array',
-            minItems: 1,
-            items: {
-              oneOf: [
-                {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['type', 'text'],
-                  properties: {
-                    type: { const: 'text' },
-                    text: { type: 'string', minLength: 1 },
-                    sourceIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
-                  },
-                },
-                {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['type', 'items'],
-                  properties: {
-                    type: { const: 'list' },
-                    items: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
-                    sourceIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
-                  },
-                },
-                {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['type', 'columns', 'rows'],
-                  properties: {
-                    type: { const: 'table' },
-                    columns: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
-                    rows: {
-                      type: 'array',
-                      minItems: 1,
-                      items: { type: 'array', minItems: 1, items: { type: 'string' } },
-                    },
-                    sourceIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
-                  },
-                },
-                {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['type', 'artifactId', 'alt'],
-                  properties: {
-                    type: { const: 'image' },
-                    artifactId: { type: 'string', minLength: 1 },
-                    alt: { type: 'string', minLength: 1 },
-                    caption: { type: 'string' },
-                    sourceIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
-                  },
-                },
-              ],
-            },
-          },
-        },
-      },
-    },
-    sources: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['id', 'kind', 'label'],
-        properties: {
-          id: { type: 'string', minLength: 1 },
-          kind: { enum: ['conversation', 'upload', 'database', 'knowledge', 'tool'] },
-          label: { type: 'string', minLength: 1 },
-          url: { type: 'string' },
-          artifactId: { type: 'string' },
-        },
-      },
-    },
-    gaps: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['id', 'message', 'skillIds'],
-        properties: {
-          id: { type: 'string', minLength: 1 },
-          message: { type: 'string', minLength: 1 },
-          skillIds: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
-        },
-      },
-    },
-  },
-} as const;
+export interface SkillNativeCatalogResponse {
+  skills: Array<{
+    id: string;
+    name: string;
+    description: string;
+    packageHash: string;
+    fileCount: number;
+    byteSize: number;
+    available: true;
+  }>;
+  unavailableSkills: Array<{ id: string; sourcePath: string; reason: string }>;
+}

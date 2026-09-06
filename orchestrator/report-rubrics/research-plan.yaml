@@ -1,9 +1,0 @@
-version: 1
-id: research-plan
-dimensions:
-  - id: evidence-traceability
-    required: true
-  - id: requirement-coverage
-    required: true
-  - id: method-fit
-    required: true
