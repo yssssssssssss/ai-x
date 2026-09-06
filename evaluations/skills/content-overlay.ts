@@ -364,11 +364,13 @@ function loadIndex(root: string): Map<string, { source_path: string; status: str
 }
 
 function loadSkillStatuses(root: string): Map<string, string> {
-  const value = parseYaml(readFileSync(safePath(root, 'orchestrator/skill-registry.yaml'), 'utf8')) as { skills?: unknown };
-  if (!Array.isArray(value.skills)) throw new Error('Skill Registry must contain skills');
+  const value = parseYaml(readFileSync(safePath(root, 'orchestrator/skill-bindings.yaml'), 'utf8')) as { skills?: unknown };
+  if (!Array.isArray(value.skills)) throw new Error('Skill bindings must contain skills');
   return new Map(value.skills.map((item) => {
-    if (!record(item) || !nonBlank(item.id) || !nonBlank(item.status)) throw new Error('Skill Registry entry is malformed');
-    return [item.id, item.status];
+    if (!record(item) || !nonBlank(item.id) || typeof item.enabled !== 'boolean') {
+      throw new Error('Skill binding entry is malformed');
+    }
+    return [item.id, item.enabled ? 'active' : 'draft'];
   }));
 }
 

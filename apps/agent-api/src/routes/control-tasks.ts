@@ -8,9 +8,9 @@ import {
   type ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
 import {
-  type FinalReport,
-  type SkillReport,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  type NativeFinalReport,
+  type NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
@@ -67,9 +67,9 @@ export interface ControlTasksRuntime {
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
   getFinalReport?(taskId: string, ownerUserId: string): Promise<{
     artifact: { id: string };
-    report: FinalReport;
+    report: NativeFinalReport;
   } | null>;
-  getSkillReports?(taskId: string, ownerUserId: string): Promise<SkillReport[] | null>;
+  getSkillResults?(taskId: string, ownerUserId: string): Promise<NativeSkillResult[] | null>;
   readFinalReportHtml?(input: {
     taskId: string;
     attemptId: string;
@@ -660,21 +660,21 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
-  router.get('/:id/skill-reports', async (req, res) => {
+  router.get('/:id/skill-results', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
     if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
-    if (!runtime.getSkillReports) {
+    if (!runtime.getSkillResults) {
       res.status(409).json({ error: 'Skill 报告不可用' });
       return;
     }
     try {
-      const reports = await runtime.getSkillReports(req.params.id, actor.userId);
-      if (!reports) {
+      const results = await runtime.getSkillResults(req.params.id, actor.userId);
+      if (!results) {
         res.status(404).json({ error: '报告不存在' });
         return;
       }
-      res.json({ reports });
+      res.json({ results });
     } catch (error) {
       responseError(res, error);
     }

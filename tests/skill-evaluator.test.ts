@@ -9,7 +9,7 @@ import {
   type LLMResult,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import type { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
-import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import type { SkillCapability } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { getConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { SkillEvaluator } from '../evaluations/skills/evaluator.ts';
@@ -55,7 +55,7 @@ const skillBody = `# Synthetic Skill
 - Label unsupported judgments as inference.
 - Keep synthetic evidence distinct from real facts.`;
 
-const nativeSkill: SkillRegistryEntry = {
+const nativeSkill: SkillCapability = {
   id: 'native-skill',
   name: 'Native Skill',
   path: 'skills/native/SKILL.md',
@@ -182,7 +182,7 @@ class FakeValidator {
   }
 }
 
-function fakeSkillLoader(entry: SkillRegistryEntry = nativeSkill): SkillLoader {
+function fakeSkillLoader(entry: SkillCapability = nativeSkill): SkillLoader {
   return {
     getSkill: (id: string) => (id === entry.id ? entry : null),
     loadSkillBody: () => ({
@@ -200,7 +200,7 @@ function fakeSkillLoader(entry: SkillRegistryEntry = nativeSkill): SkillLoader {
 
 function makeEvaluator(options: {
   llm?: FakeLLM;
-  entry?: SkillRegistryEntry;
+  entry?: SkillCapability;
   validator?: FakeValidator;
   scorecardSchemaPath?: string;
   expectedActualModel?: string;

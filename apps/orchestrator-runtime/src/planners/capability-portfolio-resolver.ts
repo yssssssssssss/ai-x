@@ -523,10 +523,9 @@ export class CapabilityPortfolioResolver {
       rejected,
     ).filter(({ decision }) => decision.skill.id !== synthesizer.skill.id);
     const synthesizerComposition = resolveSkillComposition(synthesizer.skill);
-    const synthesizerTypes = new Set(synthesizerComposition.contribution_types ?? []);
     const contributorCoverableDemandIds = new Set(candidates.flatMap(({ demandIds }) => demandIds));
     const synthesizerOwnedDemands = requiredDemands.filter((demand) => (
-      !contributorCoverableDemandIds.has(demand.id) && synthesizerTypes.has(demand.type)
+      !contributorCoverableDemandIds.has(demand.id)
     ));
     const requiredContributorDemands = requiredDemands.filter((demand) => (
       !synthesizerOwnedDemands.some(({ id }) => id === demand.id)

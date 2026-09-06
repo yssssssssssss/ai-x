@@ -136,15 +136,24 @@ function writeRound(root: string, runId: string, round: 'round0' | 'gold' | 'liv
   return dir;
 }
 
-function writeRegistry(root: string, ids = SKILL_IDS): void {
+function writeCatalog(root: string, ids = SKILL_IDS): void {
   mkdirSync(join(root, 'orchestrator'), { recursive: true });
-  const skills = ids.map((id) => `  - id: ${id}\n    name: ${id}\n    path: skills/${id}/SKILL.md\n    when_to_use: test\n    owner: test\n    status: active\n    risk_level: low`).join('\n');
-  writeFileSync(join(root, 'orchestrator/skill-registry.yaml'), `version: 1\nskills:\n${skills}\n`, 'utf8');
+  writeFileSync(
+    join(root, 'orchestrator/skill-bindings.yaml'),
+    `version: 1\nskills:\n${ids.map((id) => `  - id: ${id}\n    enabled: true\n    risk_level: low`).join('\n')}\n`,
+    'utf8',
+  );
+  writeFileSync(join(root, 'orchestrator/tool-registry.yaml'), 'version: 1\ntools: []\n', 'utf8');
+  for (const id of ids) {
+    const directory = join(root, 'skills', id);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'SKILL.md'), `---\nname: ${id}\ndescription: Test Skill\n---\n# ${id}\n`, 'utf8');
+  }
 }
 
 function fixture(): { root: string; output: string; round0: string; roundA: string; roundB: string; compare: string } {
   const root = mkdtempSync(join(tmpdir(), 'kb-compare-'));
-  writeRegistry(root, [...SKILL_IDS].reverse());
+  writeCatalog(root, [...SKILL_IDS].reverse());
   setConfigRoot(root);
   const output = join(root, 'skill-evaluations');
   return {
@@ -280,7 +289,7 @@ test('preserves each round base verdict in JSON, CSV, and Markdown when perfect 
   });
 });
 
-test('compares the same 22 Skills with base scores and KB verdicts sorted by active registry order', () => {
+test('compares the same 22 Skills with base scores and KB verdicts sorted by active catalog order', () => {
   const setup = fixture();
   const result = compareEvaluationRounds({
     round0: setup.round0,
@@ -290,7 +299,7 @@ test('compares the same 22 Skills with base scores and KB verdicts sorted by act
   });
 
   assert.equal(result.rows.length, 22);
-  assert.deepEqual(result.rows.map((row) => row.skill_id), [...SKILL_IDS].reverse());
+  assert.deepEqual(result.rows.map((row) => row.skill_id), [...SKILL_IDS].sort());
   assert.deepEqual(Object.keys(result.rows[0]).sort(), [
     'draft_warning_count',
     'retrieval_recall',

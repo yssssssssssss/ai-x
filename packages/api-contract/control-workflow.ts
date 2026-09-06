@@ -1,7 +1,7 @@
 import type {
   ReadableExecutionPlan,
   ResolvedPlanInputs,
-} from './lightweight-orchestration.ts';
+} from './native-skill-orchestration.ts';
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   ContributionLedgerV1,

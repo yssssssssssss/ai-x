@@ -5,7 +5,7 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
   plan: FinalizedPlan;
   compact?: boolean;
 }) {
-  if (plan.execution_contract_version === 'lightweight-execution-plan-v1' && plan.mode === 'multi_skill') {
+  if (plan.execution_contract_version === 'native-skill-execution-plan-v1' && plan.mode === 'multi_skill') {
     const invocations = plan.skill_invocations ?? [];
     return (
       <div

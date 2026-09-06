@@ -21,10 +21,10 @@ import {
   type DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import {
-  isLightweightExecutionPlanV1,
-  parseFinalReport,
-  parseLightweightExecutionPlanV1,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  isNativeSkillExecutionPlanV1,
+  parseNativeFinalReport,
+  parseNativeSkillExecutionPlanV1,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
 import { parseReportPackageV2, parseReportPackageV3 } from '../../../../packages/api-contract/report-package.ts';
@@ -278,7 +278,7 @@ function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): {
   let remappedSkillInvocations: Array<Record<string, unknown>> | undefined;
   if (
     plan.execution_contract_version === 'current-execution-plan-v2'
-    || plan.execution_contract_version === 'lightweight-execution-plan-v1'
+    || plan.execution_contract_version === 'native-skill-execution-plan-v1'
   ) {
     if (!Array.isArray(plan.skill_invocations)) {
       throw new TaskWorkflowGateError(['plan.skill_invocations']);
@@ -424,15 +424,15 @@ export class TaskWorkflowService {
     });
     if (selectedFinalReport) {
       if (!this.terminalArtifacts) {
-        throw new ControlPlaneConflictError('terminal Artifact reader is required to recover lightweight execution');
+        throw new ControlPlaneConflictError('terminal Artifact reader is required to recover native execution');
       }
       const verified = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedFinalReport.id);
-      const report = parseFinalReport(verified.value);
+      const report = parseNativeFinalReport(verified.value);
       if (
         verified.artifact.id !== selectedFinalReport.id
         || verified.artifact.state !== 'SEALED'
         || verified.artifact.kind !== 'final_report'
-        || verified.artifact.schemaVersion !== 'final-report-v1'
+        || verified.artifact.schemaVersion !== 'native-final-report-v1'
         || verified.artifact.taskId !== input.taskId
         || verified.artifact.planVersionId !== input.planVersionId
         || verified.artifact.attemptId !== input.attemptId
@@ -441,7 +441,7 @@ export class TaskWorkflowService {
         || report.attemptId !== input.attemptId
         || basename(verified.artifact.storageUri) !== 'final-report.json'
       ) {
-        throw new ControlPlaneConflictError('terminal FinalReport Artifact cannot reconstruct execution result');
+        throw new ControlPlaneConflictError('terminal NativeFinalReport Artifact cannot reconstruct execution result');
       }
       const evidenceManifest = await this.repository.findSealedArtifact({
         taskId: input.taskId,
@@ -688,11 +688,11 @@ export class TaskWorkflowService {
       .filter((key) => !confirmationKeys.has(key));
     const pendingInputs = pendingInputRequirements(plan);
     const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
-    const lightweightPlan = isLightweightExecutionPlanV1(plan.plan)
-      ? parseLightweightExecutionPlanV1(plan.plan)
+    const nativePlan = isNativeSkillExecutionPlanV1(plan.plan)
+      ? parseNativeSkillExecutionPlanV1(plan.plan)
       : null;
     const pendingRequirements = new Map(
-      lightweightPlan?.resolved_inputs.pending.map(({ requirement }) => [requirement.key, requirement]) ?? [],
+      nativePlan?.resolved_inputs.pending.map(({ requirement }) => [requirement.key, requirement]) ?? [],
     );
     const waivedInputKeys = input.waivedInputKeys ?? [];
     const waivedInputs = new Set(waivedInputKeys);

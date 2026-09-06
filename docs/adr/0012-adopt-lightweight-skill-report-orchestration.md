@@ -1,9 +1,8 @@
 # ADR-0012：新 Task 采用轻量 SkillReport / FinalReport 编排
 
-- 状态：Accepted
+- 状态：Superseded by ADR-0013；本 ADR 对应的新任务实现已删除，仅保留决策历史
 - 日期：2026-09-04
-- 实施方案：`docs/plans/2026-09-04-lightweight-skill-report-orchestration-development.md`
-- Phase 0：`docs/plans/2026-09-04-lightweight-skill-report-orchestration-phase-0.md`
+- 后续决策：`docs/adr/0013-adopt-native-skill-package-runtime.md`
 
 ## 背景
 

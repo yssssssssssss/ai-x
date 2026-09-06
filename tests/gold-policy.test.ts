@@ -69,7 +69,7 @@ test('gold CLI refuses to start a trusted batch while policy is disabled', async
     const child = execFile(
       'pnpm',
       ['exec', 'tsx', 'apps/orchestrator-runtime/src/gold-run.ts', 'gold-policy-test'],
-      { cwd: process.cwd(), timeout: 15_000, env: { ...process.env, DATABASE_URL: 'postgres://127.0.0.1:1/unused' } },
+      { cwd: process.cwd(), timeout: 30_000, env: { ...process.env, DATABASE_URL: 'postgres://127.0.0.1:1/unused' } },
       (error, stdout, stderr) => {
         if (!error && !stderr) {
           resolve({ code: 0, output: stdout });

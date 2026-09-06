@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import {
   parseSkillInputRequirements,
   type SkillInputRequirement,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import {
   CONTRIBUTION_TYPES,
   type ContributionType,
@@ -36,7 +36,7 @@ function orchestratorPath(file: string): string {
 // 相对项目根的配置路径(用于 hashFile 版本追溯)。
 export const CONFIG_PATHS = {
   decisionGraph: 'orchestrator/decision-graph.yaml',
-  skillRegistry: 'orchestrator/skill-registry.yaml',
+  skillBindings: 'orchestrator/skill-bindings.yaml',
   toolRegistry: 'orchestrator/tool-registry.yaml',
   evidencePolicy: 'orchestrator/evidence-policy.yaml',
   reportTemplates: 'orchestrator/report-templates',
@@ -284,7 +284,7 @@ export interface DecisionNode {
 
 export type SkillComposition = SkillCompositionContract;
 
-export interface SkillRegistryEntry {
+export interface SkillCapability {
   id: string;
   name: string;
   path: string;
@@ -313,7 +313,7 @@ export interface SkillRegistryEntry {
   report_template?: string;
 }
 
-const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
+const SKILL_CAPABILITY_KEYS = new Set<keyof SkillCapability>([
   'id',
   'name',
   'path',
@@ -342,11 +342,11 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'report_template',
 ]);
 
-export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
-  return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+export function unknownSkillBindingFields(skill: SkillCapability): string[] {
+  return Object.keys(skill).filter((key) => !SKILL_CAPABILITY_KEYS.has(key as keyof SkillCapability));
 }
 
-export function skillLightweightContractIssues(skill: SkillRegistryEntry): string[] {
+export function skillNativeBindingIssues(skill: SkillCapability): string[] {
   const hasRequirements = skill.input_requirements !== undefined;
   const hasTemplate = skill.report_template !== undefined;
   if (!hasRequirements && !hasTemplate) return [];
@@ -406,7 +406,7 @@ function canonicalUniqueStringArray(value: unknown, allowEmpty = false): value i
 
 export function skillCompositionIssues(skill: unknown): string[] {
   if (skill === null || typeof skill !== 'object' || Array.isArray(skill)) {
-    return ['skill registry entry must be an object'];
+    return ['skill capability must be an object'];
   }
   const skillRecord = skill as Record<string, unknown>;
   if (skillRecord.composition === undefined) return [];
@@ -500,7 +500,7 @@ export function skillCompositionIssues(skill: unknown): string[] {
   return issues;
 }
 
-export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposition {
+export function resolveSkillComposition(skill: SkillCapability): SkillComposition {
   if (!skill.composition) {
     return {
       modes: ['standalone'],
@@ -508,7 +508,7 @@ export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposi
       compatible_deliverables: [],
       required_input_roles: [...(skill.inputs ?? [])],
       optional_input_roles: [],
-      standalone_reason: 'legacy registry entry without a composition contract',
+      standalone_reason: 'installed Skill package without a composition binding',
     };
   }
   const issues = skillCompositionIssues(skill);
@@ -516,7 +516,7 @@ export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposi
   return structuredClone(skill.composition);
 }
 
-export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null {
+export function skillOptionalToolIssue(skill: SkillCapability): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const optionalTools = record.optional_tools;
   if (optionalTools === undefined) return null;
@@ -539,7 +539,7 @@ export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null
     : `optional_tools overlaps required_tools: ${overlap}`;
 }
 
-export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null {
+export function skillVisualInputIssue(skill: SkillCapability): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const visualInputs = record.visual_inputs;
   const multipleVisualInputs = record.multiple_visual_inputs;
@@ -588,7 +588,7 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
     : `multiple_visual_inputs references a non-visual input: ${nonVisualRole}`;
 }
 
-export function skillDatasetInputIssue(skill: SkillRegistryEntry): string | null {
+export function skillDatasetInputIssue(skill: SkillCapability): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const datasetInputs = record.dataset_inputs;
   if (datasetInputs === undefined) return null;
@@ -680,8 +680,23 @@ export function loadDecisionGraph(): { version: number; nodes: DecisionNode[] } 
   return loadYaml(orchestratorPath('decision-graph.yaml'));
 }
 
-export function loadSkillRegistry(): { version: number; skills: SkillRegistryEntry[] } {
-  return loadYaml(orchestratorPath('skill-registry.yaml'));
+export interface SkillBindingEntry {
+  id: string;
+  enabled: boolean;
+  task_types?: string[];
+  inputs?: string[];
+  input_requirements?: SkillInputRequirement[];
+  visual_inputs?: string[];
+  multiple_visual_inputs?: string[];
+  dataset_inputs?: string[];
+  required_tools?: string[];
+  optional_tools?: string[];
+  risk_level: 'low' | 'medium' | 'high';
+  composition?: SkillComposition;
+}
+
+export function loadSkillBindings(): { version: number; skills: SkillBindingEntry[] } {
+  return loadYaml(orchestratorPath('skill-bindings.yaml'));
 }
 
 export function loadToolRegistry(): { version: number; tools: ToolRegistryEntry[] } {

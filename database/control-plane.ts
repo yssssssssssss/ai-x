@@ -10,10 +10,10 @@ import {
   type OrchestrationModeV1,
 } from '../packages/api-contract/control-workflow.ts';
 import {
-  isLightweightExecutionPlanV1,
-  parseLightweightExecutionPlanV1,
+  isNativeSkillExecutionPlanV1,
+  parseNativeSkillExecutionPlanV1,
   type ReadableExecutionPlan,
-} from '../packages/api-contract/lightweight-orchestration.ts';
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import type { PendingInput } from '../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
@@ -463,8 +463,8 @@ function currentPlanCandidateFromRow(
     planHash,
     plan: executionPlan,
     pendingInputs: row.pending_inputs as PendingInput[],
-    ...(isLightweightExecutionPlanV1(executionPlan)
-      ? { resolvedInputs: parseLightweightExecutionPlanV1(executionPlan).resolved_inputs }
+    ...(isNativeSkillExecutionPlanV1(executionPlan)
+      ? { resolvedInputs: parseNativeSkillExecutionPlanV1(executionPlan).resolved_inputs }
       : {}),
   };
 }
@@ -2442,8 +2442,9 @@ export class ControlPlaneRepository {
              'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
              'cross_skill_review', 'contribution_ledger', 'contribution_summary',
              'research_contribution_bundle',
-             'final_report', 'final_report_markdown',
+             'final_report', 'final_report_primary', 'final_report_attachment',
              'final_report_html', 'report_sources',
+             'skill_result', 'skill_result_primary', 'skill_result_attachment',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,
@@ -4868,7 +4869,7 @@ export class ControlPlaneRepository {
              AND plan_version_id = $3
              AND attempt_id = $4
              AND kind = 'final_report'
-             AND schema_version = 'final-report-v1'
+             AND schema_version = 'native-final-report-v1'
              AND state = 'SEALED'
              AND content_sha256 IS NOT NULL
              AND byte_size IS NOT NULL
@@ -4884,7 +4885,7 @@ export class ControlPlaneRepository {
         const storageUri = selectedRow ? asString(selectedRow.storage_uri, 'storage_uri') : '';
         if (!selectedRow || !/(?:^|\/)reports\/final-report\.json$/u.test(storageUri)) {
           throw new ControlPlaneConflictError(
-            `execution ${input.attemptId} FinalReport root is not a sealed fixed-path Artifact`,
+            `execution ${input.attemptId} NativeFinalReport root is not a sealed fixed-path Artifact`,
           );
         }
         const reportRoots = await connection.query(
@@ -4905,7 +4906,7 @@ export class ControlPlaneRepository {
           || asString(reportRoots.rows[0]?.id, 'id') !== options.finalReportArtifactId
         ) {
           throw new ControlPlaneConflictError(
-            `execution ${input.attemptId} does not have one unique sealed FinalReport root`,
+            `execution ${input.attemptId} does not have one unique sealed NativeFinalReport root`,
           );
         }
       }

@@ -7,8 +7,8 @@ import { inspectDeliverableRegistry } from '../../../orchestrator-runtime/src/re
 import {
   getConfigRoot,
   hashFile,
-  loadSkillRegistry,
 } from '../../../orchestrator-runtime/src/runtime/config-loader.ts';
+import { InstalledSkillCatalog } from '../../../orchestrator-runtime/src/runtime/installed-skill-catalog.ts';
 
 function readJson(relativePath: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(getConfigRoot(), relativePath), 'utf8')) as Record<string, unknown>;
@@ -42,13 +42,6 @@ function schemaConst(relativePath: string, property: string): string {
     throw new Error(`${relativePath} does not declare ${property} const`);
   }
   return value;
-}
-
-function planContractVersions(): string[] {
-  const current = schemaConst('schemas/current-execution-plan.schema.json', 'execution_contract_version');
-  const legacy = current.replace(/v\d+$/u, 'v1');
-  const portfolio = schemaConst('schemas/current-execution-plan-v3.schema.json', 'execution_contract_version');
-  return [...new Set([legacy, current, portfolio])];
 }
 
 function sourceRevision(): string | null {
@@ -123,9 +116,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     const knowledgeIndexHash = optionalFileHash('knowledge-base/.index/knowledge.json');
     const toolRegistryHash = hashFile('orchestrator/tool-registry.yaml');
     const deliverableRegistryHash = hashFile('orchestrator/deliverable-registry.yaml');
-    const skillRegistryHash = hashFile('orchestrator/skill-registry.yaml');
-    const planSchemaHash = hashFile('schemas/current-execution-plan.schema.json');
-    const planV3SchemaHash = hashFile('schemas/current-execution-plan-v3.schema.json');
+    const catalog = new InstalledSkillCatalog().scan();
+    const skillCatalogHash = catalog.catalogHash;
+    const nativeContractHash = hashFile('packages/api-contract/native-skill-orchestration.ts');
     const capabilityDemandSchemaHash = hashFile('schemas/capability-demand-graph-v1.schema.json');
     const researchContributionSchemaHash = hashFile('schemas/research-contribution-v1.schema.json');
     const researchContributionArtifactSchemaHash = hashFile('schemas/research-contribution-artifact-v1.schema.json');
@@ -146,11 +139,10 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     ]))].sort().map(hashFile);
     const configHash = configurationHash([
       deliverableRegistryHash,
-      skillRegistryHash,
+      skillCatalogHash,
       knowledgeIndexHash,
       toolRegistryHash,
-      planSchemaHash,
-      planV3SchemaHash,
+      nativeContractHash,
       capabilityDemandSchemaHash,
       researchContributionSchemaHash,
       researchContributionArtifactSchemaHash,
@@ -176,9 +168,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
         builtAt: process.env.BUILD_TIMESTAMP ?? null,
         configurationHash: configHash,
       },
-      planContractVersions: [...new Set([...planContractVersions(), 'lightweight-execution-plan-v1'])],
-      skillReportVersions: ['skill-report-v1'],
-      finalReportVersions: ['final-report-v1'],
+      planContractVersions: ['native-skill-execution-plan-v1'],
+      skillResultVersions: ['native-skill-result-v1'],
+      finalReportVersions: ['native-final-report-v1'],
       multiSkillPlanWriterEnabled: process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true',
       reportV3WriterEnabled: process.env.REPORT_V3_WRITER_ENABLED === 'true',
       reportEditorialPlannerV1Enabled: process.env.REPORT_EDITORIAL_PLANNER_V1_ENABLED === 'true',
@@ -209,10 +201,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
         };
       }).sort((left, right) => left.id.localeCompare(right.id)),
       reportLayoutVersions: ['report-layout-blueprint-v1'],
-      compiledSkills: loadSkillRegistry().skills
-        .filter(({ status, execution_mode }) => status === 'active' && execution_mode === 'compiled')
-        .map(({ id }) => id)
-        .sort(),
+      installedSkills: catalog.skills
+        .filter(({ readiness }) => readiness === 'ready')
+        .map(({ id }) => id),
       knowledgeIndexHash,
       toolRegistryHash,
     };

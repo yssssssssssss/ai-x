@@ -1,12 +1,12 @@
 import {
   parseResolvedPlanInputs,
   parseSkillInputRequirements,
-  type LightweightSkillInvocation,
+  type NativeSkillInvocation,
   type MaterialInputSource,
   type ResolvedPlanInputs,
   type SkillInputKind,
   type SkillInputRequirement,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 
 export interface ResolvablePlanInput {
   key: string;
@@ -34,10 +34,6 @@ const SOURCE_PRIORITY: Readonly<Record<MaterialInputSource, number>> = {
   database: 2,
 };
 
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 function mergeRequirement(
   current: SkillInputRequirement,
   candidate: SkillInputRequirement,
@@ -45,18 +41,18 @@ function mergeRequirement(
   if (
     current.kind !== candidate.kind
     || current.multiple !== candidate.multiple
-    || !sameStrings([...current.acceptedSources].sort(), [...candidate.acceptedSources].sort())
   ) {
     throw new PlanInputResolutionError(`requirement ${current.key} has incompatible declarations`);
   }
   return {
     ...current,
     required: current.required || candidate.required,
+    acceptedSources: [...new Set([...current.acceptedSources, ...candidate.acceptedSources])],
   };
 }
 
 export function resolvePlanInputs(input: {
-  invocations: ReadonlyArray<Pick<LightweightSkillInvocation, 'invocation_id' | 'snapshot'>>;
+  invocations: ReadonlyArray<Pick<NativeSkillInvocation, 'invocation_id' | 'run_spec'>>;
   available: readonly ResolvablePlanInput[];
   waived?: readonly WaivedInputDecision[];
   executionBoundKeys?: readonly string[];
@@ -71,7 +67,7 @@ export function resolvePlanInputs(input: {
       throw new PlanInputResolutionError(`invocation ${invocation.invocation_id} is duplicated`);
     }
     invocationIds.add(invocation.invocation_id);
-    const declared = parseSkillInputRequirements(invocation.snapshot.input_requirements);
+    const declared = parseSkillInputRequirements(invocation.run_spec.input_requirements);
     for (const requirement of declared) {
       const existing = requirements.get(requirement.key);
       if (!existing) {

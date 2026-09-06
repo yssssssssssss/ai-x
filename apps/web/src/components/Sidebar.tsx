@@ -132,7 +132,7 @@ export function Sidebar({
             <span>Report {capabilities.reportDocumentVersions.join(', ')}</span>
             <span>Task types: {capabilities.activeTaskTypes.join(', ')}</span>
             <span>Deliverables: {capabilities.activeDeliverables.join(', ')}</span>
-            <span>Compiled Skills: {capabilities.compiledSkills.join(', ')}</span>
+            <span>Installed Skills: {capabilities.installedSkills.join(', ')}</span>
             <span>Config {capabilities.build.configurationHash.slice(0, 19)}…</span>
             <span>Knowledge {capabilities.knowledgeIndexHash?.slice(0, 19) ?? 'unavailable'}…</span>
             <span>Tools {capabilities.toolRegistryHash.slice(0, 19)}…</span>

@@ -3,6 +3,7 @@ import {
   COMPETITIVE_WEIGHT_TITLE,
   extractCompetitiveScoringWeights,
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
+import type { NativeSkillInvocation } from '../../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
 import type { DatasetUpload, PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
 import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
@@ -40,8 +41,17 @@ export function Stage2Plan({
       ? invocation.resource_gaps.map((gap) => ({ ...gap, skillId: invocation.skill_id }))
       : []
   )) ?? [];
+  const nativeInvocations = (plan.plan.skill_invocations ?? []).filter(
+    (invocation): invocation is NativeSkillInvocation => 'run_spec' in invocation,
+  );
+  const nativeToolBindings = nativeInvocations.flatMap(({ skill_id: skillId, run_spec: runSpec }) => (
+    runSpec.tool_bindings.map((binding) => ({ ...binding, skillId }))
+  ));
+  const nativeKnowledge = nativeInvocations.flatMap(({ skill_id: skillId, run_spec: runSpec }) => (
+    runSpec.selected_references.map((reference) => ({ ...reference, skillId }))
+  ));
   const portfolio = multiSkillPlanViewModel(plan.plan);
-  const orchestrationLabel = plan.plan.execution_contract_version === 'lightweight-execution-plan-v1'
+  const orchestrationLabel = plan.plan.execution_contract_version === 'native-skill-execution-plan-v1'
     ? plan.plan.mode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'
     : plan.plan.execution_contract_version === 'current-execution-plan-v3'
       ? '多 Skill 协作'
@@ -166,9 +176,9 @@ export function Stage2Plan({
   }
 
   const pending = plan.pendingUploads ?? [];
-  const lightweightInputs = plan.plan.resolved_inputs;
+  const nativeInputs = plan.plan.resolved_inputs;
   const pendingRequirementByKey = new Map(
-    lightweightInputs?.pending.map((item) => [item.requirement.key, item]) ?? [],
+    nativeInputs?.pending.map((item) => [item.requirement.key, item]) ?? [],
   );
   const waivedSet = new Set(waivedInputKeys);
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
@@ -244,6 +254,28 @@ export function Stage2Plan({
         </div>
       )}
 
+      {nativeToolBindings.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
+          <strong>Tool Binding</strong>
+          {nativeToolBindings.map((binding) => (
+            <div key={`${binding.skillId}:${binding.capability}`}>
+              {binding.skillId} · {binding.capability} → {binding.toolId} · {binding.required ? '必需' : '可选'} · {binding.status}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {nativeKnowledge.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
+          <strong>冻结知识</strong>
+          {nativeKnowledge.map((reference) => (
+            <div key={`${reference.skillId}:${reference.sourceId}:${reference.path}`}>
+              {reference.skillId} · {reference.logicalPath}
+            </div>
+          ))}
+        </div>
+      )}
+
       {resourceGaps.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, color: 'var(--warn)', fontSize: 12 }}>
           <strong>知识资源缺口</strong>
@@ -302,11 +334,11 @@ export function Stage2Plan({
         </div>
       )}
 
-      {lightweightInputs && lightweightInputs.resolved.length > 0 && (
+      {nativeInputs && nativeInputs.resolved.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>已解析输入（可通过重新生成计划纠正）</div>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
-            {lightweightInputs.resolved.map((input) => (
+            {nativeInputs.resolved.map((input) => (
               <li key={input.key}>
                 {input.key} · {input.source} · 用于 {input.targetInvocationIds.join('、')}
               </li>

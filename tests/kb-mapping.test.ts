@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigRoot, loadSkillRegistry, setConfigRoot, type SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { getConfigRoot, setConfigRoot, type SkillCapability } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import {
   loadSkillKnowledgeMappings,
   loadGoldSourceSelections,
 } from '../evaluations/skills/kb/snapshot.ts';
-const activeSkillFixture: SkillRegistryEntry = {
+const activeSkillFixture: SkillCapability = {
   id: 'alpha',
   name: 'Alpha',
   path: 'skills/alpha',
@@ -18,8 +19,10 @@ const activeSkillFixture: SkillRegistryEntry = {
 };
 
 
-test('loads exactly 25 mappings in active registry order', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+const catalogSkills = (): SkillCapability[] => new SkillLoader().listActiveSkills();
+
+test('loads exactly 25 mappings in active catalog order', () => {
+  const activeSkills = catalogSkills();
   const mappings = loadSkillKnowledgeMappings(activeSkills);
   assert.equal(mappings.size, 25);
   assert.deepEqual([...mappings.keys()], activeSkills.map((skill) => skill.id));
@@ -28,7 +31,7 @@ test('loads exactly 25 mappings in active registry order', () => {
 });
 
 test('preserves source role, status policy, one-of semantics, and unresolved paths', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const mappings = loadSkillKnowledgeMappings(activeSkills);
   const survey = mappings.get('generate-survey')!;
   assert.equal(survey.source_status_policy, 'draft_allowed_with_warning');
@@ -46,7 +49,7 @@ test('preserves source role, status policy, one-of semantics, and unresolved pat
 });
 
 test('rejects unknown and missing mapping IDs', () => {
-  const activeSkills: SkillRegistryEntry[] = [activeSkillFixture];
+  const activeSkills: SkillCapability[] = [activeSkillFixture];
   const dir = mkdtempSync(join('/tmp', 'kb-mapping-'));
   const unknownPath = join(dir, 'unknown.json');
   writeFileSync(unknownPath, JSON.stringify([{ skill_id: 'ghost', kb_mode: 'not_applicable', required_sources: [], conditional_sources: [], optional_sources: [], retrieval_tags: [], source_status_policy: 'not_applicable', unresolved_items: [] }]));
@@ -57,7 +60,7 @@ test('rejects unknown and missing mapping IDs', () => {
 });
 
 test('gold selections cover every Skill and preserve declared KB modes', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const selections = loadGoldSourceSelections(activeSkills);
   assert.equal(selections.size, activeSkills.length);
   assert.deepEqual(selections.get('competitive-web-research')?.selected_source_ids, []);
@@ -71,7 +74,7 @@ test('gold selections cover every Skill and preserve declared KB modes', () => {
 });
 
 test('gold selections preserve unresolved items and current case triggers', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const mappings = loadSkillKnowledgeMappings(activeSkills);
   const selections = loadGoldSourceSelections(activeSkills);
   for (const [skillId, mapping] of mappings) {
@@ -88,7 +91,7 @@ test('gold selections preserve unresolved items and current case triggers', () =
 });
 
 test('rejects duplicate and unresolvable gold source selections', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const dir = mkdtempSync(join('/tmp', 'kb-gold-'));
   const selections = JSON.parse(readFileSync(join(process.cwd(), 'evaluations/skills/kb/gold-source-selections.json'), 'utf8')) as unknown[];
   writeFileSync(join(dir, 'duplicate.json'), JSON.stringify([...selections, selections[0]]));
@@ -103,7 +106,7 @@ test('honors current config root and propagates mapping errors', () => {
   const root = mkdtempSync(join('/tmp', 'kb-root-'));
   const mappingDir = join(root, 'evaluations/skills/kb');
   mkdirSync(mappingDir, { recursive: true });
-  const active: SkillRegistryEntry[] = [activeSkillFixture];
+  const active: SkillCapability[] = [activeSkillFixture];
   const mapping = [{ skill_id: 'alpha', kb_mode: 'not_applicable', required_sources: [], conditional_sources: [], optional_sources: [], retrieval_tags: [], source_status_policy: 'not_applicable', unresolved_items: [] }];
   writeFileSync(join(mappingDir, 'skill-knowledge-mapping.json'), JSON.stringify(mapping));
   setConfigRoot(root);
@@ -119,7 +122,7 @@ test('honors current config root and propagates mapping errors', () => {
 });
 
 test('rejects gold mode that disagrees with mapping mode', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const dir = mkdtempSync(join('/tmp', 'kb-mode-'));
   const selections = JSON.parse(readFileSync(join(process.cwd(), 'evaluations/skills/kb/gold-source-selections.json'), 'utf8')) as Array<Record<string, unknown>>;
   selections[0] = { ...selections[0], mode: 'gold' };
@@ -129,7 +132,7 @@ test('rejects gold mode that disagrees with mapping mode', () => {
 });
 
 test('rejects selected sources for non-KB gold modes', () => {
-  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const activeSkills = catalogSkills();
   const dir = mkdtempSync(join('/tmp', 'kb-native-selected-'));
   const selections = JSON.parse(readFileSync(join(process.cwd(), 'evaluations/skills/kb/gold-source-selections.json'), 'utf8')) as Array<Record<string, unknown>>;
   selections[0] = { ...selections[0], selected_source_ids: ['ghost_source'] };

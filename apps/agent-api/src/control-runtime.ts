@@ -11,13 +11,15 @@ import {
 } from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import {
-  isLightweightExecutionPlanV1,
-  parseFinalReport,
-  parseLightweightExecutionPlanV1,
-  parseSkillReport,
-  type FinalReport,
-  type SkillReport,
-} from '../../../packages/api-contract/lightweight-orchestration.ts';
+  isNativeSkillExecutionPlanV1,
+  NATIVE_FINAL_REPORT_VERSION,
+  NATIVE_SKILL_RESULT_VERSION,
+  parseNativeFinalReport,
+  parseNativeSkillExecutionPlanV1,
+  parseNativeSkillResult,
+  type NativeFinalReport,
+  type NativeSkillResult,
+} from '../../../packages/api-contract/native-skill-orchestration.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
@@ -43,7 +45,7 @@ import {
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import {
   assertSingleSkillExecutionPlan,
-  compileLightweightExecutionPlan,
+  compileNativeSkillExecutionPlan,
   PlanCompiler,
 } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
 import {
@@ -316,8 +318,8 @@ function assertRevisionSourceContract(input: {
   deliverableSelection: { deliverableId: string; evidenceRequirements: EvidenceRequirement[] };
   validator: SchemaValidator;
 }): void {
-  if (isLightweightExecutionPlanV1(input.activePlan.plan)) {
-    const plan = parseLightweightExecutionPlanV1(input.activePlan.plan);
+  if (isNativeSkillExecutionPlanV1(input.activePlan.plan)) {
+    const plan = parseNativeSkillExecutionPlanV1(input.activePlan.plan);
     parsePendingInputContracts(input.activePlan.pendingInputs);
     if (
       plan.deliverable_type !== input.deliverableSelection.deliverableId
@@ -438,9 +440,9 @@ export interface ControlRuntime {
   annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
   getFinalReport(taskId: string, ownerUserId: string): Promise<{
     artifact: ControlArtifact;
-    report: FinalReport;
+    report: NativeFinalReport;
   } | null>;
-  getSkillReports(taskId: string, ownerUserId: string): Promise<SkillReport[] | null>;
+  getSkillResults(taskId: string, ownerUserId: string): Promise<NativeSkillResult[] | null>;
   readFinalReportHtml(input: {
     taskId: string;
     attemptId: string;
@@ -663,6 +665,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     planning,
     repository,
     conversations,
+    skillLoader,
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
@@ -783,12 +786,12 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ?? await fixedReportPackageV2Root(binding)
       ?? await fixedReportPackageV1Root(binding);
   };
-  const fixedLightweightArtifact = async (binding: {
+  const fixedNativeArtifact = async (binding: {
     taskId: string;
     planVersionId: string;
     attemptId: string;
   }, expected: {
-    kind: 'final_report' | 'final_report_html' | 'skill_report';
+    kind: 'final_report' | 'final_report_html' | 'skill_result';
     schemaVersion: string;
     relativePath?: string;
   }): Promise<ControlArtifact | null> => {
@@ -805,24 +808,24 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     }
     return candidates[0] ?? null;
   };
-  const readLightweightFinalReport = async (binding: {
+  const readNativeFinalReport = async (binding: {
     taskId: string;
     planVersionId: string;
     attemptId: string;
-  }): Promise<{ artifact: ControlArtifact; report: FinalReport } | null> => {
-    const artifact = await fixedLightweightArtifact(binding, {
+  }): Promise<{ artifact: ControlArtifact; report: NativeFinalReport } | null> => {
+    const artifact = await fixedNativeArtifact(binding, {
       kind: 'final_report',
-      schemaVersion: 'final-report-v1',
+      schemaVersion: NATIVE_FINAL_REPORT_VERSION,
       relativePath: 'reports/final-report.json',
     });
     if (!artifact) return null;
     const stored = await artifacts.readVerifiedJson<unknown>(artifact.id);
-    const report = parseFinalReport(stored.value);
+    const report = parseNativeFinalReport(stored.value);
     if (
       report.taskId !== binding.taskId
       || report.planVersionId !== binding.planVersionId
       || report.attemptId !== binding.attemptId
-    ) throw new Error('FinalReport binding is invalid');
+    ) throw new Error('NativeFinalReport binding is invalid');
     return { artifact: stored.artifact, report };
   };
   const readFrozenReportPackage = async (input: {
@@ -976,6 +979,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            skillLoader,
           })
         : compiler.compile({
             candidate,
@@ -988,27 +992,28 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            skillLoader,
           });
       if (task.orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
-      const lightweight = compileLightweightExecutionPlan({
+      const native = compileNativeSkillExecutionPlan({
         plan: compiled.plan,
         mode: task.orchestrationMode,
         task: structuredTask,
         skillLoader,
       });
       return {
-        plan: { ...lightweight.plan, task_id: task.id },
-        pendingInputs: lightweight.pendingInputs,
+        plan: { ...native.plan, task_id: task.id },
+        pendingInputs: native.pendingInputs,
       };
     },
   };
   const workflow = new TaskWorkflowService(repository, {
     async execute({ lease }) {
       const activePlan = await repository.getPlanVersionDetail(lease.planVersionId);
-      if (!activePlan || !isLightweightExecutionPlanV1(activePlan.plan)) {
-        throw new Error('only lightweight-execution-plan-v1 can enter the current execution path');
+      if (!activePlan || !isNativeSkillExecutionPlanV1(activePlan.plan)) {
+        throw new Error('only native-skill-execution-plan-v1 can enter the current execution path');
       }
       return engine.execute({
         lease,
@@ -1161,36 +1166,36 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         || !task.activePlanVersionId
         || !task.currentAttemptId
       ) return null;
-      return readLightweightFinalReport({
+      return readNativeFinalReport({
         taskId: task.id,
         planVersionId: task.activePlanVersionId,
         attemptId: task.currentAttemptId,
       });
     },
-    async getSkillReports(taskId, ownerUserId) {
+    async getSkillResults(taskId, ownerUserId) {
       const final = await this.getFinalReport(taskId, ownerUserId);
       if (!final) return null;
       const artifactsForAttempt = await repository.listArtifactsForAttempt({
         taskId: final.report.taskId,
         planVersionId: final.report.planVersionId,
         attemptId: final.report.attemptId,
-        kinds: ['skill_report'],
+        kinds: ['skill_result'],
       });
-      const reports: SkillReport[] = [];
-      for (const reference of final.report.skillReports) {
+      const reports: NativeSkillResult[] = [];
+      for (const reference of final.report.skillResults) {
         const candidates = artifactsForAttempt.filter((artifact) => (
           artifact.state === 'SEALED'
-          && artifact.schemaVersion === 'skill-report-v1'
+          && artifact.schemaVersion === NATIVE_SKILL_RESULT_VERSION
           && artifact.storageUri.endsWith(`/${reference.path}`)
         ));
-        if (candidates.length !== 1) throw new Error(`SkillReport ${reference.invocationId} root is invalid`);
+        if (candidates.length !== 1) throw new Error(`NativeSkillResult ${reference.invocationId} root is invalid`);
         const stored = await artifacts.readVerifiedJson<unknown>(candidates[0]!.id);
-        const report = parseSkillReport(stored.value);
+        const report = parseNativeSkillResult(stored.value);
         if (
           report.skillId !== reference.skillId
           || report.invocationId !== reference.invocationId
           || report.status !== reference.status
-        ) throw new Error(`SkillReport ${reference.invocationId} binding is invalid`);
+        ) throw new Error(`NativeSkillResult ${reference.invocationId} binding is invalid`);
         reports.push(report);
       }
       return reports;
@@ -1198,13 +1203,13 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     async readFinalReportHtml(input) {
       const final = await this.getFinalReport(input.taskId, input.ownerUserId);
       if (!final || final.report.attemptId !== input.attemptId) return null;
-      const artifact = await fixedLightweightArtifact({
+      const artifact = await fixedNativeArtifact({
         taskId: final.report.taskId,
         planVersionId: final.report.planVersionId,
         attemptId: final.report.attemptId,
       }, {
         kind: 'final_report_html',
-        schemaVersion: 'final-report-v1',
+        schemaVersion: NATIVE_FINAL_REPORT_VERSION,
         relativePath: 'reports/report.html',
       });
       if (!artifact) return null;

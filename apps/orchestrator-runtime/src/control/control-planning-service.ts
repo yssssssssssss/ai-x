@@ -5,10 +5,10 @@ import type {
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
-  LightweightExecutionPlanV1,
+  NativeSkillExecutionPlanV1,
   ReadableExecutionPlan,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
-import { isLightweightExecutionPlanV1 } from '../../../../packages/api-contract/lightweight-orchestration.ts';
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
+import { isNativeSkillExecutionPlanV1 } from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type {
   CurrentExecutionPlan,
   CurrentExecutionPlanV3,
@@ -25,15 +25,16 @@ import {
 } from '../planners/research-planning-service.ts';
 import {
   assertSingleSkillExecutionPlan,
-  compileLightweightExecutionPlan,
+  compileNativeSkillExecutionPlan,
   PlanCompiler,
 } from '../planners/plan-compiler.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
 type ProvisionalExecutionPlan =
   | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string })
   | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: string })
-  | (Omit<LightweightExecutionPlanV1, 'task_id'> & { task_id?: string });
+  | (Omit<NativeSkillExecutionPlanV1, 'task_id'> & { task_id?: string });
 
 interface PersistedPlanVersion {
   id: string;
@@ -46,6 +47,7 @@ interface PersistedPlanVersion {
 }
 
 export interface ControlPlanningDependencies {
+  skillLoader?: SkillLoader;
   planning: {
     plan(
       input: { originalInput: string; orchestrationMode: OrchestrationModeV1 },
@@ -181,6 +183,9 @@ export class ControlPlanningService {
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            ...(this.dependencies.skillLoader
+              ? { skillLoader: this.dependencies.skillLoader }
+              : {}),
           })
         : this.compiler.compile({
             candidate,
@@ -193,19 +198,25 @@ export class ControlPlanningService {
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            ...(this.dependencies.skillLoader
+              ? { skillLoader: this.dependencies.skillLoader }
+              : {}),
           });
       if (orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
-      const lightweight = compileLightweightExecutionPlan({
+      const native = compileNativeSkillExecutionPlan({
         plan: compiled.plan,
         mode: orchestrationMode,
         task: planningResult.structuredTask,
+        ...(this.dependencies.skillLoader
+          ? { skillLoader: this.dependencies.skillLoader }
+          : {}),
       });
       return {
         candidateId: candidate.id,
-        plan: { ...lightweight.plan, task_id: '' },
-        pendingInputs: lightweight.pendingInputs,
+        plan: { ...native.plan, task_id: '' },
+        pendingInputs: native.pendingInputs,
       };
     });
   }
@@ -230,7 +241,7 @@ export class ControlPlanningService {
         planHash: stored.planHash,
         plan: stored.plan,
         pendingInputs: stored.pendingInputs,
-        ...(isLightweightExecutionPlanV1(stored.plan)
+        ...(isNativeSkillExecutionPlanV1(stored.plan)
           ? { resolvedInputs: stored.plan.resolved_inputs }
           : {}),
       };

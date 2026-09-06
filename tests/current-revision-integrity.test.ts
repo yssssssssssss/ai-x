@@ -14,8 +14,8 @@ import {
   type WorkflowPlanRevisionDriver,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import {
-  parseLightweightExecutionPlanV1,
-} from '../packages/api-contract/lightweight-orchestration.ts';
+  parseNativeSkillExecutionPlanV1,
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import { MockLLMClient } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
@@ -603,28 +603,28 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal(persisted.candidateId, 'speed');
   assert.equal((persisted.plan as Record<string, unknown>).deliverable_type, 'research_plan');
   assert.deepEqual((persisted.plan as Record<string, unknown>).evidence_requirements, evidenceRequirements);
-  const lightweightPlan = parseLightweightExecutionPlanV1(persisted.plan);
+  const nativePlan = parseNativeSkillExecutionPlanV1(persisted.plan);
   assert.deepEqual(
     (persisted.pendingInputs as Array<{ role: string }>).map((input) => input.role),
     ['public_evidence'],
   );
-  assert.deepEqual(lightweightPlan.candidate_metadata, {
+  assert.deepEqual(nativePlan.candidate_metadata, {
     title: 'speed',
     rationale: 'speed',
     tradeoffs: 'speed',
     recommended: false,
   });
   assert.deepEqual(
-    lightweightPlan.planning_provenance,
+    nativePlan.planning_provenance,
     planningResult(instruction).planningProvenance,
   );
-  assert.deepEqual(lightweightPlan.activated_nodes, ['D3_method_selection']);
-  assert.equal(lightweightPlan.execution_contract_version, 'lightweight-execution-plan-v1');
-  assert.equal(lightweightPlan.mode, 'single_skill');
-  assert.equal(lightweightPlan.skill_invocations.length, 1);
-  assert.equal(lightweightPlan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
-  assert.equal(lightweightPlan.skill_invocations[0]?.skill_id, 'competitive-web-research');
-  const steps = lightweightPlan.steps;
+  assert.deepEqual(nativePlan.activated_nodes, ['D3_method_selection']);
+  assert.equal(nativePlan.execution_contract_version, 'native-skill-execution-plan-v1');
+  assert.equal(nativePlan.mode, 'single_skill');
+  assert.equal(nativePlan.skill_invocations.length, 1);
+  assert.equal(nativePlan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
+  assert.equal(nativePlan.skill_invocations[0]?.skill_id, 'competitive-web-research');
+  const steps = nativePlan.steps;
   assert.equal(steps.length, 2);
   assert.equal(steps[0]?.step_name, 'speed search');
   assert.equal(steps[0]?.step_no, 1);

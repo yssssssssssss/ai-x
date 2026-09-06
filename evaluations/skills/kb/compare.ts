@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { loadSkillRegistry } from '../../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { writeAtomic, writeJsonAtomic } from '../report-writer.ts';
 import type {
   ContentEvaluationAssessment,
@@ -232,12 +232,12 @@ function assertCompleteRound(
   }
 }
 
-function activeRegistryOrder(skillIds: string[]): string[] {
-  const registryIds = loadSkillRegistry().skills.filter((skill) => skill.status === 'active').map((skill) => skill.id);
+function activeCatalogOrder(skillIds: string[]): string[] {
+  const registryIds = new SkillLoader().listActiveSkills().map((skill) => skill.id);
   const registrySet = new Set(registryIds);
   const ordered = registryIds.filter((skillId) => skillIds.includes(skillId));
   const unknown = skillIds.filter((skillId) => !registrySet.has(skillId)).sort();
-  if (unknown.length > 0) throw new Error(`comparison Skills missing from active registry: ${unknown.join(', ')}`);
+  if (unknown.length > 0) throw new Error(`comparison Skills missing from active catalog: ${unknown.join(', ')}`);
   return ordered;
 }
 
@@ -398,7 +398,7 @@ export function compareEvaluationRounds(options: CompareOptions): ComparisonOutp
   assertCompleteRound('roundA', roundADirectory, roundA);
   assertCompleteRound('roundB', roundBDirectory, roundB);
 
-  const order = activeRegistryOrder(round0.activeSkillIds);
+  const order = activeCatalogOrder(round0.activeSkillIds);
   const round0Records = bySkill(round0.records);
   const roundARecords = bySkill(roundA.records);
   const roundBRecords = bySkill(roundB.records);
@@ -611,7 +611,7 @@ export function compareContentEvaluationRounds(options: ContentCompareOptions): 
   assertCompleteRound('round0', baselineDirectory, baseline);
   assertCompleteRound('roundA', enhancedDirectory, enhanced);
 
-  const order = activeRegistryOrder(baseline.activeSkillIds);
+  const order = activeCatalogOrder(baseline.activeSkillIds);
   const baselineRecords = bySkill(baseline.records);
   const enhancedRecords = bySkill(enhanced.records);
   const rows = order.map((skillId): ContentComparisonRow => {

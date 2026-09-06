@@ -192,11 +192,15 @@ class OfflineEligibleRealLLM implements LLMClient {
     if (options.schemaName.startsWith('skill:')) {
       this.skillContexts.push(structuredClone(options.context ?? {}));
       const properties = (options.schema as { properties?: Record<string, unknown> }).properties;
-      data = properties?.markdown
+      data = properties?.primary
         ? {
             title: '宠物辅食竞品分析',
             status: 'completed',
-            markdown: `# 宠物辅食竞品分析\n\n公开资料支持竞品场景定位差异 [S-step-1-1]。`,
+            primary: {
+              format: 'markdown',
+              content: `# 宠物辅食竞品分析\n\n公开资料支持竞品场景定位差异 [S-step-1-1]。`,
+            },
+            attachments: [],
             gaps: [],
           }
         : {
@@ -1306,7 +1310,7 @@ test('GET /api/control-tasks/:id rejects an invalid awaiting clarification paylo
   }
 });
 
-test('production control runtime completes a lightweight Single report without the legacy report chain', async () => {
+test('production control runtime completes a native Single report without the legacy report chain', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
@@ -1512,29 +1516,29 @@ test('production control runtime completes a lightweight Single report without t
     planVersionId: string;
     attemptId: string;
     mode: string;
-    markdown: string;
-    skillReports: Array<{ invocationId: string; path: string }>;
+    primary: { format: string; content: string };
+    skillResults: Array<{ invocationId: string; path: string }>;
   };
-  assert.equal(finalReport.version, 'final-report-v1');
+  assert.equal(finalReport.version, 'native-final-report-v1');
   assert.equal(finalReport.taskId, planned.task.id);
   assert.equal(finalReport.planVersionId, speed.planVersionId);
   assert.equal(finalReport.attemptId, execution.attemptId);
   assert.equal(finalReport.mode, 'single_skill');
-  assert.equal(finalReport.skillReports.length, 1);
-  assert.match(finalReport.markdown, /^# 宠物辅食竞品分析/u);
+  assert.equal(finalReport.skillResults.length, 1);
+  assert.match(finalReport.primary.content, /^# 宠物辅食竞品分析/u);
 
-  const skillReportsResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${planned.task.id}/skill-reports`,
+  const skillResultsResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/skill-results`,
     { headers: { authorization: `Bearer ${ownerToken}` } },
   );
-  assert.equal(skillReportsResponse.status, 200, await skillReportsResponse.clone().text());
-  const skillReports = await skillReportsResponse.json() as {
-    reports: Array<{ version: string; invocationId: string; markdown: string }>;
+  assert.equal(skillResultsResponse.status, 200, await skillResultsResponse.clone().text());
+  const skillResults = await skillResultsResponse.json() as {
+    results: Array<{ version: string; invocationId: string; primary: { content: string } }>;
   };
-  assert.equal(skillReports.reports.length, 1);
-  assert.equal(skillReports.reports[0]?.version, 'skill-report-v1');
-  assert.equal(skillReports.reports[0]?.invocationId, finalReport.skillReports[0]?.invocationId);
-  assert.ok(finalReport.markdown.startsWith(skillReports.reports[0]?.markdown ?? 'missing'));
+  assert.equal(skillResults.results.length, 1);
+  assert.equal(skillResults.results[0]?.version, 'native-skill-result-v1');
+  assert.equal(skillResults.results[0]?.invocationId, finalReport.skillResults[0]?.invocationId);
+  assert.ok(finalReport.primary.content.startsWith(skillResults.results[0]?.primary.content ?? 'missing'));
 
   const htmlResponse = await fetch(
     `${baseUrl}/api/control-tasks/${planned.task.id}/final-report.html`,
@@ -1546,7 +1550,7 @@ test('production control runtime completes a lightweight Single report without t
   assert.match(html, /Content-Security-Policy/u);
   assert.doesNotMatch(html, /<script|<iframe|<form|onload=/u);
 
-  for (const route of ['final-report', 'skill-reports', 'final-report.html']) {
+  for (const route of ['final-report', 'skill-results', 'final-report.html']) {
     const foreign = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}/${route}`, {
       headers: { authorization: `Bearer ${foreignToken}` },
     });
@@ -1572,10 +1576,10 @@ test('production control runtime completes a lightweight Single report without t
   });
   const kinds = new Set(artifactsForAttempt.map(({ kind }) => kind));
   for (const expected of [
-    'skill_report',
-    'skill_report_markdown',
+    'skill_result',
+    'skill_result_primary',
     'final_report',
-    'final_report_markdown',
+    'final_report_primary',
     'final_report_html',
     'report_sources',
   ]) assert.equal(kinds.has(expected), true, expected);

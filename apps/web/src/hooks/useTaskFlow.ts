@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  FinalReport,
+  NativeFinalReport,
   ReadableExecutionPlan,
-  SkillReport,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import {
   api,
   type ClarificationRequiredResponse,
@@ -152,8 +152,8 @@ export function useTaskFlow() {
   const [exec, setExec] = useState<ControlExecutionResult | null>(null);
   const [executionSteps, setExecutionSteps] = useState<ExecLogRow[]>([]);
   const [executionPlanSteps, setExecutionPlanSteps] = useState<ExecutionPlanStepView[]>([]);
-  const [finalReport, setFinalReport] = useState<FinalReport | null>(null);
-  const [skillReports, setSkillReports] = useState<SkillReport[]>([]);
+  const [finalReport, setFinalReport] = useState<NativeFinalReport | null>(null);
+  const [skillResults, setSkillResults] = useState<NativeSkillResult[]>([]);
   const [reportState, setReportState] = useState<ReportState>('idle');
   const [deliverableError, setDeliverableError] = useState('');
   const [error, setError] = useState('');
@@ -178,12 +178,12 @@ export function useTaskFlow() {
     setReportState('loading');
     setDeliverableError('');
     try {
-      const [loadedFinalReport, loadedSkillReports] = await Promise.all([
+      const [loadedFinalReport, loadedSkillResults] = await Promise.all([
         api.controlFinalReport(taskId),
-        api.controlSkillReports(taskId),
+        api.controlSkillResults(taskId),
       ]);
       setFinalReport(loadedFinalReport);
-      setSkillReports(loadedSkillReports.reports);
+      setSkillResults(loadedSkillResults.results);
       setReportState('ready');
     } catch (cause) {
       setDeliverableError(message(cause, '报告加载失败'));
@@ -215,7 +215,7 @@ export function useTaskFlow() {
     setExecutionSteps(restoredSteps);
     setExecutionPlanSteps(executionPlanStepsForTask(current));
     setFinalReport(null);
-    setSkillReports([]);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -255,13 +255,13 @@ export function useTaskFlow() {
     if (hydrated.phase !== 'done') return;
     setReportState('loading');
     try {
-      const [restoredFinalReport, restoredSkillReports] = await Promise.all([
+      const [restoredFinalReport, restoredSkillResults] = await Promise.all([
         api.controlFinalReport(current.task.id),
-        api.controlSkillReports(current.task.id),
+        api.controlSkillResults(current.task.id),
       ]);
       if (generation !== restoreGeneration.current) return;
       setFinalReport(restoredFinalReport);
-      setSkillReports(restoredSkillReports.reports);
+      setSkillResults(restoredSkillResults.results);
       setReportState('ready');
     } catch (cause) {
       if (generation !== restoreGeneration.current) return;
@@ -339,7 +339,7 @@ export function useTaskFlow() {
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
     setFinalReport(null);
-    setSkillReports([]);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -372,7 +372,7 @@ export function useTaskFlow() {
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
     setFinalReport(null);
-    setSkillReports([]);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -725,7 +725,7 @@ export function useTaskFlow() {
     executionSteps,
     executionPlanSteps,
     finalReport,
-    skillReports,
+    skillResults,
     reportState,
     deliverableError,
     error,

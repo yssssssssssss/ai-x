@@ -2,12 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mergeDerivedSkillRegistryEntries } from '../apps/orchestrator-runtime/src/knowledge/build.ts';
 import { buildIndex } from '../apps/orchestrator-runtime/src/knowledge/indexer.ts';
-import {
-  getConfigRoot,
-  type SkillRegistryEntry,
-} from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { getConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 
 const modelMd = [
   '---', 'id: model_jtbd', 'type: model', 'title: JTBD', 'domain: general',
@@ -84,44 +80,23 @@ test('知识条目进 knowledge 索引,skill 进 skills,asset 被排除', () => 
   assert.equal(skills[0].status, 'active', 'approved → active');
 });
 
-test('compiled Contributor metadata is generated from each Skill frontmatter', () => {
+test('Contributor discovery metadata comes from each unchanged Skill frontmatter', () => {
   const fixtures = [
-    ['generate-persona', 'orchestrator/skill-executions/generate-persona.yaml', 'persona'],
-    ['jobs-to-be-done', 'orchestrator/skill-executions/jobs-to-be-done.yaml', 'jobs_to_be_done'],
-    ['build-experience-metrics', 'orchestrator/skill-executions/build-experience-metrics.yaml', 'metrics'],
+    ['generate-persona', 'persona'],
+    ['jobs-to-be-done', 'jobs_to_be_done'],
+    ['build-experience-metrics', 'metrics'],
   ] as const;
 
-  for (const [skillId, executionContract, contributionType] of fixtures) {
+  for (const [skillId, contributionType] of fixtures) {
     const relPath = `skills/${skillId}/SKILL.md`;
     const { skills } = buildIndex([{
       relPath,
       md: readFileSync(join(getConfigRoot(), 'knowledge-base', relPath), 'utf8'),
     }]);
-    assert.equal(skills[0]?.execution_mode, 'compiled', skillId);
-    assert.equal(skills[0]?.execution_contract, executionContract, skillId);
+    assert.equal(skills[0]?.execution_mode, undefined, skillId);
+    assert.equal(skills[0]?.execution_contract, undefined, skillId);
     assert.deepEqual(skills[0]?.required_tools, ['tavily-web-search'], skillId);
     assert.deepEqual(skills[0]?.composition?.contribution_types, [contributionType], skillId);
     assert.deepEqual(skills[0]?.composition?.shareable_prerequisites, ['tavily-web-search'], skillId);
   }
-});
-
-test('KB build preserves registry-only runtime metadata as a durable overlay', () => {
-  const generated = buildIndex([{
-    relPath: 'skills/generate-research-plan/SKILL.md',
-    md: skillMd,
-  }]).skills;
-  const existing: SkillRegistryEntry[] = [{
-    ...generated[0]!,
-    composition: {
-      modes: ['standalone', 'contributor'],
-      supported_outcomes: ['plan'],
-      compatible_deliverables: ['research_plan'],
-      required_input_roles: ['research_goal'],
-      optional_input_roles: [],
-    },
-  }];
-
-  const merged = mergeDerivedSkillRegistryEntries(generated, existing);
-  assert.deepEqual(merged[0]?.composition, existing[0]?.composition);
-  assert.equal(merged[0]?.when_to_use, '生成完整调研方案');
 });

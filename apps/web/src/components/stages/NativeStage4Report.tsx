@@ -1,29 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
-  FinalReport,
-  SkillReport,
-} from '../../../../../packages/api-contract/lightweight-orchestration.ts';
+  NativeFinalReport,
+  NativeSkillResult,
+} from '../../../../../packages/api-contract/native-skill-orchestration.ts';
 import { api } from '../../api/client.ts';
 import { Header } from './Stage1Understand.tsx';
 
-export function LightweightStage4Report({
+export function NativeStage4Report({
   taskId,
   finalReport,
-  skillReports,
+  skillResults,
 }: {
   taskId: string;
-  finalReport: FinalReport;
-  skillReports: SkillReport[];
+  finalReport: NativeFinalReport;
+  skillResults: NativeSkillResult[];
 }) {
   const [view, setView] = useState<'final' | 'skills'>('final');
   const [selectedInvocationId, setSelectedInvocationId] = useState(
-    skillReports[0]?.invocationId ?? '',
+    skillResults[0]?.invocationId ?? '',
   );
   const [html, setHtml] = useState<string | null>(null);
   const [htmlError, setHtmlError] = useState('');
-  const htmlHostRef = useRef<HTMLDivElement>(null);
-  const selectedReport = skillReports.find(({ invocationId }) => invocationId === selectedInvocationId)
-    ?? skillReports[0];
+  const selectedResult = skillResults.find(({ invocationId }) => invocationId === selectedInvocationId)
+    ?? skillResults[0];
 
   useEffect(() => {
     let active = true;
@@ -38,24 +37,6 @@ export function LightweightStage4Report({
     return () => { active = false; };
   }, [taskId, finalReport.attemptId]);
 
-  useEffect(() => {
-    const host = htmlHostRef.current;
-    if (!host || !html) return;
-    const parsed = new DOMParser().parseFromString(html, 'text/html');
-    parsed.querySelectorAll('script,iframe,form').forEach((element) => element.remove());
-    parsed.querySelectorAll('*').forEach((element) => {
-      for (const attribute of [...element.attributes]) {
-        if (attribute.name.toLowerCase().startsWith('on')) element.removeAttribute(attribute.name);
-      }
-    });
-    const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
-    const fragment = document.createDocumentFragment();
-    parsed.head.querySelectorAll('style').forEach((style) => fragment.append(style.cloneNode(true)));
-    parsed.body.childNodes.forEach((child) => fragment.append(child.cloneNode(true)));
-    shadow.replaceChildren(fragment);
-    return () => { shadow.replaceChildren(); };
-  }, [html]);
-
   function download(name: string, content: string, type: string) {
     const url = URL.createObjectURL(new Blob([content], { type }));
     const anchor = document.createElement('a');
@@ -67,7 +48,7 @@ export function LightweightStage4Report({
   }
 
   return (
-    <section className="stage-card lightweight-report" aria-label="轻量研究报告">
+    <section className="stage-card native-report" aria-label="研究报告">
       <Header
         n="4"
         title={finalReport.title}
@@ -83,9 +64,13 @@ export function LightweightStage4Report({
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => download(`report-${taskId}.md`, finalReport.markdown, 'text/markdown;charset=utf-8')}
+              onClick={() => download(
+                `report-${taskId}.${finalReport.primary.format === 'html' ? 'html' : 'md'}`,
+                finalReport.primary.content,
+                finalReport.primary.format === 'html' ? 'text/html;charset=utf-8' : 'text/markdown;charset=utf-8',
+              )}
             >
-              下载 Markdown
+              下载原始报告
             </button>
             {html ? (
               <button
@@ -96,40 +81,73 @@ export function LightweightStage4Report({
                 下载 HTML
               </button>
             ) : null}
+            {finalReport.attachments.map((attachment) => (
+              <button
+                key={attachment.path}
+                type="button"
+                className="btn-ghost"
+                onClick={() => download(attachment.path.split('/').at(-1) ?? 'attachment', attachment.content, attachment.mediaType)}
+              >
+                下载 {attachment.path}
+              </button>
+            ))}
           </div>
           {htmlError ? <p role="alert">{htmlError}</p> : null}
           {html
-            ? <div ref={htmlHostRef} className="lightweight-report-document" aria-label={finalReport.title} />
-            : <pre className="lightweight-report-markdown">{finalReport.markdown}</pre>}
+            ? (
+              <iframe
+                className="native-report-document"
+                title={finalReport.title}
+                sandbox=""
+                srcDoc={html}
+              />
+            )
+            : <pre className="native-report-content">{finalReport.primary.content}</pre>}
         </>
       ) : (
         <>
           <div className="report-view-toggle" aria-label="Skill 报告选择">
-            {skillReports.map((report) => (
+            {skillResults.map((report) => (
               <button
                 key={report.invocationId}
                 type="button"
-                className={selectedReport?.invocationId === report.invocationId ? 'is-active' : ''}
+                className={selectedResult?.invocationId === report.invocationId ? 'is-active' : ''}
                 onClick={() => setSelectedInvocationId(report.invocationId)}
               >
                 {report.title}
               </button>
             ))}
           </div>
-          {selectedReport ? (
+          {selectedResult ? (
             <article>
-              <p><b>状态：</b>{selectedReport.status}</p>
-              <pre className="lightweight-report-markdown">{selectedReport.markdown}</pre>
-              {selectedReport.gaps.length > 0 ? (
+              <p><b>状态：</b>{selectedResult.status}</p>
+              <pre className="native-report-content">{selectedResult.primary.content}</pre>
+              {selectedResult.gaps.length > 0 ? (
                 <section>
                   <h3>资料缺口</h3>
-                  <ul>{selectedReport.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
+                  <ul>{selectedResult.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
+                </section>
+              ) : null}
+              {selectedResult.attachments.length > 0 ? (
+                <section>
+                  <h3>附件</h3>
+                  <ul>{selectedResult.attachments.map((attachment) => (
+                    <li key={attachment.path}>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => download(attachment.path.split('/').at(-1) ?? 'attachment', attachment.content, attachment.mediaType)}
+                      >
+                        {attachment.path}
+                      </button>
+                    </li>
+                  ))}</ul>
                 </section>
               ) : null}
               <section>
                 <h3>来源</h3>
-                {selectedReport.sources.length === 0 ? <p>无</p> : (
-                  <ul>{selectedReport.sources.map((source) => (
+                {selectedResult.sources.length === 0 ? <p>无</p> : (
+                  <ul>{selectedResult.sources.map((source) => (
                     <li key={source.id}>
                       <code>{source.id}</code>{' '}
                       {source.url

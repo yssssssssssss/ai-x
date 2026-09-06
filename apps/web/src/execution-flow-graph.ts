@@ -207,7 +207,7 @@ export function buildExecutionFlowGraph(input: {
   steps: readonly ExecutionFlowStepInput[];
   log?: readonly ExecutionFlowLogInput[];
   phase: ExecutionFlowPhase;
-  lightweight?: boolean;
+  native?: boolean;
 }): ExecutionFlowGraph {
   const steps = [...input.steps].sort((left, right) => left.step_no - right.step_no);
   const hasCurrentDependencies = steps.some((step) => Array.isArray(step.depends_on));
@@ -223,7 +223,7 @@ export function buildExecutionFlowGraph(input: {
     ? -1
     : Math.max(...steps.map((step) => depths.get(step.step_no) ?? 0));
   const reviewLayer = maxExecutionDepth + 2;
-  const reportLayer = input.lightweight ? maxExecutionDepth + 2 : reviewLayer + 1;
+  const reportLayer = input.native ? maxExecutionDepth + 2 : reviewLayer + 1;
   const system = systemStatuses(input.phase);
 
   const planNode: ExecutionFlowNode = {
@@ -260,14 +260,14 @@ export function buildExecutionFlowGraph(input: {
   const reportNode: ExecutionFlowNode = {
     id: 'system:report',
     kind: 'system',
-    label: input.lightweight ? '报告定稿' : '报告生成',
+    label: input.native ? '报告定稿' : '报告生成',
     actorType: 'system',
-    actorId: input.lightweight ? 'lightweight-reporting' : 'report-composer',
+    actorId: input.native ? 'native-reporting' : 'report-composer',
     status: system.report,
     layer: reportLayer,
     dependencies: [],
   };
-  const nodes = input.lightweight
+  const nodes = input.native
     ? [planNode, ...executionNodes, reportNode]
     : [planNode, ...executionNodes, reviewNode, reportNode];
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -286,13 +286,13 @@ export function buildExecutionFlowGraph(input: {
     });
   };
 
-  if (roots.length === 0) addEdge(planNode.id, input.lightweight ? reportNode.id : reviewNode.id);
+  if (roots.length === 0) addEdge(planNode.id, input.native ? reportNode.id : reviewNode.id);
   else roots.forEach((root) => addEdge(planNode.id, root.id));
   for (const node of executionNodes) {
     node.dependencies.forEach((dependency) => addEdge(`step:${dependency}`, node.id));
   }
-  leaves.forEach((leaf) => addEdge(leaf.id, input.lightweight ? reportNode.id : reviewNode.id));
-  if (!input.lightweight) addEdge(reviewNode.id, reportNode.id);
+  leaves.forEach((leaf) => addEdge(leaf.id, input.native ? reportNode.id : reviewNode.id));
+  if (!input.native) addEdge(reviewNode.id, reportNode.id);
 
   const layers = Array.from({ length: reportLayer + 1 }, () => [] as ExecutionFlowNode[]);
   for (const node of nodes) layers[node.layer].push(node);

@@ -23,8 +23,6 @@ task_types:
   - user_research_planning
 required_tools:
   - tavily-web-search
-execution_mode: compiled
-execution_contract: orchestrator/skill-executions/generate-persona.yaml
 composition:
   modes: [standalone, contributor]
   supported_outcomes: [answer]

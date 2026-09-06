@@ -12,8 +12,8 @@ import {
   type ControlTask,
 } from '../database/control-plane.ts';
 import type {
-  LightweightExecutionPlanV1,
-} from '../packages/api-contract/lightweight-orchestration.ts';
+  NativeSkillExecutionPlanV1,
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -606,7 +606,7 @@ test('malformed persisted workflow gate fails closed during confirmation', async
   );
 });
 
-test('lightweight confirmation records an explicit optional-input waiver', async () => {
+test('native confirmation records an explicit optional-input waiver', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);
   const invocationId = 'competitive-web-research:1';
@@ -616,11 +616,11 @@ test('lightweight confirmation records an explicit optional-input waiver', async
     input: { public_evidence: null },
     skill_invocation_id: invocationId,
   });
-  const snapshot = new SkillLoader().loadLightweightSnapshot('competitive-web-research');
-  const base = currentPlan('', 'lightweight-waiver', [step]);
-  const plan: LightweightExecutionPlanV1 = {
+  const runSpec = new SkillLoader().loadNativeRunSpec('competitive-web-research');
+  const base = currentPlan('', 'native-waiver', [step]);
+  const plan: NativeSkillExecutionPlanV1 = {
     ...base,
-    execution_contract_version: 'lightweight-execution-plan-v1',
+    execution_contract_version: 'native-skill-execution-plan-v1',
     mode: 'single_skill',
     skill_invocations: [{
       invocation_id: invocationId,
@@ -629,12 +629,13 @@ test('lightweight confirmation records an explicit optional-input waiver', async
       step_nos: [1],
       required: true,
       failure_policy: 'block',
-      snapshot,
+      run_spec: runSpec,
     }],
+    final_report_policy: runSpec.report_policy,
     resolved_inputs: {
       resolved: [],
       pending: [{
-        requirement: snapshot.input_requirements.find(({ key }) => key === 'public_evidence')!,
+        requirement: runSpec.input_requirements.find(({ key }) => key === 'public_evidence')!,
         targetInvocationIds: [invocationId],
       }],
       waived: [],
@@ -652,7 +653,7 @@ test('lightweight confirmation records an explicit optional-input waiver', async
       multiple: true,
     }],
   }];
-  const created = await createCandidateTask(repository, 'lightweight-waiver', {
+  const created = await createCandidateTask(repository, 'native-waiver', {
     candidateId: 'speed',
     plan: plan as unknown as CurrentExecutionPlan,
     pendingInputs,
@@ -660,7 +661,7 @@ test('lightweight confirmation records an explicit optional-input waiver', async
   const selection = await workflow.select({
     taskId: created.task.id,
     expectedVersion: created.task.stateVersion,
-    idempotencyKey: 'lightweight-waiver-select',
+    idempotencyKey: 'native-waiver-select',
     actor: { userId: ownerId, role: 'owner' },
     planVersionId: created.candidates[0]!.id,
   });
@@ -668,7 +669,7 @@ test('lightweight confirmation records an explicit optional-input waiver', async
     taskId: created.task.id,
     planVersionId: selection.planVersionId,
     expectedVersion: selection.stateVersion,
-    idempotencyKey: 'lightweight-waiver-confirm',
+    idempotencyKey: 'native-waiver-confirm',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: {},
     inputValues: {},

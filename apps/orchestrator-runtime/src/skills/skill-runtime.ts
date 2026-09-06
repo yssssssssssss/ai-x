@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { readFileSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { getConfigRoot, hashFile, type SkillRegistryEntry } from '../runtime/config-loader.ts';
+import { getConfigRoot, hashFile, type SkillCapability } from '../runtime/config-loader.ts';
 import type { SkillLoader, LoadedSkillSchemas } from '../runtime/skill-loader.ts';
 import type { LoadedSkillExecutionContract } from './skill-execution-contract.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
@@ -20,7 +20,7 @@ export function buildSkillExecutionPrompt(
 }
 
 export interface PreparedSkillExecution {
-  skill: SkillRegistryEntry;
+  skill: SkillCapability;
   body: { body: string; hash: string; path: string };
   schemas: LoadedSkillSchemas;
   schemaHashes: {

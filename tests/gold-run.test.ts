@@ -17,6 +17,7 @@ import type {
 
 function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
   return {
+    contract: 'native',
     scenarioId: GOLD_SCENARIO_ID,
     profile: 'competitive_research',
     taskType: 'competitive_research',
@@ -24,7 +25,8 @@ function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
     taskId: 'task-1',
     planVersionId: 'plan-1',
     attemptId: 'attempt-1',
-    reportPackageId: 'package-1',
+    finalReportArtifactId: 'final-report-1',
+    skillResultArtifactIds: ['skill-result-1'],
     visualAssetCount: 0,
     gapCount: 0,
     toolArtifactIds: ['tool-1'],
@@ -44,9 +46,8 @@ function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
     requestedModel: 'route-a',
     actualModel: 'model-a',
     coreTool: 'tavily-web-search',
-    packageSealed: true,
-    review: { artifactId: 'review-1', automated: true, verdict: 'pass' },
-    deliverableArtifactId: 'deliverable-1',
+    reportSealed: true,
+    synthesisCallCount: 0,
     evidenceManifestArtifactId: 'evidence-manifest-1',
     evidenceArtifactIds: ['evidence-1'],
     toolReceipt: {
@@ -179,7 +180,7 @@ test('Gold pins freeze the real provider, model route, scenario, build, registry
   assert.doesNotMatch(JSON.stringify(pins), /must-not-leak/u);
 });
 
-test('Gold collection accepts only sealed Gateway and real Tavily Current receipts', () => {
+test('Gold collection accepts only sealed NativeFinalReport Gateway and real Tavily receipts', () => {
   assert.doesNotThrow(() => assertGoldSmokeReceipt(receipt(), GOLD_SCENARIO_ID));
   assert.throws(
     () => assertGoldSmokeReceipt(receipt(), 'competitive-digital-human'),
@@ -190,7 +191,7 @@ test('Gold collection accepts only sealed Gateway and real Tavily Current receip
     /non-qualifying/u,
   );
   assert.throws(
-    () => assertGoldSmokeReceipt(receipt({ packageSealed: false }), GOLD_SCENARIO_ID),
+    () => assertGoldSmokeReceipt(receipt({ reportSealed: false }), GOLD_SCENARIO_ID),
     /non-qualifying/u,
   );
   for (const toolReceipt of [
@@ -204,7 +205,4 @@ test('Gold collection accepts only sealed Gateway and real Tavily Current receip
       /non-qualifying/u,
     );
   }
-  assert.throws(() => assertGoldSmokeReceipt(receipt({
-    review: { artifactId: 'review-1', automated: true, verdict: 'revise' as never },
-  }), GOLD_SCENARIO_ID), /non-qualifying/u);
 });

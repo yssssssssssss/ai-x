@@ -14,15 +14,17 @@ import type {
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
 import {
-  isLightweightExecutionPlanV1,
-  parseFinalReport,
-  parseLightweightExecutionPlanV1,
-  parseSkillReport,
-  type LightweightSkillSnapshot,
+  isNativeSkillExecutionPlanV1,
+  NATIVE_SKILL_RESULT_VERSION,
+  parseNativeFinalReport,
+  parseNativeSkillExecutionPlanV1,
+  parseNativeSkillResult,
+  type NativeSkillRunSpec,
+  type NativeReportPolicy,
   type ResolvedPlanInputs,
-  type SkillReport,
+  type NativeSkillResult,
   type SourceReference,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type {
   ContributionType,
   RequestedArtifact,
@@ -159,15 +161,16 @@ import {
   renderAndSealStandaloneHtml,
 } from '../report/report-v3-publication.ts';
 import {
-  createSkillReport,
-  finalizeMultiReport,
-  finalizeSingleReport,
-  LlmMultiReportSynthesizer,
-  LightweightReportArtifactService,
-  SKILL_REPORT_DRAFT_SCHEMA,
-  assertMarkdownReferences,
-  type SkillReportDraft,
-} from '../report/lightweight-reporting.ts';
+  createNativeSkillResult,
+  finalizeMultiNativeReport,
+  finalizeSingleNativeReport,
+  LlmNativeReportWriter,
+  NativeReportArtifactService,
+  NativeReportError,
+  NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+  assertNativeContentReferences,
+  type NativeSkillResultDraft,
+} from '../report/native-reporting.ts';
 import {
   VisualAssetService,
   type VisualAssetResult,
@@ -237,12 +240,13 @@ export interface EnginePlan {
   invocationPoliciesByStep: Map<number, InvocationExecutionPolicy[]>;
   invocationPoliciesById: Map<string, InvocationExecutionPolicy>;
   optionalInvocationStepNos: Set<number>;
-  lightweight?: {
+  native?: {
     mode: 'single_skill' | 'multi_skill';
-    snapshotsByStep: Map<number, {
+    runSpecsByStep: Map<number, {
       invocationId: string;
-      snapshot: LightweightSkillSnapshot;
+      runSpec: NativeSkillRunSpec;
     }>;
+    finalReportPolicy: NativeReportPolicy;
     resolvedInputs: ResolvedPlanInputs;
   };
 }
@@ -258,9 +262,9 @@ interface ExecutionGap {
   message: string;
 }
 
-function lightweightSkillOutcome(value: unknown): SkillOutputOutcome | null {
+function nativeSkillOutcome(value: unknown): SkillOutputOutcome | null {
   try {
-    const report = parseSkillReport(value);
+    const report = parseNativeSkillResult(value);
     if (report.status === 'needs_input') return null;
     return {
       status: report.status === 'completed_with_gaps' ? 'degraded' : 'succeeded',
@@ -322,13 +326,13 @@ interface ToolSourceRef {
   originalIndex: number;
 }
 
-type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_report' | 'research_contribution' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_result' | 'research_contribution' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
-  skill_report: 'skill-report-v1',
+  skill_result: NATIVE_SKILL_RESULT_VERSION,
   research_contribution: 'research-contribution-artifact-v1',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
@@ -753,11 +757,12 @@ function collectHttpsUrls(value: unknown, urls: Set<string>, depth = 0): void {
   }
 }
 
-function lightweightSourceReferences(input: {
+function nativeSourceReferences(input: {
   step: EngineStep;
   outputs: readonly EngineSealedStepOutput[];
   resolvedInputs: ResolvedPlanInputs;
   invocationId: string;
+  runSpec: NativeSkillRunSpec;
 }): SourceReference[] {
   const sources: SourceReference[] = [];
   for (const resolved of input.resolvedInputs.resolved) {
@@ -796,25 +801,48 @@ function lightweightSourceReferences(input: {
       });
     }
   }
+  for (const reference of input.runSpec.selected_references) {
+    const identity = hashJson([reference.sourceId, reference.logicalPath]).slice('sha256:'.length, 'sha256:'.length + 24);
+    sources.push({
+      id: `S-K-${identity}`,
+      title: reference.path,
+      type: 'knowledge',
+      locator: reference.logicalPath,
+      contentHash: reference.contentHash,
+    });
+  }
   return sources;
 }
 
-function lightweightSkillPrompt(snapshot: LightweightSkillSnapshot): string {
+function nativeSkillPrompt(runSpec: NativeSkillRunSpec): string {
+  const selected = runSpec.selected_references.map((reference) => (
+    `--- ${reference.logicalPath} ---\n${reference.content}`
+  ));
+  const reportInstructions = runSpec.report_policy.kind === 'skill_defined'
+    ? [runSpec.report_policy.instructions]
+    : [];
   return [
-    snapshot.body,
-    '',
-    '## 本次报告结构',
-    snapshot.report_template,
+    runSpec.body,
+    ...(selected.length > 0 ? ['', '## 本次冻结 References', ...selected] : []),
+    ...(reportInstructions.length > 0
+      ? ['', '## 本次报告结构', ...reportInstructions]
+      : ['', '## 本次输出', '先形成完整、可供最终报告生成使用的分析结果；不要套用平台固定章节。']),
     '',
     '## 输出要求',
     '- 只返回符合给定 JSON Schema 的对象。',
-    '- markdown 必须遵循报告结构，并使用 sourceCatalog 中已有的 [S-*] 引用。',
+    `- primary.format 必须为 ${runSpec.report_policy.outputFormat}。`,
+    '- 内容只能使用已提供材料，并使用 sourceCatalog 中已有的 [S-*] 引用。',
     '- 不得新增 URL、来源 ID、事实或数字。',
-    '- 输入不足时使用 needs_input，并在 missingInputKeys 中列出冻结输入合同里的 key。',
+    '- 只有冻结合同中的必需输入缺失时才使用 needs_input；可选输入缺失时继续分析并使用 completed_with_gaps。',
+    '- needs_input 的 missingInputKeys 仅可包含下列冻结输入 key：',,
+    runSpec.input_requirements.length > 0
+      ? runSpec.input_requirements.map(({ key }) => key).join(', ')
+      : '(none)',
+    '- 不得请求清单外的新 key；其他资料不足时继续分析，使用 completed_with_gaps 并写入 gaps。',
   ].join('\n');
 }
 
-function lightweightWaivedGaps(
+function nativeWaivedGaps(
   resolvedInputs: ResolvedPlanInputs,
   invocationId: string,
 ): string[] {
@@ -1157,8 +1185,8 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
-  const lightweightPlan = isLightweightExecutionPlanV1(value)
-    ? parseLightweightExecutionPlanV1(value)
+  const nativePlan = isNativeSkillExecutionPlanV1(value)
+    ? parseNativeSkillExecutionPlanV1(value)
     : null;
   const steps = value.steps.map((item, index): EngineStep => {
     if (!isRecord(item)) throw new ExecutionAuthenticityError(`plan step ${index + 1} is malformed`);
@@ -1352,6 +1380,11 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       optionalToolStepNos.add(toolStep.step_no);
     }
   }
+  const nativeNeedsBinding = new Set(nativePlan?.skill_invocations.flatMap(({ run_spec }) => (
+    run_spec.tool_bindings
+      .filter(({ status }) => status === 'needs_binding')
+      .map(({ toolId }) => toolId)
+  )) ?? []);
   const rawCapabilityGaps = value.capability_gaps ?? [];
   if (!Array.isArray(rawCapabilityGaps)) {
     throw new ExecutionAuthenticityError('plan capability gaps are malformed');
@@ -1368,7 +1401,7 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       throw new ExecutionAuthenticityError(`plan capability gap ${index + 1} is malformed`);
     }
     const decisionKey = `${candidate.capability_id}\u0000${candidate.code}`;
-    if (!unavailableOptionalKeys.delete(decisionKey)) {
+    if (!unavailableOptionalKeys.delete(decisionKey) && !nativeNeedsBinding.has(candidate.capability_id)) {
       throw new ExecutionAuthenticityError(`plan capability gap ${candidate.capability_id} has no decision`);
     }
     return {
@@ -1385,9 +1418,9 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   const invocationPoliciesByStep = new Map<number, InvocationExecutionPolicy[]>();
   const invocationPoliciesById = new Map<string, InvocationExecutionPolicy>();
   const optionalInvocationStepNos = new Set<number>();
-  const lightweightSnapshotsByStep = new Map<number, {
+  const nativeRunSpecsByStep = new Map<number, {
     invocationId: string;
-    snapshot: LightweightSkillSnapshot;
+    runSpec: NativeSkillRunSpec;
   }>();
   const rawInvocations = value.skill_invocations ?? [];
   if (!Array.isArray(rawInvocations)) {
@@ -1403,10 +1436,10 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       || !invocation.step_nos.every((candidate) => Number.isInteger(candidate))
     ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
 
-    if (lightweightPlan) {
-      const frozen = lightweightPlan.skill_invocations[invocationIndex];
+    if (nativePlan) {
+      const frozen = nativePlan.skill_invocations[invocationIndex];
       if (!frozen || frozen.invocation_id !== invocation.invocation_id || frozen.skill_id !== invocation.skill_id) {
-        throw new ExecutionAuthenticityError(`lightweight Skill invocation ${invocationIndex + 1} drifted`);
+        throw new ExecutionAuthenticityError(`native Skill invocation ${invocationIndex + 1} drifted`);
       }
       const policy: InvocationExecutionPolicy = {
         invocationId: frozen.invocation_id,
@@ -1427,7 +1460,7 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       for (const candidateStepNo of frozen.step_nos) {
         const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
         if (!invocationStep) {
-          throw new ExecutionAuthenticityError(`lightweight Skill invocation ${policy.invocationId} references a missing step`);
+          throw new ExecutionAuthenticityError(`native Skill invocation ${policy.invocationId} references a missing step`);
         }
         const policies = invocationPoliciesByStep.get(candidateStepNo) ?? [];
         policies.push(policy);
@@ -1437,11 +1470,11 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
         }
       }
       if (outputStepNo === undefined) {
-        throw new ExecutionAuthenticityError(`lightweight Skill invocation ${policy.invocationId} has no output step`);
+        throw new ExecutionAuthenticityError(`native Skill invocation ${policy.invocationId} has no output step`);
       }
-      lightweightSnapshotsByStep.set(outputStepNo, {
+      nativeRunSpecsByStep.set(outputStepNo, {
         invocationId: frozen.invocation_id,
-        snapshot: frozen.snapshot,
+        runSpec: frozen.run_spec,
       });
       continue;
     }
@@ -1553,12 +1586,13 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
     invocationPoliciesByStep,
     invocationPoliciesById,
     optionalInvocationStepNos,
-    ...(lightweightPlan
+    ...(nativePlan
       ? {
-          lightweight: {
-            mode: lightweightPlan.mode,
-            snapshotsByStep: lightweightSnapshotsByStep,
-            resolvedInputs: lightweightPlan.resolved_inputs,
+          native: {
+            mode: nativePlan.mode,
+            runSpecsByStep: nativeRunSpecsByStep,
+            finalReportPolicy: nativePlan.final_report_policy,
+            resolvedInputs: nativePlan.resolved_inputs,
           },
         }
       : {}),
@@ -1680,7 +1714,7 @@ function overlayPendingInputs(
       );
     }
     const gate = matchingGates[0]!;
-    const pendingState = plan.lightweight?.resolvedInputs.pending
+    const pendingState = plan.native?.resolvedInputs.pending
       .find(({ requirement }) => requirement.key === pendingInput.role);
     const pendingRequirement = pendingState?.requirement;
     if (gate.decision === 'waived') {
@@ -1698,9 +1732,9 @@ function overlayPendingInputs(
       if (typeof reason !== 'string' || !reason.trim()) {
         throw new ExecutionAuthenticityError(`waived input gate for ${pendingInput.role} has no reason`);
       }
-      plan.lightweight!.resolvedInputs.pending = plan.lightweight!.resolvedInputs.pending
+      plan.native!.resolvedInputs.pending = plan.native!.resolvedInputs.pending
         .filter(({ requirement }) => requirement.key !== pendingInput.role);
-      plan.lightweight!.resolvedInputs.waived.push({
+      plan.native!.resolvedInputs.waived.push({
         key: pendingInput.role,
         targetInvocationIds: [...pendingState!.targetInvocationIds],
         reason,
@@ -1725,10 +1759,10 @@ function overlayPendingInputs(
     ) {
       throw new ExecutionAuthenticityError(`input gate for pending role ${pendingInput.role} is invalid`);
     }
-    if (plan.lightweight && pendingState) {
-      plan.lightweight.resolvedInputs.pending = plan.lightweight.resolvedInputs.pending
+    if (plan.native && pendingState) {
+      plan.native.resolvedInputs.pending = plan.native.resolvedInputs.pending
         .filter(({ requirement }) => requirement.key !== pendingInput.role);
-      plan.lightweight.resolvedInputs.resolved.push({
+      plan.native.resolvedInputs.resolved.push({
         key: pendingInput.role,
         valueRef: typeof gate.evidenceRef === 'string'
           ? gate.evidenceRef
@@ -2084,6 +2118,14 @@ export function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof MissingModelReceiptError) {
     return { kind: 'missing_receipt', retryable: false, message: error.message };
   }
+  if (error instanceof NativeReportError) {
+    return {
+      kind: 'schema',
+      retryable: true,
+      allowedActions: ['retry', 'abort'],
+      message: error.message,
+    };
+  }
   return {
     kind: 'capability',
     retryable: false,
@@ -2206,10 +2248,10 @@ export class LeaseExecutionEngine {
         input.lease.planVersionId,
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
-      if (isLightweightExecutionPlanV1(planVersion.plan)) {
-        const lightweightPlan = parseLightweightExecutionPlanV1(planVersion.plan);
-        if (lightweightPlan.task_id !== task.id || lightweightPlan.mode !== task.orchestrationMode) {
-          throw new ExecutionAuthenticityError('lightweight Plan task or mode binding is invalid');
+      if (isNativeSkillExecutionPlanV1(planVersion.plan)) {
+        const nativePlan = parseNativeSkillExecutionPlanV1(planVersion.plan);
+        if (nativePlan.task_id !== task.id || nativePlan.mode !== task.orchestrationMode) {
+          throw new ExecutionAuthenticityError('native Plan task or mode binding is invalid');
         }
       } else if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
         assertCompiledSkillPlan(
@@ -2427,19 +2469,16 @@ export class LeaseExecutionEngine {
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         let skillDegradedPolicy: 'gap' | 'block' | undefined;
         let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
-        const lightweightSkill = plan.lightweight?.snapshotsByStep.get(step.step_no);
-        const lightweightResolvedInputs = plan.lightweight?.resolvedInputs;
+        const nativeSkill = plan.native?.runSpecsByStep.get(step.step_no);
+        const nativeResolvedInputs = plan.native?.resolvedInputs;
         try {
           frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
-          const lightweightPolicy = lightweightSkill
+          const nativePolicy = nativeSkill
             ? (plan.invocationPoliciesByStep.get(step.step_no) ?? [])
-                .find(({ invocationId }) => invocationId === lightweightSkill.invocationId)
+                .find(({ invocationId }) => invocationId === nativeSkill.invocationId)
             : undefined;
-          skillDegradedPolicy = lightweightPolicy?.failurePolicy
-            ?? frozenSkillExecution?.degradedPolicy
-            ?? (step.actor_type === 'skill'
-              ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
-              : undefined);
+          skillDegradedPolicy = nativePolicy?.failurePolicy
+            ?? frozenSkillExecution?.degradedPolicy;
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -2458,13 +2497,13 @@ export class LeaseExecutionEngine {
                 reusableArtifactValue,
               );
             }
-            const reusableLightweightReport = checkpoint.kind === 'skill_report'
-              ? await new LightweightReportArtifactService(this.dependencies.artifacts).sealSkillReport({
+            const reusableNativeResult = checkpoint.kind === 'skill_result'
+              ? await new NativeReportArtifactService(this.dependencies.artifacts).sealSkillResult({
                   activeLease: input.lease,
-                  report: parseSkillReport(reusableArtifactValue),
+                  result: parseNativeSkillResult(reusableArtifactValue),
                 })
               : undefined;
-            const resealed = reusableLightweightReport?.jsonArtifact
+            const resealed = reusableNativeResult?.jsonArtifact
               ?? await this.dependencies.artifacts.writeJson({
                 taskId: input.lease.taskId,
                 planVersionId: input.lease.planVersionId,
@@ -2493,8 +2532,8 @@ export class LeaseExecutionEngine {
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
             let reusedSkillOutcome = step.actor_type === 'skill'
-              ? lightweightSkill
-                ? lightweightSkillOutcome(verified.output)
+              ? nativeSkill
+                ? nativeSkillOutcome(verified.output)
                 : evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
               : null;
             if (
@@ -2531,8 +2570,8 @@ export class LeaseExecutionEngine {
                     skillProvenance: {
                       ...checkpoint.provenance,
                       outputArtifactId: resealed.id,
-                      ...(reusableLightweightReport
-                        ? { markdownArtifactId: reusableLightweightReport.markdownArtifact.id }
+                      ...(reusableNativeResult
+                        ? { primaryArtifactId: reusableNativeResult.primaryArtifact.id }
                         : {}),
                       sourceArtifactId: priorArtifact.id,
                       status: reusedSkillOutcome?.status ?? 'succeeded',
@@ -2657,8 +2696,8 @@ export class LeaseExecutionEngine {
               expectedModel: input.expectedModel,
               optionalTool: false,
               frozenSkillExecution,
-              lightweightSkill,
-              lightweightResolvedInputs,
+              nativeSkill,
+              nativeResolvedInputs,
               onSkillPrepared: (fingerprint) => {
                 preparedSkillFingerprint = fingerprint;
               },
@@ -2670,8 +2709,8 @@ export class LeaseExecutionEngine {
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           let result = sanitizeStepResult(actorResult);
           skillOutcome = step.actor_type === 'skill'
-            ? lightweightSkill
-              ? lightweightSkillOutcome(result.output)
+            ? nativeSkill
+              ? nativeSkillOutcome(result.output)
               : evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
             : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
@@ -2685,7 +2724,7 @@ export class LeaseExecutionEngine {
                 isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
               )
             : undefined;
-          const contributionPolicy = !plan.lightweight && step.actor_type === 'skill'
+          const contributionPolicy = !plan.native && step.actor_type === 'skill'
             ? invocationPolicies.find(({ role, skillId }) => (
                 role === 'contributor' && skillId === step.actor_id
               ))
@@ -2712,13 +2751,13 @@ export class LeaseExecutionEngine {
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           const artifactValue = result.artifactValue ?? result.output;
-          const lightweightPublication = result.kind === 'skill_report'
-            ? await new LightweightReportArtifactService(this.dependencies.artifacts).sealSkillReport({
+          const nativePublication = result.kind === 'skill_result'
+            ? await new NativeReportArtifactService(this.dependencies.artifacts).sealSkillResult({
                 activeLease: input.lease,
-                report: parseSkillReport(artifactValue),
+                result: parseNativeSkillResult(artifactValue),
               })
             : undefined;
-          const artifact = lightweightPublication?.jsonArtifact
+          const artifact = nativePublication?.jsonArtifact
             ?? await this.dependencies.artifacts.writeJson({
               taskId: input.lease.taskId,
               planVersionId: input.lease.planVersionId,
@@ -2729,11 +2768,14 @@ export class LeaseExecutionEngine {
               schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
               activeLease: input.lease,
             });
-          if (lightweightPublication) {
+          if (nativePublication) {
             publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
             publicationGroup
-              .track(lightweightPublication.jsonArtifact.id)
-              .track(lightweightPublication.markdownArtifact.id);
+              .track(nativePublication.jsonArtifact.id)
+              .track(nativePublication.primaryArtifact.id);
+            for (const attachment of nativePublication.attachmentArtifacts) {
+              publicationGroup.track(attachment.id);
+            }
           } else if (publicationGroup) publicationGroup.track(artifact.id);
           else unpublishedArtifactId = artifact.id;
           toolScope?.assertActive(step.actor_id);
@@ -2955,8 +2997,8 @@ export class LeaseExecutionEngine {
                   planHash: planVersion.planHash,
                   stepHash: hashJson(step),
                   outputArtifactId: sealedOutput.artifact.id,
-                  ...(lightweightPublication
-                    ? { markdownArtifactId: lightweightPublication.markdownArtifact.id }
+                  ...(nativePublication
+                    ? { primaryArtifactId: nativePublication.primaryArtifact.id }
                     : {}),
                   ...(sourceSkillArtifactId ? { sourceArtifactId: sourceSkillArtifactId } : {}),
                   status: skillOutcome?.status ?? 'succeeded',
@@ -3160,18 +3202,21 @@ export class LeaseExecutionEngine {
               : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
           if (step.actor_type === 'skill') {
-            failedSkillProvenance = lightweightSkill
+            failedSkillProvenance = nativeSkill
               ? {
-                  kind: 'lightweight_skill_execution',
+                  kind: 'native_skill_execution',
                   ...(preparedSkillFingerprint ?? {
-                    skillBodyHash: lightweightSkill.snapshot.body_hash,
-                    inputSchemaHash: lightweightSkill.snapshot.input_requirements_hash,
-                    outputSchemaHash: lightweightSkill.snapshot.output_schema_hash,
+                    skillBodyHash: nativeSkill.runSpec.body_hash,
+                    inputSchemaHash: nativeSkill.runSpec.input_requirements_hash,
+                    outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_VERSION),
                     payloadSchemaHash: null,
-                    skillReferenceHashes: [{
-                      path: 'report-template.md',
-                      hash: lightweightSkill.snapshot.report_template_hash,
-                    }],
+                    skillReferenceHashes: [
+                      { path: nativeSkill.runSpec.entry_path, hash: nativeSkill.runSpec.body_hash },
+                      ...nativeSkill.runSpec.selected_references.map(({ path, contentHash }) => ({
+                        path,
+                        hash: contentHash,
+                      })),
+                    ],
                     inputArtifacts: executionInputArtifacts(outputs, step),
                     inputHash: hashJson(resolvedInput),
                     executionPromptHash: null,
@@ -3704,7 +3749,11 @@ export class LeaseExecutionEngine {
           );
         }
       }
-      if (!evidenceEntries.some((entry) => entry.toolTier === 'core')) {
+      const requiresCoreToolEvidence = plan.steps.some((step) => (
+        step.actor_type === 'tool'
+        && this.dependencies.skillLoader.getTool(step.actor_id)?.tier === 'core'
+      ));
+      if (requiresCoreToolEvidence && !evidenceEntries.some((entry) => entry.toolTier === 'core')) {
         throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
       }
       const evidenceManifest = evidenceService.createManifest({
@@ -3786,18 +3835,24 @@ export class LeaseExecutionEngine {
     }
 
     try {
-      if (plan.lightweight) {
-      const reports = outputs
-        .filter((output) => output.kind === 'skill_report' && output.actorType === 'skill')
+      if (plan.native) {
+      const results = outputs
+        .filter((output) => output.kind === 'skill_result' && output.actorType === 'skill')
         .sort((left, right) => left.stepNo - right.stepNo)
-        .map((output) => parseSkillReport(output.output));
-      const expectedReportCount = plan.lightweight.snapshotsByStep.size;
-      if (reports.length !== expectedReportCount) {
+        .map((output) => parseNativeSkillResult(output.output));
+      const persistedNativeSteps = await this.dependencies.repository.listExecutionSteps(input.lease.attemptId);
+      const skippedNativeStepNos = new Set(persistedNativeSteps
+        .filter(({ state, actorType }) => state === 'skipped' && actorType === 'skill')
+        .map(({ stepNo }) => stepNo));
+      const expectedResultCount = [...plan.native.runSpecsByStep.keys()]
+        .filter((stepNo) => !skippedNativeStepNos.has(stepNo))
+        .length;
+      if (results.length !== expectedResultCount) {
         throw new ExecutionAuthenticityError(
-          `lightweight execution produced ${reports.length} SkillReports, expected ${expectedReportCount}`,
+          `native execution produced ${results.length} Skill results, expected ${expectedResultCount}`,
         );
       }
-      const needsInput = reports.filter(({ status }) => status === 'needs_input');
+      const needsInput = results.filter(({ status }) => status === 'needs_input');
       if (needsInput.length > 0) {
         const missingInputKeys = [...new Set(needsInput.flatMap(({ missingInputKeys }) => missingInputKeys ?? []))];
         const failure = {
@@ -3834,36 +3889,55 @@ export class LeaseExecutionEngine {
           failure,
         };
       }
-      const verifiedSources = reports.flatMap(({ sources }) => sources);
+      const verifiedSources = results.flatMap(({ sources }) => sources);
       const executionGaps = [...gaps.values()]
         .sort((left, right) => left.stepNo - right.stepNo)
         .map(({ message }) => message);
-      const finalReport = plan.lightweight.mode === 'single_skill'
-        ? finalizeSingleReport({
+      const singleRunSpec = [...plan.native.runSpecsByStep.values()][0]?.runSpec;
+      const finalReport = plan.native.mode === 'single_skill'
+        ? await finalizeSingleNativeReport({
             taskId: input.lease.taskId,
             planVersionId: input.lease.planVersionId,
             attemptId: input.lease.attemptId,
-            report: reports[0]!,
+            requirement: task.structuredTask,
+            result: results[0]!,
             verifiedSources,
+            reportPolicy: singleRunSpec?.report_policy.kind ?? 'default_llm',
+            ...(singleRunSpec?.report_policy.kind === 'default_llm'
+              ? {
+                  defaultWriter: new LlmNativeReportWriter(this.llm, {
+                    attemptId: input.lease.attemptId,
+                    stepNo: plan.steps.length + 1,
+                    stage: 'native_default_report',
+                    expectedModel: input.expectedModel,
+                  }),
+                }
+              : {}),
             extraGaps: executionGaps,
           })
-        : (await finalizeMultiReport({
+        : (await finalizeMultiNativeReport({
             taskId: input.lease.taskId,
             planVersionId: input.lease.planVersionId,
             attemptId: input.lease.attemptId,
             title: researchGoal || '综合报告',
             requirement: task.structuredTask,
-            reports,
+            results,
             verifiedSources,
-            synthesizer: new LlmMultiReportSynthesizer(this.llm, {
+            writer: new LlmNativeReportWriter(this.llm, {
               attemptId: input.lease.attemptId,
               stepNo: plan.steps.length + 1,
+              stage: 'native_multi_synthesis',
               expectedModel: input.expectedModel,
+              outputFormat: plan.native.finalReportPolicy.outputFormat,
+              ...(plan.native.finalReportPolicy.kind === 'skill_defined'
+                ? { instructions: plan.native.finalReportPolicy.instructions }
+                : {}),
             }),
+            reportPolicy: plan.native.finalReportPolicy,
             extraGaps: executionGaps,
           })).report;
-      const validatedFinalReport = parseFinalReport(finalReport);
-      const sealed = await new LightweightReportArtifactService(
+      const validatedFinalReport = parseNativeFinalReport(finalReport);
+      const sealed = await new NativeReportArtifactService(
         this.dependencies.artifacts,
       ).sealFinalReport({
         activeLease: input.lease,
@@ -4489,14 +4563,14 @@ export class LeaseExecutionEngine {
         const expectedKinds: Record<EngineStep['actor_type'], StepArtifactKind> = {
           knowledge: 'knowledge_output',
           tool: 'tool_output',
-          skill: plan.lightweight ? 'skill_report' : 'skill_output',
+          skill: plan.native ? 'skill_result' : 'skill_output',
           llm: 'llm_output',
           reviewer: 'review_output',
         };
         for (const step of plan.steps) {
           const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
           const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
-          const contributorOutput = !plan.lightweight
+          const contributorOutput = !plan.native
             && step.actor_type === 'skill'
             && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
               role === 'contributor' && skillId === step.actor_id
@@ -4676,7 +4750,7 @@ export class LeaseExecutionEngine {
       }
 
       const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
-      const contributorOutput = !plan.lightweight
+      const contributorOutput = !plan.native
         && step.actor_type === 'skill'
         && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
           role === 'contributor' && skillId === step.actor_id
@@ -4685,7 +4759,7 @@ export class LeaseExecutionEngine {
         ? 'tool_output'
         : step.actor_type === 'knowledge'
           ? 'knowledge_output'
-          : contributorOutput ? 'research_contribution' : plan.lightweight ? 'skill_report' : 'skill_output';
+          : contributorOutput ? 'research_contribution' : plan.native ? 'skill_result' : 'skill_output';
       if (
         !artifact
         || artifact.state !== 'SEALED'
@@ -5000,16 +5074,16 @@ export class LeaseExecutionEngine {
         : null;
     }
     if (input.step.actor_type !== 'skill') return null;
-    const lightweightSkill = input.plan.lightweight?.snapshotsByStep.get(input.step.step_no);
-    if (lightweightSkill && input.plan.lightweight) {
-      const snapshot = lightweightSkill.snapshot;
-      const expectedReferenceHashes = [{
-        path: 'report-template.md',
-        hash: snapshot.report_template_hash,
-      }];
-      return prior.skillBodyHash === snapshot.body_hash
-        && prior.inputSchemaHash === snapshot.input_requirements_hash
-        && prior.outputSchemaHash === snapshot.output_schema_hash
+    const nativeSkill = input.plan.native?.runSpecsByStep.get(input.step.step_no);
+    if (nativeSkill && input.plan.native) {
+      const runSpec = nativeSkill.runSpec;
+      const expectedReferenceHashes = [
+        { path: runSpec.entry_path, hash: runSpec.body_hash },
+        ...runSpec.selected_references.map(({ path, contentHash }) => ({ path, hash: contentHash })),
+      ];
+      return prior.skillBodyHash === runSpec.body_hash
+        && prior.inputSchemaHash === runSpec.input_requirements_hash
+        && prior.outputSchemaHash === hashJson(NATIVE_SKILL_RESULT_VERSION)
         && prior.payloadSchemaHash === null
         && isDeepStrictEqual(prior.skillReferenceHashes, expectedReferenceHashes)
         && prior.inputHash === hashJson(resolvedInput)
@@ -5075,9 +5149,9 @@ export class LeaseExecutionEngine {
       for (const step of plan.steps) validateStepInputBindings(step, stepNos);
       for (const step of plan.steps) {
         if (step.actor_type === 'skill') {
-          if (plan.lightweight) {
-            if (!plan.lightweight.snapshotsByStep.has(step.step_no)) {
-              return new ExecutionAuthenticityError(`lightweight Skill ${step.actor_id} has no frozen snapshot`);
+          if (plan.native) {
+            if (!plan.native.runSpecsByStep.has(step.step_no)) {
+              return new ExecutionAuthenticityError(`native Skill ${step.actor_id} has no frozen snapshot`);
             }
             continue;
           }
@@ -5249,11 +5323,11 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     optionalTool: boolean;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
-    lightweightSkill?: {
+    nativeSkill?: {
       invocationId: string;
-      snapshot: LightweightSkillSnapshot;
+      runSpec: NativeSkillRunSpec;
     };
-    lightweightResolvedInputs?: ResolvedPlanInputs;
+    nativeResolvedInputs?: ResolvedPlanInputs;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
@@ -5722,7 +5796,7 @@ export class LeaseExecutionEngine {
     };
   }
 
-  private async runLightweightSkill(input: {
+  private async runNativeSkill(input: {
     step: EngineStep;
     lease: ControlExecutionLease;
     researchGoal: string;
@@ -5730,28 +5804,29 @@ export class LeaseExecutionEngine {
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
     cancellationSignal?: AbortSignal;
-    lightweightSkill: {
+    nativeSkill: {
       invocationId: string;
-      snapshot: LightweightSkillSnapshot;
+      runSpec: NativeSkillRunSpec;
     };
-    lightweightResolvedInputs?: ResolvedPlanInputs;
+    nativeResolvedInputs?: ResolvedPlanInputs;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
-    if (!input.lightweightResolvedInputs) {
-      throw new ExecutionAuthenticityError('lightweight Skill input bindings are unavailable');
+    if (!input.nativeResolvedInputs) {
+      throw new ExecutionAuthenticityError('native Skill input bindings are unavailable');
     }
-    const { invocationId, snapshot } = input.lightweightSkill;
-    if (snapshot.skill_id !== input.step.actor_id) {
-      throw new ExecutionAuthenticityError(`lightweight Skill snapshot ${snapshot.skill_id} does not match ${input.step.actor_id}`);
+    const { invocationId, runSpec } = input.nativeSkill;
+    if (runSpec.skill_id !== input.step.actor_id) {
+      throw new ExecutionAuthenticityError(`native Skill run spec ${runSpec.skill_id} does not match ${input.step.actor_id}`);
     }
-    const sources = lightweightSourceReferences({
+    const sources = nativeSourceReferences({
       step: input.step,
       outputs: input.outputs,
-      resolvedInputs: input.lightweightResolvedInputs,
+      resolvedInputs: input.nativeResolvedInputs,
       invocationId,
+      runSpec,
     });
-    const deterministicGaps = lightweightWaivedGaps(
-      input.lightweightResolvedInputs,
+    const deterministicGaps = nativeWaivedGaps(
+      input.nativeResolvedInputs,
       invocationId,
     );
     const context = {
@@ -5761,21 +5836,24 @@ export class LeaseExecutionEngine {
       sourceCatalog: sources,
       waivedInputs: deterministicGaps,
     };
-    const prompt = lightweightSkillPrompt(snapshot);
+    const prompt = nativeSkillPrompt(runSpec);
     const fingerprint: SkillExecutionFingerprint = {
-      skillBodyHash: snapshot.body_hash,
-      inputSchemaHash: snapshot.input_requirements_hash,
-      outputSchemaHash: snapshot.output_schema_hash,
+      skillBodyHash: runSpec.body_hash,
+      inputSchemaHash: runSpec.input_requirements_hash,
+      outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_VERSION),
       payloadSchemaHash: null,
-      skillReferenceHashes: [{ path: 'report-template.md', hash: snapshot.report_template_hash }],
+      skillReferenceHashes: [
+        { path: runSpec.entry_path, hash: runSpec.body_hash },
+        ...runSpec.selected_references.map(({ path, contentHash }) => ({ path, hash: contentHash })),
+      ],
       inputArtifacts: executionInputArtifacts(input.outputs, input.step),
       inputHash: hashJson(input.resolvedInput),
-      executionPromptHash: hashPrompt(prompt, context, `skill-report:${input.step.actor_id}`),
+      executionPromptHash: hashPrompt(prompt, context, `native-skill-result:${input.step.actor_id}`),
     };
     input.onSkillPrepared?.(fingerprint);
-    const generated = await this.llm.generateStructured<SkillReportDraft>({
+    const generated = await this.llm.generateStructured<NativeSkillResultDraft>({
       prompt,
-      schema: SKILL_REPORT_DRAFT_SCHEMA,
+      schema: NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
       schemaName: `skill:${input.step.actor_id}`,
       context,
       ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
@@ -5788,34 +5866,52 @@ export class LeaseExecutionEngine {
       },
     });
     if (!generated.receiptId) {
-      throw new MissingModelReceiptError(new Error('successful lightweight Skill call has no receipt ID'));
+      throw new MissingModelReceiptError(new Error('successful native Skill call has no receipt ID'));
     }
     this.dependencies.validator.validateSchemaOrThrow(
-      SKILL_REPORT_DRAFT_SCHEMA,
+      NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
       generated.data,
       `skill:${input.step.actor_id}`,
     );
-    const allowedInputKeys = new Set(snapshot.input_requirements.map(({ key }) => key));
-    if (
-      generated.data.missingInputKeys?.some((key) => !allowedInputKeys.has(key))
-    ) {
-      throw new LLMInvocationError('schema', false, null, 'Skill requested an unknown input key');
+    const allowedInputKeys = new Map(runSpec.input_requirements.map((requirement) => [requirement.key, requirement]));
+    const requestedInputKeys = generated.data.missingInputKeys ?? [];
+    const unknownInputKeys = requestedInputKeys.filter((key) => !allowedInputKeys.has(key));
+    if (unknownInputKeys.length > 0) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        `Skill requested unknown input keys: ${unknownInputKeys.join(', ')}`,
+      );
     }
-    const report = createSkillReport({
+    const optionalRequestedInputKeys = requestedInputKeys.filter((key) => allowedInputKeys.get(key)?.required === false);
+    const blockingInputKeys = requestedInputKeys.filter((key) => allowedInputKeys.get(key)?.required === true);
+    const draft = generated.data.status === 'needs_input' && blockingInputKeys.length === 0
+      ? {
+          ...generated.data,
+          status: 'completed_with_gaps' as const,
+          missingInputKeys: [],
+          gaps: [
+            ...generated.data.gaps,
+            ...optionalRequestedInputKeys.map((key) => `可选输入 ${key} 未提供，已按可用证据继续。`),
+          ],
+        }
+      : generated.data;
+    const result = createNativeSkillResult({
       skillId: input.step.actor_id,
       invocationId,
-      draft: generated.data,
+      draft,
       sources,
       deterministicGaps,
     });
-    assertMarkdownReferences(report.markdown, sources);
+    assertNativeContentReferences(result.primary.content, sources);
     return {
-      output: report,
-      kind: 'skill_report',
-      outputHash: hashJson(report),
+      output: result,
+      kind: 'skill_result',
+      outputHash: hashJson(result),
       skillProvenance: {
         ...fingerprint,
-        outputHash: hashJson(report),
+        outputHash: hashJson(result),
         promptHash: generated.promptHash,
         traceId: generated.traceId,
         modelReceiptId: generated.receiptId,
@@ -5832,18 +5928,18 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     cancellationSignal?: AbortSignal;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
-    lightweightSkill?: {
+    nativeSkill?: {
       invocationId: string;
-      snapshot: LightweightSkillSnapshot;
+      runSpec: NativeSkillRunSpec;
     };
-    lightweightResolvedInputs?: ResolvedPlanInputs;
+    nativeResolvedInputs?: ResolvedPlanInputs;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('skill LLM provider is not eligible as real');
     }
-    if (input.lightweightSkill) {
-      return this.runLightweightSkill({ ...input, lightweightSkill: input.lightweightSkill });
+    if (input.nativeSkill) {
+      return this.runNativeSkill({ ...input, nativeSkill: input.nativeSkill });
     }
     const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);

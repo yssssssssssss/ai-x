@@ -1,0 +1,815 @@
+version: 1
+skills:
+  - id: digital-human-competitive-analysis
+    enabled: true
+    task_types:
+      - competitive_research
+      - user_research_planning
+    inputs:
+      - business_domain
+    input_requirements:
+      - key: business_domain
+        kind: value
+        label: 研究业务领域
+        description: 数字人竞品分析所处的业务领域和使用场景。
+        required: true
+        multiple: false
+        acceptedSources:
+          - conversation
+        question: 本次数字人竞品分析面向哪个业务领域？
+    required_tools:
+      - tavily-web-search
+      - ai-spider-search
+      - experience-model-lab
+      - virtual-user-lab
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - competitive_analysis_report
+        - research_plan
+      required_input_roles:
+        - business_domain
+      optional_input_roles: []
+      standalone_reason: Legacy composite payload and optional lab evidence have no deterministic Contribution mapping.
+  - id: competitive-web-research
+    enabled: true
+    task_types:
+      - competitive_research
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: 本次 Web 竞品研究需要回答的问题、范围与决策目标。
+        required: true
+        multiple: false
+        acceptedSources:
+          - conversation
+        question: 本次 Web 竞品研究需要回答什么问题？
+      - key: public_evidence
+        kind: value
+        label: 竞品公开资料
+        description: 用户指定或已保存的公开竞品资料。
+        required: false
+        multiple: true
+        acceptedSources:
+          - upload
+          - database
+          - tool
+        question: 是否有希望优先使用的竞品公开资料？
+    required_tools:
+      - tavily-web-search
+    optional_tools:
+      - playwright-page-capture
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - competitive_analysis_report
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - market_landscape
+        - competitive_analysis
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - public_evidence
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: competitive-app-analysis
+    enabled: true
+    task_types:
+      - competitive_research
+    inputs:
+      - research_goal
+      - competitor_screenshots
+    visual_inputs:
+      - competitor_screenshots
+    multiple_visual_inputs:
+      - competitor_screenshots
+    required_tools:
+      - tavily-web-search
+      - ai-spider-search
+      - aesthetic-quant-lab
+      - attention-analysis-lab
+      - vision-brand-lab
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - competitive_analysis_report
+      required_input_roles:
+        - research_goal
+        - competitor_screenshots
+      optional_input_roles: []
+      standalone_reason: Visual analysis payload has no deterministic Research Contribution adapter.
+  - id: design-experience-review
+    enabled: true
+    task_types:
+      - design_audit
+      - user_research_planning
+    inputs:
+      - designImage
+    visual_inputs:
+      - designImage
+    required_tools:
+      - tavily-web-search
+      - aesthetic-quant-lab
+      - attention-analysis-lab
+      - vision-brand-lab
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - research_plan
+        - design_audit_report
+      required_input_roles:
+        - designImage
+      optional_input_roles: []
+      standalone_reason: Multi-lab visual review payload is not yet mapped to stable Contribution units.
+  - id: accessibility-review
+    enabled: true
+    task_types:
+      - a11y_audit
+      - design_audit
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - accessibility_audit_report
+        - design_audit_report
+      contribution_types:
+        - accessibility
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - designImage
+        - page_url
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: analyze-satisfaction
+    enabled: true
+    task_types:
+      - voc_diagnosis
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - voc_diagnosis_report
+        - research_strategy_report
+      contribution_types:
+        - satisfaction
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - analytics_dataset
+      optional_input_roles:
+        - research_goal
+  - id: build-experience-metrics
+    enabled: true
+    task_types:
+      - user_research_planning
+      - industry_market_analysis
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - research_plan
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - metrics
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - analytics_dataset
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: code-open-feedback
+    enabled: true
+    task_types:
+      - voc_diagnosis
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - voc_diagnosis_report
+        - research_strategy_report
+      contribution_types:
+        - voc
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - user_materials
+      optional_input_roles:
+        - research_goal
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: competitive-analysis
+    enabled: true
+    task_types:
+      - competitive_research
+      - industry_market_analysis
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: 本次竞品分析需要回答的问题、范围与决策目标。
+        required: true
+        multiple: false
+        acceptedSources:
+          - conversation
+        question: 本次竞品分析需要回答什么问题？
+      - key: public_evidence
+        kind: value
+        label: 竞品公开资料
+        description: 可核验的竞品页面、功能、运营活动、价格或公开报道。
+        required: false
+        multiple: true
+        acceptedSources:
+          - upload
+          - database
+          - knowledge
+          - tool
+        question: 是否有希望纳入分析的竞品公开资料？
+      - key: user_materials
+        kind: value
+        label: 补充研究材料
+        description: 用户提供的竞品观察、内部背景或已脱敏研究材料。
+        required: false
+        multiple: true
+        acceptedSources:
+          - conversation
+          - upload
+          - database
+        question: 是否有可用于补充竞品判断的研究材料？
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - competitive_analysis_report
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - competitive_analysis
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - public_evidence
+        - user_materials
+  - id: conversion-funnel-analysis
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - research_plan
+        - research_strategy_report
+      contribution_types:
+        - funnel
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - analytics_dataset
+  - id: feature-adoption-analysis
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - research_plan
+        - research_strategy_report
+      contribution_types:
+        - feature_adoption
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - analytics_dataset
+  - id: generate-interview-guide
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - plan
+      compatible_deliverables:
+        - research_plan
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - target_audience
+      standalone_reason: Interview-guide payload is not yet mapped to the planning Contribution contract.
+  - id: generate-persona
+    enabled: true
+    task_types:
+      - user_research_planning
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: Persona 需要服务的研究问题和决策目标。
+        required: true
+        multiple: false
+        acceptedSources:
+          - conversation
+        question: 这组 Persona 需要支持什么研究或产品决策？
+      - key: user_materials
+        kind: value
+        label: 用户研究材料
+        description: 已脱敏的访谈记录、定性发现或用户原话。
+        required: false
+        multiple: true
+        acceptedSources:
+          - conversation
+          - upload
+          - database
+        question: 是否有可用于生成 Persona 的用户研究材料？
+      - key: qualitative_insights
+        kind: value
+        label: 已有定性洞察
+        description: 已完成的定性主题、洞察或研究结论。
+        required: false
+        multiple: true
+        acceptedSources:
+          - conversation
+          - upload
+          - database
+        question: 是否有可以复用的定性洞察？
+      - key: user_research_dataset
+        kind: dataset
+        label: 用户研究数据集
+        description: 用于支持或验证用户分型的数据集。
+        required: false
+        multiple: false
+        acceptedSources:
+          - upload
+          - database
+        question: 是否有可用于支持用户分型的数据集？
+    dataset_inputs:
+      - user_research_dataset
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - persona
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - user_materials
+        - qualitative_insights
+        - user_research_dataset
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: generate-research-plan
+    enabled: true
+    task_types:
+      - user_research_planning
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - synthesizer
+      supported_outcomes:
+        - plan
+      compatible_deliverables:
+        - research_plan
+      contribution_types:
+        - research_method
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - contribution_bundle
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: virtual-user-research
+    enabled: true
+    task_types:
+      - research_synthesis
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    required_tools:
+      - virtual-user-lab
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - virtual_user_hypothesis
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: virtual-user-tool-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - target_audience
+  - id: research-strategy-synthesis
+    enabled: true
+    task_types:
+      - research_synthesis
+    inputs:
+      - research_goal
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+      contribution_types:
+        - qualitative_insight
+        - voc
+        - satisfaction
+        - design_audit
+        - accessibility
+        - research_method
+        - prioritization
+        - strategy
+        - action_plan
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - contribution_bundle
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: generate-survey
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - plan
+      compatible_deliverables:
+        - research_plan
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - target_audience
+      standalone_reason: Survey payload has no deterministic planning Contribution adapter.
+  - id: generate-usability-test
+    enabled: true
+    task_types:
+      - design_audit
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - plan
+        - answer
+      compatible_deliverables:
+        - research_plan
+        - design_audit_report
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - evaluation_target
+      standalone_reason: Usability-test execution package is not yet a standard Research Contribution.
+  - id: issue-prioritization
+    enabled: true
+    task_types:
+      - user_research_planning
+      - industry_market_analysis
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - voc_diagnosis_report
+        - design_audit_report
+        - industry_market_analysis_report
+      contribution_types:
+        - prioritization
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - issue_inventory
+  - id: jobs-to-be-done
+    enabled: true
+    task_types:
+      - user_research_planning
+      - industry_market_analysis
+    input_requirements:
+      - key: research_goal
+        kind: value
+        label: 研究目标
+        description: 需要向上翻译为 Job 的需求、功能设想或业务问题。
+        required: true
+        multiple: false
+        acceptedSources:
+          - conversation
+        question: 需要分析的是哪条需求、功能设想或业务问题？
+      - key: user_materials
+        kind: value
+        label: 用户研究材料
+        description: 已脱敏的 Job/Switch 访谈、用户反馈或流失原声。
+        required: false
+        multiple: true
+        acceptedSources:
+          - conversation
+          - upload
+          - database
+        question: 是否有可用于验证 Job 的用户研究材料？
+      - key: qualitative_insights
+        kind: value
+        label: 已有定性洞察
+        description: 与当前需求相关的已验证洞察或研究结论。
+        required: false
+        multiple: true
+        acceptedSources:
+          - conversation
+          - upload
+          - database
+        question: 是否有可以复用的定性洞察？
+    required_tools:
+      - tavily-web-search
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - industry_market_analysis_report
+      contribution_types:
+        - jobs_to_be_done
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - user_materials
+        - qualitative_insights
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: journey-map
+    enabled: true
+    task_types:
+      - user_research_planning
+      - voc_diagnosis
+      - industry_market_analysis
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - voc_diagnosis_report
+        - industry_market_analysis_report
+      contribution_types:
+        - journey
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - user_materials
+        - persona
+  - id: run-heuristic-evaluation
+    enabled: true
+    task_types:
+      - design_audit
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    visual_inputs:
+      - jd_screenshots
+    multiple_visual_inputs:
+      - jd_screenshots
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - design_audit_report
+        - accessibility_audit_report
+        - industry_market_analysis_report
+      contribution_types:
+        - design_audit
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - designImage
+        - page_url
+        - jd_screenshots
+  - id: industry-market-analysis
+    enabled: true
+    task_types:
+      - industry_market_analysis
+    inputs:
+      - research_goal
+    visual_inputs:
+      - jd_screenshots
+      - competitor_screenshots
+    multiple_visual_inputs:
+      - jd_screenshots
+      - competitor_screenshots
+    dataset_inputs:
+      - user_research_dataset
+      - internal_metrics_dataset
+    required_tools:
+      - tavily-web-search
+    optional_tools:
+      - joyspace-read
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - industry_market_analysis_report
+      contribution_types:
+        - market_landscape
+        - competitive_analysis
+        - persona
+        - jobs_to_be_done
+        - journey
+        - metrics
+        - design_audit
+        - prioritization
+        - strategy
+        - action_plan
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles:
+        - research_goal
+      optional_input_roles:
+        - jd_screenshots
+        - competitor_screenshots
+        - competitor_platform_names
+        - user_research_dataset
+        - internal_metrics_dataset
+      shareable_prerequisites:
+        - tavily-web-search
+  - id: solution-generation
+    enabled: false
+    task_types:
+      - solution-generation
+    risk_level: low
+  - id: structure-interview-transcript
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_plan
+      required_input_roles:
+        - user_materials
+      optional_input_roles:
+        - research_goal
+      standalone_reason: Single-session transcript summary is diagnostic input, not a portfolio Contribution yet.
+  - id: synthesize-qualitative-insights
+    enabled: true
+    task_types:
+      - user_research_planning
+    risk_level: low
+    composition:
+      modes:
+        - standalone
+        - contributor
+        - synthesizer
+      supported_outcomes:
+        - answer
+      compatible_deliverables:
+        - research_strategy_report
+        - voc_diagnosis_report
+      contribution_types:
+        - voc
+        - qualitative_insight
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
+      required_input_roles:
+        - user_materials
+      optional_input_roles:
+        - research_goal

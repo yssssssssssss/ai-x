@@ -7,7 +7,7 @@ export interface SystemCapabilitiesResponse {
     configurationHash: string;
   };
   planContractVersions: string[];
-  skillReportVersions: string[];
+  skillResultVersions: string[];
   finalReportVersions: string[];
   multiSkillPlanWriterEnabled: boolean;
   reportV3WriterEnabled: boolean;
@@ -34,7 +34,7 @@ export interface SystemCapabilitiesResponse {
     synthesizerSkillId: string | null;
   }>;
   reportLayoutVersions: string[];
-  compiledSkills: string[];
+  installedSkills: string[];
   knowledgeIndexHash: string | null;
   toolRegistryHash: string;
 }

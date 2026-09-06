@@ -24,7 +24,7 @@ export class StepInputResolutionError extends Error {
   }
 }
 
-export type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_report' | 'research_contribution' | 'llm_output' | 'review_output';
+export type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_result' | 'research_contribution' | 'llm_output' | 'review_output';
 
 export interface SealedStepOutput {
   stepNo: number;

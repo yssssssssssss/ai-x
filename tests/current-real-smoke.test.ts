@@ -31,7 +31,7 @@ import {
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
 import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
-test('JD crowdfunding lightweight real-smoke contract requires exact Contributors and one real Tool stage', () => {
+test('JD crowdfunding native real-smoke contract requires its Contributor subset and one real Tool stage', () => {
   const fixture = JSON.parse(readFileSync(
     join(process.cwd(), 'tests/fixtures/jd-crowdfunding-multi-skill-real-smoke.json'),
     'utf8',
@@ -46,16 +46,20 @@ test('JD crowdfunding lightweight real-smoke contract requires exact Contributor
     skill_id: skillId,
   }));
   const plan = {
-    execution_contract_version: 'lightweight-execution-plan-v1',
+    execution_contract_version: 'native-skill-execution-plan-v1',
     skill_invocations: contributorInvocations,
     steps: [
       { actor_type: 'tool', actor_id: 'tavily-web-search' },
     ],
   };
   assert.doesNotThrow(() => assertMultiSkillSmokePlan(plan, scenario));
+  assert.doesNotThrow(() => assertMultiSkillSmokePlan({
+    ...plan,
+    skill_invocations: [...plan.skill_invocations, { skill_id: 'issue-prioritization' }],
+  }, scenario));
   assert.throws(
     () => assertMultiSkillSmokePlan({ ...plan, execution_contract_version: 'current-execution-plan-v2' }, scenario),
-    /LightweightExecutionPlan v1/u,
+    /NativeSkillExecutionPlan v1/u,
   );
   assert.throws(
     () => assertMultiSkillSmokePlan({ ...plan, skill_invocations: plan.skill_invocations.slice(1) }, scenario),
@@ -100,9 +104,9 @@ type SmokeReceipt = {
   taskId: string;
   planVersionId: string;
   attemptId: string;
-  contract: 'lightweight';
+  contract: 'native';
   finalReportArtifactId: string;
-  skillReportArtifactIds: string[];
+  skillResultArtifactIds: string[];
   visualAssetCount: number;
   gapCount: number;
   toolArtifactIds: string[];
@@ -1169,7 +1173,7 @@ test('current real smoke produces one receipt for each supported full-real profi
   );
 });
 
-test('current real smoke receipts preserve task, plan, attempt, FinalReport, and SkillReport identity', realSmokeOptions, async () => {
+test('current real smoke receipts preserve task, plan, attempt, NativeFinalReport, and NativeSkillResult identity', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: RealSmokeRunner;
   };
@@ -1213,7 +1217,7 @@ test('current real smoke reports visual and evidence counts for every profile', 
   }
 });
 
-test('current real smoke is full-real, model-pinned, core-tool-backed, and FinalReport-sealed', realSmokeOptions, async () => {
+test('current real smoke is full-real, model-pinned, core-tool-backed, and NativeFinalReport-sealed', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: RealSmokeRunner;
   };
@@ -1227,9 +1231,9 @@ test('current real smoke is full-real, model-pinned, core-tool-backed, and Final
     );
     assert.equal(receipt.actualModel, expectedByRequested.get(receipt.requestedModel));
     assert.equal(receipt.coreTool, 'tavily-web-search');
-    assert.equal(receipt.contract, 'lightweight');
+    assert.equal(receipt.contract, 'native');
     assert.equal(receipt.reportSealed, true);
-    assert.ok(receipt.skillReportArtifactIds.length >= 1);
+    assert.ok(receipt.skillResultArtifactIds.length >= 1);
     assert.ok(receipt.synthesisCallCount === 0 || receipt.synthesisCallCount === 1);
   }
 });
@@ -1276,28 +1280,4 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(ci, /knowledge-base\/assets\/playbooks\/images\/jingxi-img-01\.png/);
   for (const profile of realProfiles) assert.match(ci, new RegExp(profile));
   for (const port of ['8801', '8802', '8805']) assert.match(ci, new RegExp(port));
-});
-test('legacy smoke receipt validation still rejects missing or non-passing Review receipts', async () => {
-  const smoke = await import('../scripts/current-real-smoke.ts') as {
-    verifyAutomatedReviewArtifactReceipt: (value: unknown) => {
-      artifactId: string;
-      automated: true;
-      verdict: 'pass';
-    };
-  };
-  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt(null), /automated Review Artifact/);
-  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt({
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'revise',
-  }), /automated Review Artifact/);
-  assert.deepEqual(smoke.verifyAutomatedReviewArtifactReceipt({
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'pass',
-  }), {
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'pass',
-  });
 });

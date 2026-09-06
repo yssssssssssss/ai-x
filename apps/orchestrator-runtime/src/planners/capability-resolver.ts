@@ -10,11 +10,11 @@ import type {
 } from '../../../../packages/api-contract/plan.ts';
 import type { ToolManifest, ToolRegistryEntry } from '../runtime/config-loader.ts';
 import { resolveSkillComposition } from '../runtime/config-loader.ts';
-import type { CapabilitySkillRegistryEntry as LoadedCapabilitySkillRegistryEntry } from '../runtime/skill-loader.ts';
+import type { CapabilitySkill as LoadedCapabilitySkill } from '../runtime/skill-loader.ts';
 
-export type CapabilitySkillRegistryEntry = LoadedCapabilitySkillRegistryEntry;
-export type ActiveCapabilitySkillRegistryEntry = Extract<
-  CapabilitySkillRegistryEntry,
+export type CapabilitySkill = LoadedCapabilitySkill;
+export type ActiveCapabilitySkill = Extract<
+  CapabilitySkill,
   { status: 'active' }
 >;
 export type CapabilityApprovalAuthority = CurrentCapabilityApproval['authority'];
@@ -53,7 +53,7 @@ export interface CapabilityDecisionReason {
 }
 
 export interface CapabilityDecision {
-  skill: CapabilitySkillRegistryEntry;
+  skill: CapabilitySkill;
   required_approvals: CapabilityApproval[];
   reasons: CapabilityDecisionReason[];
   pending_inputs: CapabilityPendingInput[];
@@ -68,13 +68,13 @@ export interface CapabilityPortfolioContext {
 }
 
 export interface EligibleCapabilityDecision extends CapabilityDecision {
-  skill: ActiveCapabilitySkillRegistryEntry;
+  skill: ActiveCapabilitySkill;
 }
 
 export interface CapabilityResolveInput {
   task: ResearchTaskV2;
   available_input_roles: readonly string[];
-  skills: readonly CapabilitySkillRegistryEntry[];
+  skills: readonly CapabilitySkill[];
   tools: readonly ToolRegistryEntry[];
   tool_states: readonly CapabilityToolState[];
   tool_manifests: readonly ToolManifest[];
@@ -192,7 +192,7 @@ function requiredToolRejections(
 }
 
 function optionalToolDecisions(
-  skill: CapabilitySkillRegistryEntry,
+  skill: CapabilitySkill,
   toolsById: ReadonlyMap<string, ToolRegistryEntry>,
   statesById: ReadonlyMap<string, CapabilityToolState>,
 ): CurrentOptionalToolDecision[] {
@@ -232,7 +232,7 @@ function optionalToolDecisions(
 }
 
 function compositionRejections(
-  skill: ActiveCapabilitySkillRegistryEntry,
+  skill: ActiveCapabilitySkill,
   input: CapabilityResolveInput,
 ): CapabilityDecisionReason[] {
   const context = input.portfolio_context;

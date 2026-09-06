@@ -25,7 +25,7 @@ import { Stage2Candidates } from '../components/stages/Stage2Candidates.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
-import { LightweightStage4Report } from '../components/stages/LightweightStage4Report.tsx';
+import { NativeStage4Report } from '../components/stages/NativeStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
 import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
 import { Labs } from './Labs.tsx';
@@ -88,7 +88,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     executionSteps,
     executionPlanSteps,
     finalReport,
-    skillReports,
+    skillResults,
     reportState,
     deliverableError,
     error,
@@ -241,7 +241,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                         steps={executionPlanSteps}
                         log={executionSteps}
                         phase={phase}
-                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
                       />
                     )}
                     <RunningTaskNotice
@@ -259,7 +259,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                         steps={executionPlanSteps}
                         log={executionSteps}
                         phase="paused"
-                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
                       />
                     )}
                     <FailureActionCard
@@ -279,7 +279,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                         steps={executionPlanSteps}
                         log={executionSteps}
                         phase="done"
-                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
                       />
                     )}
                     {error && <ErrorCard msg={error} />}
@@ -291,10 +291,10 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                       <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
                     )}
                     {finalReport && currentTaskId && (
-                      <LightweightStage4Report
+                      <NativeStage4Report
                         taskId={currentTaskId}
                         finalReport={finalReport}
-                        skillReports={skillReports}
+                        skillResults={skillResults}
                       />
                     )}
                   </>
@@ -306,7 +306,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                         steps={executionPlanSteps}
                         log={executionSteps}
                         phase="failed"
-                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
                       />
                     )}
                     <TerminalTaskNotice
@@ -322,7 +322,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                         steps={executionPlanSteps}
                         log={executionSteps}
                         phase="cancelled"
-                        lightweight={plan?.plan.execution_contract_version === 'lightweight-execution-plan-v1'}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
                       />
                     )}
                     <AbortedNotice />

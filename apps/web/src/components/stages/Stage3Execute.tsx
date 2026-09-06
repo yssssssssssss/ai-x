@@ -109,16 +109,16 @@ export function Stage3Execute({
   steps,
   log = [],
   phase = 'done',
-  lightweight = false,
+  native = false,
 }: {
   steps: readonly ExecutionFlowStepInput[];
   log?: readonly ExecLogRow[];
   phase?: ExecutionFlowPhase;
-  lightweight?: boolean;
+  native?: boolean;
 }) {
   const graph = useMemo(
-    () => buildExecutionFlowGraph({ steps, log, phase, lightweight }),
-    [steps, log, phase, lightweight],
+    () => buildExecutionFlowGraph({ steps, log, phase, native }),
+    [steps, log, phase, native],
   );
   const layout = useMemo(() => createGraphLayout(graph), [graph]);
   const invocationGroups = useMemo(() => groupExecutionSteps(steps), [steps]);

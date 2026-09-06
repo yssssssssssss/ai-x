@@ -1,11 +1,11 @@
 import { readFileSync, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { parse as parseYaml } from 'yaml';
 import { kbPath } from './taxonomy.ts';
 import { parseFrontmatter } from './frontmatter.ts';
 import { contentHash } from './normalizer.ts';
 import type { KnowledgeIndexItem } from './indexer.ts';
-import type { SkillRegistryEntry } from '../runtime/config-loader.ts';
+import type { SkillCapability } from '../runtime/config-loader.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 
 export interface SearchOpts {
   guide_tags?: string[];
@@ -158,23 +158,25 @@ export function getEvaluationEntry(id: string): { frontmatter: Record<string, un
   return readVerifiedKnowledgeEntry(item);
 }
 
-function loadSkills(): SkillRegistryEntry[] {
-  const path = kbPath('orchestrator/skill-registry.yaml');
-  const parsed = parseYaml(readFileSync(path, 'utf8')) as { skills?: SkillRegistryEntry[] };
-  return parsed.skills ?? [];
+function loadSkills(): SkillCapability[] {
+  return new SkillLoader().listActiveSkills();
 }
 
-export function listSkills(opts?: { task_type?: string; domain?: string }): SkillRegistryEntry[] {
+export function listSkills(opts?: { task_type?: string; domain?: string }): SkillCapability[] {
   let out = loadSkills().filter((skill) => skill.status === 'active');
   if (opts?.task_type) out = out.filter((skill) => (skill.task_types ?? []).includes(opts.task_type!));
   return out;
 }
 
 export function resolveSkill(name: string): { path: string; frontmatter: Record<string, unknown> } | null {
-  const skill = loadSkills().find((candidate) => candidate.name === name && candidate.status === 'active');
+  const skill = loadSkills().find((candidate) => (
+    (candidate.id === name || candidate.name === name) && candidate.status === 'active'
+  ));
   const entry = skill?.entry ?? skill?.path;
   if (!entry) return null;
-  const full = kbPath(entry.endsWith('.md') ? entry : `${entry}/SKILL.md`);
+  const full = isAbsolute(entry)
+    ? (entry.endsWith('.md') ? entry : `${entry}/SKILL.md`)
+    : kbPath(entry.endsWith('.md') ? entry : `${entry}/SKILL.md`);
   if (!existsSync(full)) return null;
   return { path: entry, frontmatter: parseFrontmatter(readFileSync(full, 'utf8')).frontmatter };
 }

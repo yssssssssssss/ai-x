@@ -4,9 +4,9 @@
 // 从而 route 与前端共享同一份响应契约,漂移在编译期就炸。
 
 import type {
-  LightweightSkillInvocation,
+  NativeSkillInvocation,
   ResolvedPlanInputs,
-} from './lightweight-orchestration.ts';
+} from './native-skill-orchestration.ts';
 import type {
   CurrentPlanStep,
   CurrentPlanStepV3,
@@ -101,12 +101,12 @@ export interface ExecLogRow {
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。
 export interface FinalizedPlan {
-  execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3' | 'lightweight-execution-plan-v1';
+  execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3' | 'native-skill-execution-plan-v1';
   mode?: 'single_skill' | 'multi_skill';
   steps: Array<PlanStep | CurrentPlanStep | CurrentPlanStepV3>;
   activated_nodes: string[];
   assumptions: Assumption[];
-  skill_invocations?: Array<CurrentSkillInvocation | CurrentSkillInvocationV3 | LightweightSkillInvocation>;
+  skill_invocations?: Array<CurrentSkillInvocation | CurrentSkillInvocationV3 | NativeSkillInvocation>;
   resolved_inputs?: ResolvedPlanInputs;
   capability_demand_graph?: CapabilityDemandGraphV1;
   contribution_requirements?: PlanContributionRequirement[];

@@ -157,9 +157,9 @@ export type {
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 export type {
-  FinalReport,
-  SkillReport,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  NativeFinalReport,
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 export type {
   SystemCapabilitiesResponse,
@@ -188,9 +188,9 @@ import type {
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
-  FinalReport,
-  SkillReport,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  NativeFinalReport,
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
@@ -451,9 +451,9 @@ export const api = {
     return { blob: await response.blob() };
   },
   controlFinalReport: (taskId: string) =>
-    req<FinalReport>(`/control-tasks/${encodeURIComponent(taskId)}/final-report`),
-  controlSkillReports: (taskId: string) =>
-    req<{ reports: SkillReport[] }>(`/control-tasks/${encodeURIComponent(taskId)}/skill-reports`),
+    req<NativeFinalReport>(`/control-tasks/${encodeURIComponent(taskId)}/final-report`),
+  controlSkillResults: (taskId: string) =>
+    req<{ results: NativeSkillResult[] }>(`/control-tasks/${encodeURIComponent(taskId)}/skill-results`),
   controlFinalReportHtml: async (taskId: string): Promise<ControlHtmlBundleResponse> => {
     const response = await reqBlob(
       `/control-tasks/${encodeURIComponent(taskId)}/final-report.html`,

@@ -122,15 +122,15 @@ test('execution flow graph maps review and report phases without inventing step 
   assert.equal(done.nodes.find((node) => node.id === 'system:report')?.status, 'succeeded');
 });
 
-test('lightweight execution graph ends at report finalization without a Review node', () => {
+test('native execution graph ends at report finalization without a Review node', () => {
   const graph = buildExecutionFlowGraph({
     steps: steps.slice(0, 3),
     log: [],
     phase: 'done',
-    lightweight: true,
+    native: true,
   });
   assert.equal(graph.nodes.some(({ id }) => id === 'system:review'), false);
-  assert.equal(graph.nodes.find(({ id }) => id === 'system:report')?.actorId, 'lightweight-reporting');
+  assert.equal(graph.nodes.find(({ id }) => id === 'system:report')?.actorId, 'native-reporting');
   assert.deepEqual(
     graph.edges.filter(({ target }) => target === 'system:report').map(({ source }) => source).sort(),
     ['step:2', 'step:3'],

@@ -1395,13 +1395,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .execution-flow-mode { margin-left: 0; }
 }
 
-.lightweight-report .report-actions {
+.native-report .report-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
 }
-.lightweight-report-document {
+.native-report-document {
   width: 100%;
   min-height: 720px;
   padding: 0;
@@ -1410,7 +1410,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   overflow: hidden;
   background: #fff;
 }
-.lightweight-report-markdown {
+.native-report-content {
   margin: 12px 0 0;
   padding: 16px;
   overflow: auto;

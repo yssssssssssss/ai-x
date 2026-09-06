@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { getConfigRoot, loadSkillRegistry, type SkillRegistryEntry } from '../../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { getConfigRoot } from '../../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import type {
   GoldSourceSelection,
   KnowledgeIndexItem,
@@ -199,7 +200,7 @@ function validateMappingShape(value: unknown, position: number): SkillKnowledgeM
 }
 
 export function loadSkillKnowledgeMappings(
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: { id: string }[],
   mappingPath?: string,
 ): Map<string, SkillKnowledgeMapping> {
   const parsed: unknown = JSON.parse(readFileSync(mappingPath ?? defaultMappingPath(), 'utf8'));
@@ -228,7 +229,7 @@ function selectionShape(value: unknown, position: number): GoldSourceSelection {
 
 function validateGoldSelections(
   selections: GoldSourceSelection[],
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: { id: string }[],
 ): void {
   const activeIds = new Set(activeSkills.map((skill) => skill.id));
   const seen = new Set<string>();
@@ -282,7 +283,7 @@ function validateGoldSelections(
 }
 
 export function loadGoldSourceSelections(
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: { id: string }[],
   selectionPath?: string,
 ): Map<string, GoldSourceSelection> {
   const parsed: unknown = JSON.parse(readFileSync(selectionPath ?? defaultGoldPath(), 'utf8'));
@@ -299,7 +300,7 @@ export function buildKnowledgeSnapshot(indexPath = defaultIndexPath(), sourceRoo
   const items = [...indexedItems];
   const catalogRoot = resolve(join(getConfigRoot(), 'knowledge-base'));
   if (root === catalogRoot && existsSync(defaultMappingPath())) {
-    const mappings = loadSkillKnowledgeMappings(loadSkillRegistry().skills.filter((skill) => skill.status === 'active'));
+    const mappings = loadSkillKnowledgeMappings(new SkillLoader().listActiveSkills());
     for (const mapping of mappings.values()) {
       for (const source of mappingSourcePaths(mapping)) {
         if (items.some((item) => item.source_path === source.path)) continue;

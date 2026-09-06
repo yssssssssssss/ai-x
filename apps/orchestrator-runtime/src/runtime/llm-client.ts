@@ -313,9 +313,15 @@ export class MockLLMClient implements LLMClient {
   }
 
   async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const nativeSkillFixture = opts.schemaName.startsWith('skill:')
+      && Array.isArray((opts.schema as FixtureSchema).required)
+      && (opts.schema as FixtureSchema).required!.includes('primary')
+      ? skillFixtureFor(opts.schemaName, opts.schema)
+      : undefined;
     const data = (this.fixtures === defaultFixtures
       ? currentPlanCandidatesFixtureFor(opts.schemaName, opts.context)
       : undefined)
+      ?? nativeSkillFixture
       ?? this.fixtures[opts.schemaName]
       ?? problemGraphFixtureFor(opts.schemaName, opts.context)
       ?? skillFixtureFor(opts.schemaName, opts.schema);

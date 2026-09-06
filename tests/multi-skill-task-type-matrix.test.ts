@@ -13,7 +13,7 @@ import { CapabilityPortfolioResolver } from '../apps/orchestrator-runtime/src/pl
 import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
 import { resolveDeliverableCompositionPolicy } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
-import { SkillLoader, type CapabilitySkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
+import { SkillLoader, type CapabilitySkill } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 
 const CASES: Array<{
   taskType: ResearchTaskV2['task_type'];
@@ -81,8 +81,8 @@ function graph(types: ContributionType[]): { problemGraph: ProblemGraph; demandG
 }
 
 function matrixSkill(
-  skill: Extract<CapabilitySkillRegistryEntry, { status: 'active' }>,
-): Extract<CapabilitySkillRegistryEntry, { status: 'active' }> {
+  skill: Extract<CapabilitySkill, { status: 'active' }>,
+): Extract<CapabilitySkill, { status: 'active' }> {
   return {
     ...structuredClone(skill),
     required_tools: [],
@@ -90,11 +90,11 @@ function matrixSkill(
     composition: skill.composition
       ? { ...structuredClone(skill.composition), shareable_prerequisites: [] }
       : undefined,
-  } as Extract<CapabilitySkillRegistryEntry, { status: 'active' }>;
+  } as Extract<CapabilitySkill, { status: 'active' }>;
 }
 
 class MatrixSkillLoader extends SkillLoader {
-  constructor(private readonly skills: CapabilitySkillRegistryEntry[]) { super(); }
+  constructor(private readonly skills: CapabilitySkill[]) { super(); }
   override getSkill(id: string): ReturnType<SkillLoader['getSkill']> {
     return (this.skills.find((skill) => skill.id === id && skill.status === 'active') ?? null) as ReturnType<SkillLoader['getSkill']>;
   }
@@ -121,10 +121,10 @@ function candidateSteps(portfolio: ReturnType<CapabilityPortfolioResolver['resol
   }));
 }
 
-function resolution(skills: CapabilitySkillRegistryEntry[]): CapabilityResolution {
+function resolution(skills: CapabilitySkill[]): CapabilityResolution {
   return {
     eligible: skills.map((skill) => ({
-      skill: skill as Extract<CapabilitySkillRegistryEntry, { status: 'active' }>,
+      skill: skill as Extract<CapabilitySkill, { status: 'active' }>,
       required_approvals: [],
       reasons: [{ code: 'eligible', message: 'fixture' }],
       pending_inputs: [],

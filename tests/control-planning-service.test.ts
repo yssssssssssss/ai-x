@@ -6,7 +6,7 @@ import type {
   ControlTaskResponse,
   PlanControlTaskRequest,
 } from '../packages/api-contract/control-workflow.ts';
-import type { LightweightExecutionPlanV1 } from '../packages/api-contract/lightweight-orchestration.ts';
+import type { NativeSkillExecutionPlanV1 } from '../packages/api-contract/native-skill-orchestration.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
@@ -536,17 +536,17 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   ));
 
   for (const [index, candidate] of persisted.candidates.entries()) {
-    const plan = candidate.plan as unknown as LightweightExecutionPlanV1;
+    const plan = candidate.plan as unknown as NativeSkillExecutionPlanV1;
     assert.deepEqual(Object.keys(candidate).sort(), ['candidateId', 'pendingInputs', 'plan']);
     assert.equal(plan.deliverable_type, 'research_plan');
     assert.deepEqual(plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(plan.steps.map(({ step_no }) => step_no), [1, 2]);
-    assert.equal(plan.execution_contract_version, 'lightweight-execution-plan-v1');
+    assert.equal(plan.execution_contract_version, 'native-skill-execution-plan-v1');
     assert.equal(plan.mode, 'single_skill');
     assert.equal(plan.skill_invocations.length, 1);
     assert.equal(plan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
     assert.equal(plan.skill_invocations[0]?.skill_id, 'competitive-web-research');
-    assert.match(plan.skill_invocations[0]?.snapshot.body_hash ?? '', /^sha256:/u);
+    assert.match(plan.skill_invocations[0]?.run_spec.body_hash ?? '', /^sha256:/u);
     assert.deepEqual(plan.resolved_inputs.resolved.map(({ key }) => key), ['research_goal']);
     assert.deepEqual(plan.resolved_inputs.pending.map(({ requirement }) => requirement.key), ['public_evidence']);
     assert.deepEqual(plan.problem_graph, planningResult.problemGraph);

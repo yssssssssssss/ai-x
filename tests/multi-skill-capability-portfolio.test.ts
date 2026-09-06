@@ -8,7 +8,7 @@ import type {
 import type { DeliverableCompositionPolicy } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 import {
   resolveCapabilities,
-  type ActiveCapabilitySkillRegistryEntry,
+  type ActiveCapabilitySkill,
   type CapabilityResolution,
   type EligibleCapabilityDecision,
 } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
@@ -116,7 +116,7 @@ function skill(
   contributionTypes: CapabilityDemandGraphV1['demands'][number]['type'][],
   whenToUse: string,
   requiredTools: string[] = [],
-): ActiveCapabilitySkillRegistryEntry {
+): ActiveCapabilitySkill {
   return {
     id,
     name: id,
@@ -148,7 +148,7 @@ function skill(
 }
 
 function decision(
-  entry: ActiveCapabilitySkillRegistryEntry,
+  entry: ActiveCapabilitySkill,
   pendingInputs: string[] = [],
 ): EligibleCapabilityDecision {
   return {
@@ -459,13 +459,12 @@ test('Portfolio Resolver permits a simple one-Contributor portfolio', () => {
   ]);
 });
 
-test('Portfolio Resolver fails required coverage instead of selecting pending-input or rejected actors', () => {
+test('Portfolio Resolver assigns contributor-uncovered required demand to the final synthesizer', () => {
   const pending = resolution({ pendingPersona: true });
-  assert.throws(
-    () => resolve({ capabilityResolution: pending }),
-    (error: unknown) => error instanceof CapabilityPortfolioResolutionError
-      && error.kind === 'required_demand_uncovered'
-      && error.issueIds.includes('demand-persona'),
+  const recovered = resolve({ capabilityResolution: pending });
+  assert.equal(
+    recovered.demandCoverage.find(({ demandId }) => demandId === 'demand-persona')?.ownerSkillId,
+    'research-strategy-synthesis',
   );
 
   const rejectedMarket = resolution({ rejectMarket: true });

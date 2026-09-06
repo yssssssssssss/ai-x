@@ -1,7 +1,7 @@
 import {
-  isLightweightExecutionPlanV1,
-  parseLightweightExecutionPlanV1,
-} from '../../../../packages/api-contract/lightweight-orchestration.ts';
+  isNativeSkillExecutionPlanV1,
+  parseNativeSkillExecutionPlanV1,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv, { type ValidateFunction } from 'ajv';
@@ -95,9 +95,9 @@ export class SchemaValidator {
 
   // 返回错误信息数组;空数组表示通过。
   validate(name: SchemaName | string, data: unknown): string[] {
-    if (name === 'current-execution-plan' && isLightweightExecutionPlanV1(data)) {
+    if (name === 'current-execution-plan' && isNativeSkillExecutionPlanV1(data)) {
       try {
-        parseLightweightExecutionPlanV1(data);
+        parseNativeSkillExecutionPlanV1(data);
         return [];
       } catch (error) {
         return [error instanceof Error ? error.message : String(error)];

@@ -48,11 +48,12 @@ const TERMINAL_ARTIFACT_KINDS = new Set([
   'contribution_summary',
   'research_contribution_bundle',
   'final_report',
-  'final_report_markdown',
+  'final_report_primary',
+  'final_report_attachment',
   'final_report_html',
   'report_sources',
 ]);
-const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['knowledge_output', 'tool_output', 'skill_output', 'skill_report', 'skill_report_markdown', 'research_contribution', 'llm_output', 'review_output']);
+const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['knowledge_output', 'tool_output', 'skill_output', 'skill_result', 'skill_result_primary', 'skill_result_attachment', 'research_contribution', 'llm_output', 'review_output']);
 const VISUAL_COMPOSITE_ARTIFACT_KINDS = new Set([
   'visual_asset',
   'visual_asset_manifest',

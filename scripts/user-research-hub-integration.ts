@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv from 'ajv';
 import YAML from 'yaml';
 
+import { InstalledSkillCatalog } from '../apps/orchestrator-runtime/src/runtime/installed-skill-catalog.ts';
 import {
   buildHubContentApply,
   checkAppliedHubContent,
@@ -394,8 +395,15 @@ const NOOP_SKILL_IDS = new Set([
 ]);
 function loadCanonicalContext(repositoryRoot: string): CanonicalContext {
   const knowledge = JSON.parse(readFileSync(join(repositoryRoot, 'knowledge-base/.index/knowledge.json'), 'utf8')) as CanonicalKnowledge[];
-  const registry = YAML.parse(readFileSync(join(repositoryRoot, 'orchestrator/skill-registry.yaml'), 'utf8')) as { skills: CanonicalSkill[] };
-  return { knowledge, skills: registry.skills };
+  const skills = new InstalledSkillCatalog([
+    join(repositoryRoot, 'skills'),
+    join(repositoryRoot, 'knowledge-base/skills'),
+  ]).scan().skills.map((skill) => ({
+    id: skill.id,
+    path: relative(repositoryRoot, skill.package.rootPath),
+    status: skill.readiness === 'ready' ? 'active' : 'draft',
+  }));
+  return { knowledge, skills };
 }
 export function createCanonicalCatalog(repositoryRoot: string): ReadonlySet<string> {
   const context = loadCanonicalContext(repositoryRoot);
@@ -983,20 +991,19 @@ function profileArtifacts(manifestPath: string, scan: HubScan): string[] {
         diagnostics.push(`Profile draft Scenario source drift ${mapping.scenario_id}`);
       }
     }
-    const registryPath = join(REPOSITORY_ROOT, 'orchestrator/skill-registry.yaml');
-    const registryHash = sha256Bytes(readFileSync(registryPath));
+    const bindingsPath = join(REPOSITORY_ROOT, 'orchestrator/skill-bindings.yaml');
+    const registryHash = sha256Bytes(readFileSync(bindingsPath));
     if (draft.catalog_snapshot_hash !== registryHash) {
       const manifest = YAML.parse(readFileSync(manifestPath, 'utf8')) as HubManifest;
       const expectedDraftIds = manifest.entities.filter(({ disposition, registry_kind }) => (
         disposition === 'import_candidate' && registry_kind === 'skill'
       )).map(({ target }) => target!.canonical_id).sort(compareUtf8);
-      const registry = YAML.parse(readFileSync(registryPath, 'utf8')) as {
-        skills?: Array<{ id: string; status: string }>;
+      const registry = YAML.parse(readFileSync(bindingsPath, 'utf8')) as {
+        skills?: Array<{ id: string; enabled: boolean }>;
       };
-      const actualDraftIds = (registry.skills ?? []).filter(({ status }) => status === 'draft')
+      const actualDraftIds = (registry.skills ?? []).filter(({ enabled }) => !enabled)
         .map(({ id }) => id).sort(compareUtf8);
-      const unexpectedNonActive = (registry.skills ?? []).filter(({ status }) => status !== 'active' && status !== 'draft');
-      if (JSON.stringify(actualDraftIds) !== JSON.stringify(expectedDraftIds) || unexpectedNonActive.length > 0) {
+      if (JSON.stringify(actualDraftIds) !== JSON.stringify(expectedDraftIds)) {
         diagnostics.push('Profile draft capability Registry hash drift beyond the governed candidate Skill drafts');
       }
     }

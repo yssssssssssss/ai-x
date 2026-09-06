@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
 import type {
-  LightweightExecutionPlanV1,
+  NativeSkillExecutionPlanV1,
   ReadableExecutionPlan,
-} from '../packages/api-contract/lightweight-orchestration.ts';
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import type { CandidateProfile, PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -316,20 +316,6 @@ function expectCompileError(
     },
   );
 }
-
-test('rejects pending input roles missing from the frozen Skill step input', () => {
-  const value = input();
-  delete (value.candidate.steps[1]!.input as Record<string, unknown>).competitor_screenshots;
-  assert.throws(
-    () => new PlanCompiler().compile(value),
-    (error: unknown) => {
-      assert.ok(error instanceof PlanCompilerValidationError);
-      assert.equal(error.kind, 'pending_input_schema_invalid');
-      assert.match(error.message, /competitor_screenshots/);
-      return true;
-    },
-  );
-});
 
 test('rejects a step dependency cycle', () => {
   expectCompileError((value) => {
@@ -987,10 +973,14 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
   };
 }
 
-function planningServiceHarness(result: CurrentResearchPlanningFixture) {
+function planningServiceHarness(
+  result: CurrentResearchPlanningFixture,
+  skillLoader?: SkillLoader,
+) {
   let repositoryCalls = 0;
   let persistedCandidates: PreparedCandidate[] = [];
   const service = new ControlPlanningService({
+    ...(skillLoader ? { skillLoader } : {}),
     planning: {
       async plan() { return result as never; },
     },
@@ -1031,7 +1021,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
   };
 }
 
-test('Current planning persists the lightweight Plan, frozen snapshot, and pending input bindings', async () => {
+test('Current planning persists the native Plan, frozen snapshot, and pending input bindings', async () => {
   const result = currentPlanningResult();
   const harness = planningServiceHarness(result);
   await harness.service.planExistingTask({
@@ -1044,14 +1034,15 @@ test('Current planning persists the lightweight Plan, frozen snapshot, and pendi
 
   assert.equal(harness.repositoryCalls(), 1);
   for (const candidate of harness.persistedCandidates()) {
-    const plan = candidate.plan as LightweightExecutionPlanV1;
+    const plan = candidate.plan as NativeSkillExecutionPlanV1;
     assert.deepEqual(plan.problem_graph, result.problemGraph);
     assert.deepEqual(plan.problem_graph_provenance, result.problemGraphProvenance);
-    assert.equal(plan.execution_contract_version, 'lightweight-execution-plan-v1');
+    assert.equal(plan.execution_contract_version, 'native-skill-execution-plan-v1');
     assert.equal(plan.mode, 'single_skill');
     assert.equal(plan.skill_invocations.length, 1);
     assert.equal(plan.skill_invocations[0]?.skill_id, eligibleSkill.id);
-    assert.match(plan.skill_invocations[0]?.snapshot.report_template_hash ?? '', /^sha256:/u);
+    assert.match(plan.skill_invocations[0]?.run_spec.package_hash ?? '', /^sha256:/u);
+    assert.equal(plan.final_report_policy.kind, plan.skill_invocations[0]?.run_spec.report_policy.kind);
     assert.deepEqual(plan.steps.map((item) => item.step_no), [1, 2]);
     assert.deepEqual(candidate.pendingInputs[0]?.targets, [{
       step_no: 2,
@@ -1059,6 +1050,44 @@ test('Current planning persists the lightweight Plan, frozen snapshot, and pendi
       field: 'public_evidence',
       multiple: true,
     }]);
+  }
+});
+
+test('Current planning uses the injected SkillLoader for every frozen run spec', async () => {
+  class MarkedSkillLoader extends SkillLoader {
+    calls = 0;
+
+    override loadNativeRunSpec(id: string) {
+      this.calls += 1;
+      const runSpec = super.loadNativeRunSpec(id);
+      return {
+        ...runSpec,
+        tool_bindings: [
+          ...runSpec.tool_bindings,
+          { capability: 'injected-marker', toolId: 'tavily-web-search', required: false, status: 'bound' as const },
+        ],
+      };
+    }
+  }
+
+  const result = currentPlanningResult();
+  const skillLoader = new MarkedSkillLoader();
+  const harness = planningServiceHarness(result, skillLoader);
+  await harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+  }, result as never);
+
+  assert.equal(skillLoader.calls, result.candidates.length);
+  for (const candidate of harness.persistedCandidates()) {
+    const plan = candidate.plan as NativeSkillExecutionPlanV1;
+    assert.equal(
+      plan.skill_invocations[0]!.run_spec.tool_bindings.some(({ capability }) => capability === 'injected-marker'),
+      true,
+    );
   }
 });
 
@@ -1935,7 +1964,7 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   }
 });
 
-test('finalized Current direct Industry Skill compiles one Plan v2 invocation with typed pending materials', async () => {
+test('finalized Current direct Industry Skill keeps the unchanged package as one visible invocation', async () => {
   const industryTask: ResearchTaskV2 = {
     version: 'research-task-v2',
     task_type: 'industry_market_analysis',
@@ -2016,7 +2045,7 @@ test('finalized Current direct Industry Skill compiles one Plan v2 invocation wi
     assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
     assert.equal(compiled.plan.skill_invocations?.length, 1);
     assert.equal(compiled.plan.skill_invocations?.[0]?.skill_id, 'industry-market-analysis');
-    assert.equal(compiled.plan.skill_invocations?.[0]?.execution_mode, 'compiled');
+    assert.equal(compiled.plan.skill_invocations?.[0]?.execution_mode, 'legacy_single_call');
     assert.deepEqual(
       compiled.pending_inputs.map(({ role, kind, multiple }) => ({ role, kind, multiple })),
       [
@@ -2082,7 +2111,7 @@ test('Industry planning removes unavailable materials from Pending Inputs withou
   }
 });
 
-test('Industry Plan v2 binds an available Joyspace optional Tool into the compiled output stage', async () => {
+test('Industry planning binds an available Joyspace optional Tool to the unchanged Skill', async () => {
   const industryTask: ResearchTaskV2 = {
     version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
     business_domain: 'pet-food', research_goal: '形成宠物食品行业与频道策略报告',
@@ -2127,14 +2156,16 @@ test('Industry Plan v2 binds an available Joyspace optional Tool into the compil
       planning_provenance: result.planningProvenance,
     });
     const joyspace = compiled.plan.steps.find(({ actor_id }) => actor_id === 'joyspace-read');
-    const output = compiled.plan.steps.find(({ skill_stage_id }) => skill_stage_id === 'compose-industry-content-draft');
+    const output = compiled.plan.steps.find(({ actor_id, actor_type }) => (
+      actor_id === 'industry-market-analysis' && actor_type === 'skill'
+    ));
     assert.ok(joyspace && output);
     assert.deepEqual(joyspace.input, {
       operation: 'search', target: '用户研究 行业分析', limit: 5, scope: 'auto', viewTopResult: true,
     });
     assert.ok(output.depends_on.includes(joyspace.step_no));
     assert.equal(compiled.plan.skill_invocations?.length, 1);
-    assert.equal(compiled.plan.skill_invocations?.[0]?.step_nos.length, 9);
+    assert.equal(compiled.plan.skill_invocations?.[0]?.step_nos.length, 1);
     assert.deepEqual(
       compiled.plan.capability_decisions.eligible
         .find(({ skill }) => skill.id === 'industry-market-analysis')
@@ -2183,6 +2214,8 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
   cpSync(join(realRoot, 'orchestrator'), join(fixtureRoot, 'orchestrator'), { recursive: true });
   cpSync(join(realRoot, 'schemas'), join(fixtureRoot, 'schemas'), { recursive: true });
   cpSync(join(realRoot, 'tools'), join(fixtureRoot, 'tools'), { recursive: true });
+  cpSync(join(realRoot, 'skills'), join(fixtureRoot, 'skills'), { recursive: true });
+  cpSync(join(realRoot, 'knowledge-base/skills'), join(fixtureRoot, 'knowledge-base/skills'), { recursive: true });
   const registryPath = join(fixtureRoot, 'orchestrator', 'tool-registry.yaml');
   const draftRegistry = readFileSync(registryPath, 'utf8');
   const activeRegistry = draftRegistry.replace(
@@ -2488,11 +2521,9 @@ test('direct Current depth and speed prepend every required Tool with remapped s
   assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
   const directSkill = skillLoader.getSkill('digital-human-competitive-analysis');
   assert.ok(directSkill);
-  assert.ok(directSkill.input_schema);
-  assert.equal(
-    result.capabilityResolution.eligible.find((decision) => decision.skill.id === directSkill.id)?.skill.payload_schema,
-    directSkill.payload_schema,
-  );
+  const directRunSpec = skillLoader.loadNativeRunSpec('digital-human-competitive-analysis');
+  assert.match(directRunSpec.package_hash, /^sha256:/u);
+  assert.equal(directRunSpec.input_requirements.some(({ key }) => key === 'business_domain'), true);
   const requiredToolIds = directSkill.required_tools ?? [];
   assert.deepEqual(requiredToolIds, [
     'tavily-web-search',
@@ -2538,7 +2569,6 @@ test('direct Current depth and speed prepend every required Tool with remapped s
     assert.deepEqual(skillStep.expected_outputs.map((output) => output.pointer), ['/payload']);
     assert.deepEqual(skillStep.depends_on, requiredToolIds.map((_, index) => index + 1));
     assert.deepEqual(skillStep.input_bindings, []);
-    validator.validateFileOrThrow(join(getConfigRoot(), directSkill.input_schema), skillStep.input);
 
     const reviewers = steps.filter((item) => item.actor_type === 'reviewer');
     assert.equal(reviewers.length, candidateId === 'depth' ? 1 : 0);

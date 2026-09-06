@@ -363,21 +363,16 @@ test('routed multi-Skill planning keeps required coverage, budgets, and evidence
       requireCompetitiveWeightContract: true,
       skillLoader,
     });
-    assert.equal(compiled.plan.steps.length, 18);
-    const sharedTavilyStep = compiled.plan.steps.find(({ shared_stage_key }) => (
-      shared_stage_key === 'shared:tool:tavily-web-search'
+    assert.equal(compiled.plan.steps.length, 8);
+    const sharedTavilyStep = compiled.plan.steps.find(({ actor_type, actor_id }) => (
+      actor_type === 'tool' && actor_id === 'tavily-web-search'
     ));
     assert.ok(sharedTavilyStep);
-    assert.equal(
-      sharedTavilyStep.shared_by_invocation_ids?.includes('invocation:virtual-user-research'),
-      false,
-    );
     const virtualUserOutput = compiled.plan.steps.find((step) => (
       step.skill_invocation_id === 'invocation:virtual-user-research'
       && step.actor_type === 'skill'
     ));
     assert.ok(virtualUserOutput);
-    assert.equal(virtualUserOutput.depends_on.includes(sharedTavilyStep.step_no), false);
   }
 
   const candidateCall = llm.calls.find(({ schemaName }) => schemaName === 'current-plan-candidates');

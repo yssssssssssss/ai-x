@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadSkillRegistry, loadToolRegistry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { loadToolRegistry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 
 test('P0 public search uses active core Tavily while O2 remains draft optional', () => {
   const tools = loadToolRegistry().tools;
@@ -18,7 +19,7 @@ test('P0 public search uses active core Tavily while O2 remains draft optional',
 });
 
 test('active competitive public-search skills require Tavily and never draft O2', () => {
-  const skills = loadSkillRegistry().skills.filter((skill) =>
+  const skills = new SkillLoader().listActiveSkills().filter((skill) =>
     skill.status === 'active'
     && skill.task_types?.includes('competitive_research')
     && skill.required_tools?.some((toolId) => toolId === 'o2-web-search' || toolId === 'tavily-web-search'),
@@ -31,8 +32,8 @@ test('active competitive public-search skills require Tavily and never draft O2'
   }
 });
 
-test('every current real-smoke capability declares core Tavily through the Registry', () => {
-  const skills = loadSkillRegistry().skills;
+test('every current real-smoke capability declares core Tavily through bindings', () => {
+  const skills = new SkillLoader().listActiveSkills();
   const smokeSkillIds = [
     'generate-research-plan',
     'competitive-web-research',

@@ -1,6 +1,6 @@
 # 决策节点池(方案 §2.1)
 # 定位:资深用研老师沉淀的"完备性护栏(必检清单)",不是流程/控制流。
-# 与 skill-registry 平行的节点池——task_type 先分流,只激活 applies_to 命中的子集。
+# 与 InstalledSkill Catalog 平行的节点池——task_type 先分流,只激活 applies_to 命中的子集。
 # 加节点 = 改此 YAML,判断仍交 LLM,不改代码。
 #
 # tier: core(几乎所有 task_type 都激活,漏了翻车) | optional(场景相关按需激活)
