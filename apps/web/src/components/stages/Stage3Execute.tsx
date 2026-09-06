@@ -82,12 +82,12 @@ function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | '
 
 function actorLabel(actorType: string): string {
   switch (actorTone(actorType)) {
-    case 'llm': return 'MODEL';
-    case 'skill': return 'SKILL';
-    case 'tool': return 'TOOL';
-    case 'reviewer': return 'REVIEW';
-    case 'knowledge': return 'KNOWLEDGE';
-    case 'system': return 'SYSTEM';
+    case 'llm': return '模型';
+    case 'skill': return '分析能力';
+    case 'tool': return '工具';
+    case 'reviewer': return '人工复核';
+    case 'knowledge': return '知识';
+    case 'system': return '系统';
   }
 }
 
@@ -145,7 +145,7 @@ export function Stage3Execute({
       </div>
 
       {invocationGroups.some(({ id }) => id !== 'ungrouped') ? (
-        <div className="execution-invocation-groups" aria-label="Skill Invocation 分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        <div className="execution-invocation-groups" aria-label="分析能力执行分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
           {invocationGroups.map((group) => (
             <span key={group.id} className="badge" title={group.consumerInvocationIds.join('、')}>
               {group.label} · {group.stepNos.length} steps

@@ -49,7 +49,7 @@ export class ReceiptLLMClient implements LLMClient {
         opts.receipt,
         error,
         startedAt,
-        hashPrompt(opts.prompt, opts.context, opts.schemaName),
+        hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.images),
       );
       throw error;
     }
@@ -70,6 +70,8 @@ export class ReceiptLLMClient implements LLMClient {
         hashPrompt(
           opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
           opts.context,
+          undefined,
+          opts.images,
         ),
       );
       throw error;

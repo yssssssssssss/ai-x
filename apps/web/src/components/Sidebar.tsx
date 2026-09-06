@@ -126,16 +126,16 @@ export function Sidebar({
         {capabilities ? (
           <details className="sidebar-capabilities">
             <summary>运行能力</summary>
-            <span>App {capabilities.applicationVersion} · Build {capabilities.build.id}</span>
-            <span>Source {capabilities.build.sourceRevision?.slice(0, 12) ?? 'unavailable'}</span>
-            <span>Plan {capabilities.planContractVersions.join(', ')}</span>
-            <span>Report {capabilities.reportDocumentVersions.join(', ')}</span>
-            <span>Task types: {capabilities.activeTaskTypes.join(', ')}</span>
-            <span>Deliverables: {capabilities.activeDeliverables.join(', ')}</span>
-            <span>Installed Skills: {capabilities.installedSkills.join(', ')}</span>
-            <span>Config {capabilities.build.configurationHash.slice(0, 19)}…</span>
-            <span>Knowledge {capabilities.knowledgeIndexHash?.slice(0, 19) ?? 'unavailable'}…</span>
-            <span>Tools {capabilities.toolRegistryHash.slice(0, 19)}…</span>
+            <span>应用版本 {capabilities.applicationVersion} · 构建 {capabilities.build.id}</span>
+            <span>代码版本 {capabilities.build.sourceRevision?.slice(0, 12) ?? '不可用'}</span>
+            <span>计划协议 {capabilities.planContractVersions.join(', ')}</span>
+            <span>报告协议 {capabilities.reportDocumentVersions.join(', ')}</span>
+            <span>任务类型：{capabilities.activeTaskTypes.join(', ')}</span>
+            <span>可交付报告：{capabilities.activeDeliverables.join(', ')}</span>
+            <span>已安装能力：{capabilities.installedSkills.join(', ')}</span>
+            <span>配置版本 {capabilities.build.configurationHash.slice(0, 19)}…</span>
+            <span>知识库版本 {capabilities.knowledgeIndexHash?.slice(0, 19) ?? '不可用'}…</span>
+            <span>工具配置版本 {capabilities.toolRegistryHash.slice(0, 19)}…</span>
           </details>
         ) : null}
         <button className="btn-ghost" type="button" onClick={onLogout}>登出</button>

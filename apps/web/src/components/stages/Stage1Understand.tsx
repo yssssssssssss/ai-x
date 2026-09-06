@@ -1,11 +1,21 @@
 import type { ResearchTaskData, ResearchTaskV2 } from '../../api/client.ts';
 
+const TASK_TYPE_LABELS: Readonly<Record<string, string>> = {
+  a11y_audit: '无障碍检查',
+  competitive_research: '竞品研究',
+  design_audit: '界面体验评估',
+  industry_market_analysis: '行业与市场分析',
+  research_synthesis: '研究综合分析',
+  user_research_planning: '用户研究规划',
+  voc_diagnosis: '用户反馈诊断',
+};
+
 // 段1 · 任务理解:展示结构化 ResearchTask + 激活的决策节点。诚实标注"由 LLM 结构化"。
 export function Stage1Understand({ task, activatedNodes }: { task: ResearchTaskData | ResearchTaskV2; activatedNodes: string[] }) {
   return (
     <section className="stage-card">
       <Header n="1" title="任务理解" note="由 LLM 结构化为 ResearchTask" />
-      <Row label="任务类型"><code>{task.task_type}</code></Row>
+      <Row label="任务类型"><span>{TASK_TYPE_LABELS[task.task_type] ?? task.task_type}</span></Row>
       <Row label="业务场域"><code>{task.business_domain}</code></Row>
       <Row label="研究目标">{task.research_goal}</Row>
       <Row label="激活决策节点">

@@ -1023,6 +1023,10 @@ Phase 4 不是可选的后续整理。只有清理和验证同时完成，整个
 - Skill 结果与最终报告分别使用 `native-skill-result-v1`、`native-final-report-v1`，支持 Markdown、HTML、文本、JSON 主输出和附件；
 - Single 在 `skill_defined` 时零额外报告调用，在 `default_llm` 时恰好一次；Multi 恰好一次最终综合；
 - 包内/挂载知识来源以逻辑路径和内容 Hash 进入结果来源；未验证 URL 被确定性移除并形成 Gap；
+- 用户上传的截图以受控多模态消息发送给模型，文本上下文只保留图片元数据和 Hash；
+- 项目内 `knowledge-base/` 默认作为受控 `research-wiki` 挂载，Skill 明确引用的正典会按路径冻结；
+- Skill Markdown 报告中的表格、强调和分隔线会结构化渲染为安全 HTML；
+- 主流程输入和执行文案使用中文业务语言，不直接暴露 `designImage`、`Tool Binding`、`Contributor` 等内部术语；
 - 删除旧 Lightweight 合同、Reporter、Stage 4、中央 Skill Registry、Industry 精简副本、平台 Execution YAML、旧专属测试与已被接替的实施文档。
 
 真实闭环证据：
@@ -1032,7 +1036,7 @@ Phase 4 不是可选的后续整理。只有清理和验证同时完成，整个
 
 最终本地门禁：
 
-- `pnpm test`：2321 tests，2303 passed，0 failed，18 skipped；
+- `pnpm test`：2327 tests，2309 passed，0 failed，18 skipped；
 - `pnpm typecheck`：通过；
 - `pnpm lint:registry`：通过；
 - `pnpm lint:knowledge`：通过；

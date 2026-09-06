@@ -83,6 +83,22 @@ function readConfig(): GatewayConfig {
   };
 }
 
+const IMAGE_DATA_URL = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=\s]+$/u;
+
+function userMessageContent(text: string, images: LegacyStructuredLLMCallOptions['images']): string | object[] {
+  if (!images || images.length === 0) return text;
+  if (images.length > 12 || images.some(({ dataUrl }) => !IMAGE_DATA_URL.test(dataUrl))) {
+    throw new LLMInvocationError('configuration', false, null, 'gateway image input is invalid');
+  }
+  return [
+    { type: 'text', text },
+    ...images.flatMap(({ dataUrl, label }, index) => [
+      { type: 'text', text: label ? `图片 ${index + 1}：${label}` : `图片 ${index + 1}` },
+      { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+    ]),
+  ];
+}
+
 function rateLimitMessage(body: string): string {
   return /throughput limit/i.test(body)
     ? 'gateway provisioned throughput limit exceeded'
@@ -292,9 +308,12 @@ export class GatewayLLMClient implements LLMClient {
       },
       {
         role: 'user',
-        content: opts.context
-          ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}`
-          : opts.prompt,
+        content: userMessageContent(
+          opts.context
+            ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}`
+            : opts.prompt,
+          opts.images,
+        ),
       },
     ];
     const { content, resp, route } = await this.call(messages, true, opts.signal);
@@ -313,7 +332,7 @@ export class GatewayLLMClient implements LLMClient {
 
     return {
       data: typedData,
-      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.images),
       modelName: resp.model ?? 'unknown',
       modelVersion: resp.model ?? 'unknown',
       traceId: resp.id ?? 'gateway-no-id',
@@ -328,7 +347,10 @@ export class GatewayLLMClient implements LLMClient {
       ...(opts.systemPrompt ? [{ role: 'system', content: opts.systemPrompt }] : []),
       {
         role: 'user',
-        content: opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt,
+        content: userMessageContent(
+          opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt,
+          opts.images,
+        ),
       },
     ];
     const { content, resp, route } = await this.call(messages, false, opts.signal, opts.maxOutputTokens);
@@ -337,6 +359,8 @@ export class GatewayLLMClient implements LLMClient {
       promptHash: hashPrompt(
         opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
         opts.context,
+        undefined,
+        opts.images,
       ),
       modelName: resp.model ?? 'unknown',
       modelVersion: resp.model ?? 'unknown',

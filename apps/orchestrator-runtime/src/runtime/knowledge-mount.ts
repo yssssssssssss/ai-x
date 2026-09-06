@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   lstatSync,
   openSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { FrozenSkillReference } from '../../../../packages/api-contract/native-skill-orchestration.ts';
+import { getConfigRoot } from './config-loader.ts';
 import { SkillPackageError } from './skill-package.ts';
 
 export interface KnowledgeMount {
@@ -109,6 +111,11 @@ function readMountFile(mountId: string, root: string, path: string): Buffer {
   }
 }
 
+function mentionsExactPath(instructions: string, path: string): boolean {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`(?<![A-Za-z0-9._/-])(?:\\./)?${escaped}(?![A-Za-z0-9._/-])`, 'u').test(instructions);
+}
+
 function parseEnvironmentMounts(raw: string | undefined): KnowledgeMount[] {
   if (!raw?.trim()) return [];
   let value: unknown;
@@ -136,7 +143,12 @@ export class KnowledgeMountRegistry {
   }
 
   static fromEnvironment(): KnowledgeMountRegistry {
-    return new KnowledgeMountRegistry(parseEnvironmentMounts(process.env.SKILL_KNOWLEDGE_MOUNTS));
+    const configured = parseEnvironmentMounts(process.env.SKILL_KNOWLEDGE_MOUNTS);
+    const internalKnowledgeRoot = resolve(getConfigRoot(), 'knowledge-base');
+    const mounts = configured.some(({ id }) => id === 'research-wiki') || !existsSync(internalKnowledgeRoot)
+      ? configured
+      : [{ id: 'research-wiki', rootPath: internalKnowledgeRoot }, ...configured];
+    return new KnowledgeMountRegistry(mounts);
   }
 
   resolveReferences(instructions: string): FrozenSkillReference[] {
@@ -146,9 +158,14 @@ export class KnowledgeMountRegistry {
       const root = realpathSync(resolve(mount.rootPath));
       const logicalPrefix = `knowledge://${mount.id}/`;
       for (const file of files) {
+        if (mount.id === 'research-wiki' && file.path.startsWith('skills/')) continue;
         const logicalPath = `${logicalPrefix}${file.path}`;
         const physicalPath = resolve(root, file.path);
-        if (!instructions.includes(logicalPath) && !instructions.includes(physicalPath)) continue;
+        if (
+          !mentionsExactPath(instructions, logicalPath)
+          && !mentionsExactPath(instructions, physicalPath)
+          && !mentionsExactPath(instructions, file.path)
+        ) continue;
         const bytes = readMountFile(mount.id, root, file.path);
         let content: string;
         try {
@@ -161,7 +178,7 @@ export class KnowledgeMountRegistry {
           sourceId: mount.id,
           logicalPath,
           path: file.path,
-          contentHash: digest(bytes),
+          contentHash: digest(content),
           content,
           selectedBy: 'explicit_reference',
         });

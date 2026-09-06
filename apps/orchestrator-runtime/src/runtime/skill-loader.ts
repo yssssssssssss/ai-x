@@ -87,6 +87,24 @@ function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+const INPUT_LABELS: Readonly<Record<string, string>> = {
+  research_goal: '研究目标',
+  page_url: '待评估页面链接',
+  designImage: '设计稿或页面截图',
+  jd_screenshots: '京东页面截图',
+  competitor_screenshots: '竞品页面截图',
+  competitor_platform_names: '竞品平台名称',
+  user_research_dataset: '用户研究数据',
+  internal_metrics_dataset: '内部指标数据',
+  analytics_dataset: '分析数据',
+  user_materials: '用户材料',
+  qualitative_insights: '定性研究洞察',
+};
+
+function inputLabel(key: string): string {
+  return INPUT_LABELS[key] ?? key.replaceAll('_', ' ');
+}
+
 function contextText(value: unknown): string {
   try {
     return JSON.stringify(value ?? '').toLocaleLowerCase('en-US');
@@ -330,7 +348,7 @@ export class SkillLoader {
     if (!entryFile) throw new Error(`skill ${id} entry is missing from package snapshot`);
     const body = readSkillPackageText(packageSnapshot, packageSnapshot.entryPath);
     const reportTemplateCandidates = packageSnapshot.explicitReferences.filter((path) => (
-      /(?:report[-_ ]?template|报告模板|输出模板)/iu.test(path)
+      /(?:report[-_ ]?template|skeleton|报告模板|输出模板|输出骨架|报告骨架)/iu.test(path)
     ));
     const selectedReportPaths = selectReportTemplatePaths(reportTemplateCandidates, planningContext);
     const selectedPaths = new Set([
@@ -368,17 +386,18 @@ export class SkillLoader {
           const kind = entry.dataset_inputs?.includes(key)
             ? 'dataset' as const
             : entry.visual_inputs?.includes(key) ? 'visual' as const : 'value' as const;
+          const label = inputLabel(key);
           return {
             key,
             kind,
-            label: key,
-            description: `${entry.name} 所需的 ${key} 输入。`,
+            label,
+            description: `${label}，用于完成本次分析。`,
             required: requiredRoles.has(key),
             multiple: entry.multiple_visual_inputs?.includes(key) === true,
             acceptedSources: kind === 'value'
               ? ['conversation', 'upload', 'database'] as const
               : ['upload', 'database'] as const,
-            question: `请提供 ${entry.name} 所需的 ${key}。`,
+            question: `请提供${label}。`,
           };
         });
     if (inputRequirements.length === 0) {

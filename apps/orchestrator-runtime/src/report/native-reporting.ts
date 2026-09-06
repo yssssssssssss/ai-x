@@ -767,10 +767,26 @@ function renderInline(value: string, sources: ReadonlyMap<string, SourceReferenc
     cursor = index + match[0].length;
   }
   output += escapeHtml(value.slice(cursor));
-  return output.replace(CITATION, (_full, id: string) => {
-    if (!sources.has(id)) throw new NativeReportError(`HTML renderer received unknown source ${id}`);
-    return `<span class="citation">[${escapeHtml(id)}]</span>`;
-  });
+  return output
+    .replace(CITATION, (_full, id: string) => {
+      if (!sources.has(id)) throw new NativeReportError(`HTML renderer received unknown source ${id}`);
+      return `<span class="citation">[${escapeHtml(id)}]</span>`;
+    })
+    .replace(/\*\*([^*]+)\*\*/gu, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/gu, '<code>$1</code>');
+}
+
+function markdownTableCells(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+  return trimmed.slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+function markdownTableSeparator(line: string, columns: number): boolean {
+  const cells = markdownTableCells(line);
+  return cells !== null
+    && cells.length === columns
+    && cells.every((cell) => /^:?-{3,}:?$/u.test(cell));
 }
 
 function renderMarkdownBody(markdown: string, sources: ReadonlyMap<string, SourceReference>): string {
@@ -790,7 +806,8 @@ function renderMarkdownBody(markdown: string, sources: ReadonlyMap<string, Sourc
     html.push(`</${list}>`);
     list = null;
   };
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!;
     if (line.startsWith('```')) {
       closeParagraph();
       closeList();
@@ -803,6 +820,40 @@ function renderMarkdownBody(markdown: string, sources: ReadonlyMap<string, Sourc
     }
     if (inCode) {
       code.push(line);
+      continue;
+    }
+    const tableHeader = markdownTableCells(line);
+    if (
+      tableHeader
+      && lineIndex + 1 < lines.length
+      && markdownTableSeparator(lines[lineIndex + 1]!, tableHeader.length)
+    ) {
+      closeParagraph();
+      closeList();
+      const rows: string[][] = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length) {
+        const row = markdownTableCells(lines[lineIndex]!);
+        if (!row || row.length !== tableHeader.length) break;
+        rows.push(row);
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      html.push('<div class="table-wrap"><table><thead><tr>');
+      for (const cell of tableHeader) html.push(`<th>${renderInline(cell, sources)}</th>`);
+      html.push('</tr></thead><tbody>');
+      for (const row of rows) {
+        html.push('<tr>');
+        for (const cell of row) html.push(`<td>${renderInline(cell, sources)}</td>`);
+        html.push('</tr>');
+      }
+      html.push('</tbody></table></div>');
+      continue;
+    }
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/u.test(line)) {
+      closeParagraph();
+      closeList();
+      html.push('<hr>');
       continue;
     }
     const heading = /^(#{1,6})\s+(.+)$/u.exec(line);
@@ -855,7 +906,7 @@ function wrapHtml(title: string, body: string): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; script-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>${escapeHtml(title)}</title>
 <style>
-:root{color-scheme:light;--bg:#f5f7fb;--card:#fff;--ink:#182033;--muted:#657089;--line:#dfe4ee;--accent:#d92f2f}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:40px auto;padding:48px;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 45px #1d2a4414}h1,h2,h3{line-height:1.3}h1{font-size:2rem}h2{margin-top:2.2rem;padding-top:.7rem;border-top:1px solid var(--line)}a{color:#1f57a8}.citation{color:var(--accent);font-weight:650}blockquote{margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--accent);background:#fff6f6;color:var(--muted)}pre{overflow:auto;padding:16px;border-radius:10px;background:#111827;color:#f8fafc}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}@media print{body{background:#fff}main{margin:0;padding:0;border:0;box-shadow:none}}
+:root{color-scheme:light;--bg:#f5f7fb;--card:#fff;--ink:#182033;--muted:#657089;--line:#dfe4ee;--accent:#d92f2f}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:40px auto;padding:48px;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 45px #1d2a4414}h1,h2,h3{line-height:1.3}h1{font-size:2rem}h2{margin-top:2.2rem;padding-top:.7rem;border-top:1px solid var(--line)}a{color:#1f57a8}.citation{color:var(--accent);font-weight:650}blockquote{margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--accent);background:#fff6f6;color:var(--muted)}.table-wrap{overflow:auto;margin:1rem 0}table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{padding:.65rem .75rem;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f0f3f8;font-weight:700}tbody tr:nth-child(even){background:#fafbfc}hr{border:0;border-top:1px solid var(--line);margin:2rem 0}pre{overflow:auto;padding:16px;border-radius:10px;background:#111827;color:#f8fafc}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}@media print{body{background:#fff}main{margin:0;padding:0;border:0;box-shadow:none}}
 </style>
 </head>
 <body><main data-report-version="${NATIVE_FINAL_REPORT_VERSION}">${body}</main></body>

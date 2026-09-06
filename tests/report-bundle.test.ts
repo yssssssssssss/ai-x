@@ -1443,7 +1443,7 @@ test('Stage4 makes the Editorial Summary primary and keeps existing renderers as
           report: withContributions,
           taskState: 'completed',
         }));
-        assert.match(contributionHtml, /Skill 独立贡献/u);
+        assert.match(contributionHtml, /分析能力独立结论/u);
         assert.match(contributionHtml, /A reviewed independent conclusion\./u);
       }
     }
@@ -1536,7 +1536,7 @@ test('Stage4 requests the owner-bound Editorial Summary for either orchestration
       taskState: 'completed',
       orchestrationMode: 'single_skill',
     }));
-    assert.match(singleSkillHtml, /运行模式：单 Skill/u);
+    assert.match(singleSkillHtml, /运行模式：单项分析/u);
     assert.match(singleSkillHtml, />编辑摘要</u);
     assert.match(singleSkillHtml, /正在生成编辑摘要/u);
 
@@ -1548,7 +1548,7 @@ test('Stage4 requests the owner-bound Editorial Summary for either orchestration
       taskState: 'completed',
       orchestrationMode: 'multi_skill',
     }));
-    assert.match(multiSkillHtml, /运行模式：多 Skill 协作/u);
+    assert.match(multiSkillHtml, /运行模式：多项能力协作/u);
     assert.match(multiSkillHtml, />编辑摘要</u);
 
     const unavailableHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {

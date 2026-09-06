@@ -8,7 +8,7 @@ const moduleFile = new URL(modulePath, import.meta.url);
 
 test('compacts image data URLs into deterministic metadata before LLM context serialization', async () => {
   assert.equal(existsSync(moduleFile), true, 'LLM input compactor module must exist');
-  const { compactLlmInput } = await import(modulePath);
+  const { collectLlmImageInputs, compactLlmInput } = await import(modulePath);
   const bytes = Buffer.from('real-image-bytes');
   const dataUrl = `data:image/jpeg;base64,${bytes.toString('base64')}`;
 
@@ -29,4 +29,14 @@ test('compacts image data URLs into deterministic metadata before LLM context se
     research_goal: 'compare interfaces',
   });
   assert.doesNotMatch(JSON.stringify(compacted), /cmVhbC1pbWFnZS1ieXRlcw/);
+  assert.deepEqual(collectLlmImageInputs({ competitor_screenshots: [{ dataUrl }, { dataUrl }] }), [{
+    dataUrl,
+    label: 'input.competitor_screenshots[1].dataUrl',
+  }]);
+  assert.throws(
+    () => collectLlmImageInputs(Array.from({ length: 13 }, (_, index) => (
+      `data:image/png;base64,${Buffer.from(`image-${index}`).toString('base64')}`
+    ))),
+    /12-image limit/u,
+  );
 });

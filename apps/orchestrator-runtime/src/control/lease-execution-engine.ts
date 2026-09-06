@@ -93,7 +93,7 @@ import {
   redactString,
   redactToolOutput,
 } from '../runtime/redaction.ts';
-import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
+import { collectLlmImageInputs, compactLlmInput } from '../runtime/llm-input-compactor.ts';
 import {
   assertCompiledSkillPlan,
   CompiledSkillPlanDriftError,
@@ -814,7 +814,7 @@ function nativeSourceReferences(input: {
   return sources;
 }
 
-function nativeSkillPrompt(runSpec: NativeSkillRunSpec): string {
+function nativeSkillPrompt(runSpec: NativeSkillRunSpec, imageCount = 0): string {
   const selected = runSpec.selected_references.map((reference) => (
     `--- ${reference.logicalPath} ---\n${reference.content}`
   ));
@@ -833,6 +833,9 @@ function nativeSkillPrompt(runSpec: NativeSkillRunSpec): string {
     `- primary.format 必须为 ${runSpec.report_policy.outputFormat}。`,
     '- 内容只能使用已提供材料，并使用 sourceCatalog 中已有的 [S-*] 引用。',
     '- 不得新增 URL、来源 ID、事实或数字。',
+    ...(imageCount > 0
+      ? [`- 本次已附加 ${imageCount} 张用户图片；必须逐张查看图片内容，并把发现定位到具体图片和界面区域。`]
+      : []),
     '- 只有冻结合同中的必需输入缺失时才使用 needs_input；可选输入缺失时继续分析并使用 completed_with_gaps。',
     '- needs_input 的 missingInputKeys 仅可包含下列冻结输入 key：',,
     runSpec.input_requirements.length > 0
@@ -5836,7 +5839,8 @@ export class LeaseExecutionEngine {
       sourceCatalog: sources,
       waivedInputs: deterministicGaps,
     };
-    const prompt = nativeSkillPrompt(runSpec);
+    const images = collectLlmImageInputs(input.resolvedInput);
+    const prompt = nativeSkillPrompt(runSpec, images.length);
     const fingerprint: SkillExecutionFingerprint = {
       skillBodyHash: runSpec.body_hash,
       inputSchemaHash: runSpec.input_requirements_hash,
@@ -5848,7 +5852,12 @@ export class LeaseExecutionEngine {
       ],
       inputArtifacts: executionInputArtifacts(input.outputs, input.step),
       inputHash: hashJson(input.resolvedInput),
-      executionPromptHash: hashPrompt(prompt, context, `native-skill-result:${input.step.actor_id}`),
+      executionPromptHash: hashPrompt(
+        prompt,
+        context,
+        `native-skill-result:${input.step.actor_id}`,
+        images,
+      ),
     };
     input.onSkillPrepared?.(fingerprint);
     const generated = await this.llm.generateStructured<NativeSkillResultDraft>({
@@ -5856,6 +5865,7 @@ export class LeaseExecutionEngine {
       schema: NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
       schemaName: `skill:${input.step.actor_id}`,
       context,
+      images,
       ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'skill',

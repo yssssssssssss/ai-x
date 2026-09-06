@@ -99,8 +99,38 @@ test('builds a native run spec from the unchanged package and explicit reference
   assert.equal(spec.entry_path, 'SKILL.md');
   assert.equal(spec.files.some(({ path }) => path === spec.entry_path), true);
   assert.equal(spec.selected_references.length > 0, true);
-  assert.equal(spec.selected_references.every(({ logicalPath }) => logicalPath.startsWith('skill://competitive-analysis/')), true);
+  assert.equal(spec.selected_references.every(({ logicalPath }) => (
+    logicalPath.startsWith('skill://competitive-analysis/')
+    || logicalPath.startsWith('knowledge://research-wiki/')
+  )), true);
   assert.equal(spec.report_policy.kind, 'skill_defined');
+});
+
+test('injects explicitly referenced internal research wiki files into a native run spec', () => {
+  const spec = sl.loadNativeRunSpec('run-heuristic-evaluation', {
+    task_type: 'design_audit',
+    research_goal: '评估京东图书频道界面',
+  });
+  const mountedPaths = spec.selected_references
+    .filter(({ source }) => source === 'knowledge_mount')
+    .map(({ path }) => path);
+  assert.equal(spec.input_requirements.some(({ key }) => key === 'designImage'), false);
+  assert.deepEqual(
+    spec.input_requirements.filter(({ key }) => key === 'page_url' || key === 'jd_screenshots')
+      .map(({ key, kind, label }) => ({ key, kind, label })),
+    [
+      { key: 'page_url', kind: 'value', label: '待评估页面链接' },
+      { key: 'jd_screenshots', kind: 'visual', label: '京东页面截图' },
+    ],
+  );
+  assert.ok(mountedPaths.includes('models/nielsen-heuristics.md'));
+  assert.ok(mountedPaths.includes('methods/toolbox/collection/heuristic-evaluation.md'));
+  assert.ok(mountedPaths.includes('methods/toolbox/analysis/issue-prioritization.md'));
+  assert.equal(spec.report_policy.kind, 'skill_defined');
+  if (spec.report_policy.kind === 'skill_defined') {
+    assert.match(spec.report_policy.instructions, /问题清单/u);
+    assert.doesNotMatch(spec.report_policy.instructions, /# Run Heuristic Evaluation/u);
+  }
 });
 
 test('loads the original Industry package without a platform-rewritten copy', () => {
@@ -129,6 +159,21 @@ test('loadSkillSchemas keeps only the universal output schema outside the Skill 
   const properties = (schemas.output as { properties?: Record<string, unknown> }).properties;
   assert.ok(properties?.payload);
   assert.equal(properties?.comparison_matrix, undefined);
+});
+
+test('image-named input roles are exposed as visual uploads', () => {
+  for (const skill of sl.listCapabilitySkills()) {
+    const declaredRoles = [...new Set([
+      ...(skill.inputs ?? []),
+      ...(skill.composition?.required_input_roles ?? []),
+      ...(skill.composition?.optional_input_roles ?? []),
+    ])];
+    const unclassified = declaredRoles.filter((role) => (
+      /(?:image|images|screenshot|screenshots)$/iu.test(role)
+      && !(skill.visual_inputs ?? []).includes(role)
+    ));
+    assert.deepEqual(unclassified, [], skill.id);
+  }
 });
 
 test('listCapabilitySkills preserves valid visual input metadata', () => {

@@ -10,6 +10,12 @@ interface ClarificationChoice {
   description: string;
 }
 
+function userFacingClarificationOption(option: string): string {
+  return /上传.*(?:截图|图片)|(?:截图|图片).*上传/u.test(option)
+    ? option.replace(/我(?:现在|先)?上传/u, '我可以在下一步上传')
+    : option;
+}
+
 function clarificationChoices(key: string): ClarificationChoice[] | null {
   if (key === 'outcome_mode') {
     return [
@@ -141,20 +147,30 @@ export function CurrentStage1Clarify({
             ) : (
               <>
                 {question.options && question.options.length > 0 && (
-                  <div className="clarification-options" aria-label={`${question.question}快捷选项`}>
-                    {question.options.map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        className="clarification-option"
-                        aria-pressed={answer === option}
-                        onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: option }))}
-                        disabled={disabled}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    <div className="clarification-options" aria-label={`${question.question}快捷选项`}>
+                      {question.options.map((option) => {
+                        const displayOption = userFacingClarificationOption(option);
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            className="clarification-option"
+                            aria-pressed={answer === displayOption}
+                            onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: displayOption }))}
+                            disabled={disabled}
+                          >
+                            {displayOption}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {question.options.some((option) => /上传.*(?:截图|图片)|(?:截图|图片).*上传/u.test(option)) ? (
+                      <small style={{ color: 'var(--text-faint)' }}>
+                        选择后，图片选择按钮会在下一步的计划确认页出现；此处不会立即上传文件。
+                      </small>
+                    ) : null}
+                  </>
                 )}
                 <input
                   id={inputId}

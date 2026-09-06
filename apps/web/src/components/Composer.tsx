@@ -83,14 +83,14 @@ export function Composer({ disabled, multiSkillEnabled, onSubmit }: {
         >
           <legend style={{ fontSize: 12, color: 'var(--text-faint)', marginRight: 4 }}>运行模式</legend>
           {([
-            ['single_skill', '单 Skill'],
-            ['multi_skill', '多 Skill 协作'],
+            ['single_skill', '单项分析'],
+            ['multi_skill', '多项能力协作'],
           ] as const).map(([value, label]) => {
             const unavailable = value === 'multi_skill' && !multiSkillEnabled;
             return (
               <label
                 key={value}
-                title={unavailable ? '当前环境尚未开放多 Skill 协作' : undefined}
+                title={unavailable ? '当前环境尚未开放多项能力协作' : undefined}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',

@@ -15,6 +15,10 @@ test('resolves an explicitly referenced read-only Knowledge Mount with frozen co
   try {
     const registry = new KnowledgeMountRegistry([{ id: 'research-wiki', rootPath: root }]);
     const references = registry.resolveReferences('Read knowledge://research-wiki/methods/research.md');
+    assert.deepEqual(
+      registry.resolveReferences('Read archive/methods/research.md instead'),
+      [],
+    );
     assert.deepEqual(references.map(({ source, sourceId, logicalPath, content }) => ({
       source, sourceId, logicalPath, content,
     })), [{

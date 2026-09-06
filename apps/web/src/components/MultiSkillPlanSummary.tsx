@@ -10,11 +10,11 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
     return (
       <div
         className={`multi-skill-plan-summary${compact ? ' is-compact' : ''}`}
-        aria-label="Multi-Skill 组合计划"
+        aria-label="多项能力协作计划"
         style={{ marginTop: 12, padding: compact ? '8px 10px' : '12px', border: '1px solid var(--border-soft)', borderRadius: 8, textAlign: 'left' }}
       >
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
-          <strong>{invocations.length} 个 Skill</strong>
+          <strong>{invocations.length} 项分析能力</strong>
           <span>1 次最终综合</span>
           <span>{plan.steps.length} 个执行步骤</span>
         </div>
@@ -22,8 +22,8 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
           <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
             {invocations.map((invocation) => (
               <li key={invocation.invocation_id} style={{ marginTop: 5, fontSize: 12 }}>
-                <strong>Contributor</strong>{' · '}{invocation.skill_id}
-                {' · '}{'required' in invocation && invocation.required === false ? 'Optional' : 'Required'}
+                <strong>分析能力</strong>{' · '}{invocation.skill_id}
+                {' · '}{'required' in invocation && invocation.required === false ? '可选' : '必需'}
               </li>
             ))}
           </ul>
@@ -36,13 +36,13 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
   return (
     <div
       className={`multi-skill-plan-summary${compact ? ' is-compact' : ''}`}
-      aria-label="Multi-Skill 组合计划"
+      aria-label="多项能力协作计划"
       style={{ marginTop: 12, padding: compact ? '8px 10px' : '12px', border: '1px solid var(--border-soft)', borderRadius: 8, textAlign: 'left' }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
-        <strong>{model.contributorCount} 个 Contributor</strong>
-        <span>1 个 Synthesizer</span>
-        <span>Required Coverage {model.coveredRequiredDemandCount}/{model.requiredDemandCount}</span>
+        <strong>{model.contributorCount} 项分析能力</strong>
+        <span>1 项综合能力</span>
+        <span>必需问题覆盖 {model.coveredRequiredDemandCount}/{model.requiredDemandCount}</span>
         <span>
           预算 {model.budget.estimated_steps}/{model.budget.max_steps} 逻辑步
           {' · '}{model.budget.expanded_step_count}/{model.budget.expanded_step_limit} 展开步
@@ -53,9 +53,9 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
         <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
           {model.invocations.map((invocation) => (
             <li key={invocation.invocation_id} style={{ marginTop: 5, fontSize: 12 }}>
-              <strong>{invocation.role === 'synthesizer' ? 'Synthesizer' : 'Contributor'}</strong>
+              <strong>{invocation.role === 'synthesizer' ? '综合能力' : '分析能力'}</strong>
               {' · '}{invocation.skill_id}
-              {' · '}{invocation.required ? 'Required' : 'Optional'}
+              {' · '}{invocation.required ? '必需' : '可选'}
               {' · '}{invocation.question_ids.join(' / ')}
               {' · '}{model.selections.find(({ invocation_id }) => invocation_id === invocation.invocation_id)?.reason_codes.join(' / ') ?? 'policy'}
               {invocation.requested_artifact_types.length > 0

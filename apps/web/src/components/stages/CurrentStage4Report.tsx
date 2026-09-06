@@ -303,7 +303,7 @@ function EditorialSummaryReport({
       <header className="editorial-summary-toolbar">
         {orchestrationMode === undefined ? null : (
           <span>
-            运行模式：{orchestrationMode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'}
+            运行模式：{orchestrationMode === 'multi_skill' ? '多项能力协作' : '单项分析'}
           </span>
         )}
         <div className="editorial-summary-actions">
@@ -353,7 +353,7 @@ export function StructuredCurrentStage4Report({
     ? null
     : (
         <p style={{ margin: '0 0 10px', color: 'var(--text-faint)', fontSize: 12 }}>
-          运行模式：{orchestrationMode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'}
+          运行模式：{orchestrationMode === 'multi_skill' ? '多项能力协作' : '单项分析'}
         </p>
       );
   const selected = selectCurrentStage4Renderer(report);
@@ -810,7 +810,7 @@ function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
 
   return (
     <article className="stage-card">
-      <Header n="4" title="可信研究计划" note="Current deliverable，可反查发现与证据" />
+      <Header n="4" title="可信研究计划" note="可追溯发现与证据" />
 
       <ReportSection title={payload.title}>
         <p>{payload.researchGoal}</p>

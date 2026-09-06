@@ -63,11 +63,17 @@ export interface LLMProviderIdentity {
   eligibleAsReal: boolean;
 }
 
+export interface LLMImageInput {
+  dataUrl: string;
+  label?: string;
+}
+
 export interface StructuredLLMCallOptions {
   prompt: string;
   schema: object;
   schemaName: string;
   context?: object;
+  images?: readonly LLMImageInput[];
   signal?: AbortSignal;
   receipt: LLMReceiptContext;
 }
@@ -76,6 +82,7 @@ export interface TextLLMCallOptions {
   prompt: string;
   systemPrompt?: string;
   context?: object;
+  images?: readonly LLMImageInput[];
   signal?: AbortSignal;
   maxOutputTokens?: number;
   receipt: LLMReceiptContext;
@@ -119,11 +126,21 @@ export interface LLMClient {
 
 // 确定性 hash:同输入同输出,便于测试与复盘对齐。
 // schemaId 纳入 hash:同一段 prompt 用于不同 schema 时溯源不冲撞(issue #5)。
-export function hashPrompt(prompt: string, context?: object, schemaId?: string): string {
+export function hashPrompt(
+  prompt: string,
+  context?: object,
+  schemaId?: string,
+  images?: readonly LLMImageInput[],
+): string {
   const h = createHash('sha256');
   h.update(prompt);
   if (context) h.update(JSON.stringify(context));
   if (schemaId) h.update(schemaId);
+  for (const image of images ?? []) {
+    h.update('\0image\0');
+    h.update(image.label ?? '');
+    h.update(image.dataUrl);
+  }
   return 'sha256:' + h.digest('hex').slice(0, 16);
 }
 
@@ -334,7 +351,7 @@ export class MockLLMClient implements LLMClient {
     out = injectToolResultFinding(opts.schemaName, opts.context, out);
     return {
       data: out,
-      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.images),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, opts.schemaName),
@@ -348,6 +365,8 @@ export class MockLLMClient implements LLMClient {
       promptHash: hashPrompt(
         opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
         opts.context,
+        undefined,
+        opts.images,
       ),
       modelName: this.model.name,
       modelVersion: this.model.version,

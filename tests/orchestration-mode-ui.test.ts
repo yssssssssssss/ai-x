@@ -33,19 +33,19 @@ async function renderComposer(multiSkillEnabled: boolean): Promise<string> {
   }
 }
 
-test('Composer defaults to single Skill and exposes the two task modes', async () => {
+test('Composer defaults to single analysis and exposes the two task modes', async () => {
   const markup = await renderComposer(true);
 
   assert.match(markup, /运行模式/u);
-  assert.match(markup, /单 Skill/u);
-  assert.match(markup, /多 Skill 协作/u);
+  assert.match(markup, /单项分析/u);
+  assert.match(markup, /多项能力协作/u);
   assert.match(markup, /name="orchestration-mode" checked="" value="single_skill"/u);
   assert.match(markup, /name="orchestration-mode" value="multi_skill"/u);
 });
 
-test('Composer disables multi Skill when the server capability is closed', async () => {
+test('Composer disables multi-capability mode when the server capability is closed', async () => {
   const markup = await renderComposer(false);
 
   assert.match(markup, /disabled="" value="multi_skill"/u);
-  assert.match(markup, /当前环境尚未开放多 Skill 协作/u);
+  assert.match(markup, /当前环境尚未开放多项能力协作/u);
 });

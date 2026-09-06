@@ -1747,6 +1747,7 @@ test('production API persists Scenario selection guidance and resumes planning a
         'persist:start',
         'persist:done',
       ],
+      JSON.stringify(selectedEvents.at(-1)),
     );
     assert.equal(selectedEvents.at(-1)?.event, 'result');
     const selected = selectedEvents.at(-1)?.data as ControlPlanCandidatesResponse;

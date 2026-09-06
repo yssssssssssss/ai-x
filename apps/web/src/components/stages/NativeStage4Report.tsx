@@ -52,11 +52,11 @@ export function NativeStage4Report({
       <Header
         n="4"
         title={finalReport.title}
-        note={finalReport.mode === 'multi_skill' ? 'Multi Skill 综合报告' : 'Single Skill 原始报告'}
+        note={finalReport.mode === 'multi_skill' ? '多项能力综合报告' : '单项能力报告'}
       />
       <nav className="report-view-toggle" aria-label="报告视图">
         <button type="button" className={view === 'final' ? 'is-active' : ''} onClick={() => setView('final')}>最终报告</button>
-        <button type="button" className={view === 'skills' ? 'is-active' : ''} onClick={() => setView('skills')}>Skill 明细</button>
+        <button type="button" className={view === 'skills' ? 'is-active' : ''} onClick={() => setView('skills')}>分析明细</button>
       </nav>
       {view === 'final' ? (
         <>
@@ -106,7 +106,7 @@ export function NativeStage4Report({
         </>
       ) : (
         <>
-          <div className="report-view-toggle" aria-label="Skill 报告选择">
+          <div className="report-view-toggle" aria-label="分析结果选择">
             {skillResults.map((report) => (
               <button
                 key={report.invocationId}
@@ -158,7 +158,7 @@ export function NativeStage4Report({
                 )}
               </section>
             </article>
-          ) : <p>没有可用的 Skill 报告。</p>}
+          ) : <p>没有可用的分析结果。</p>}
         </>
       )}
     </section>

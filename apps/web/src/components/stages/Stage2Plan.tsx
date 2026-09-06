@@ -15,6 +15,31 @@ import {
   reconcileDatasetColumnMetadata,
 } from './stage2-plan-confirmation.ts';
 
+const INPUT_LABELS: Readonly<Record<string, string>> = {
+  designImage: '设计稿或页面截图',
+  page_url: '待评估页面链接',
+  jd_screenshots: '京东页面截图',
+  competitor_screenshots: '竞品页面截图',
+  competitor_platform_names: '竞品平台名称',
+  user_research_dataset: '用户研究数据',
+  internal_metrics_dataset: '内部指标数据',
+  analytics_dataset: '分析数据',
+};
+
+const INPUT_QUESTIONS: Readonly<Record<string, string>> = {
+  page_url: '如有可直接访问的页面，请填写完整链接。',
+  jd_screenshots: '请上传需要分析的京东页面截图，可一次选择多张。',
+  competitor_screenshots: '请上传需要对照的竞品页面截图，可一次选择多张。',
+};
+
+function pendingInputLabel(input: PendingUpload): string {
+  return INPUT_LABELS[input.role] ?? input.label;
+}
+
+function pendingInputQuestion(input: PendingUpload, fallback?: string): string {
+  return INPUT_QUESTIONS[input.role] ?? fallback ?? pendingInputLabel(input);
+}
+
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
 // locked=true 时(已进入执行)隐藏确认按钮、禁用编辑。
 export function Stage2Plan({
@@ -52,10 +77,10 @@ export function Stage2Plan({
   ));
   const portfolio = multiSkillPlanViewModel(plan.plan);
   const orchestrationLabel = plan.plan.execution_contract_version === 'native-skill-execution-plan-v1'
-    ? plan.plan.mode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'
+    ? plan.plan.mode === 'multi_skill' ? '多项能力协作' : '单项能力执行'
     : plan.plan.execution_contract_version === 'current-execution-plan-v3'
-      ? '多 Skill 协作'
-      : '单 Skill';
+      ? '多项能力协作'
+      : '单项能力执行';
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -163,7 +188,7 @@ export function Stage2Plan({
       values,
       images,
       datasets,
-      waivedInputKeys,
+      waivedInputKeys: effectiveWaivedInputKeys,
     });
     setConfirmed(true);
     onConfirm(
@@ -176,13 +201,19 @@ export function Stage2Plan({
   }
 
   const pending = plan.pendingUploads ?? [];
+  const hideLegacyDesignImage = pending.some(({ role, kind }) => role === 'jd_screenshots' && kind === 'visual');
+  const visiblePending = pending.filter(({ role }) => !(hideLegacyDesignImage && role === 'designImage'));
+  const implicitWaivedInputKeys = hideLegacyDesignImage
+    ? pending.filter(({ role }) => role === 'designImage').map(({ role }) => role)
+    : [];
+  const effectiveWaivedInputKeys = [...new Set([...waivedInputKeys, ...implicitWaivedInputKeys])];
   const nativeInputs = plan.plan.resolved_inputs;
   const pendingRequirementByKey = new Map(
     nativeInputs?.pending.map((item) => [item.requirement.key, item]) ?? [],
   );
-  const waivedSet = new Set(waivedInputKeys);
+  const waivedSet = new Set(effectiveWaivedInputKeys);
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
-  const missingInputs = pending.filter((input) => {
+  const missingInputs = visiblePending.filter((input) => {
     const requirement = pendingRequirementByKey.get(input.role)?.requirement;
     if (requirement?.required === false && waivedSet.has(input.role)) return false;
     if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
@@ -217,7 +248,7 @@ export function Stage2Plan({
             ? [...new Set([...previous, role])]
             : previous.filter((key) => key !== role))}
         />
-        无法提供，确认以可见 Gap 继续
+        暂时无法提供，继续执行并在报告中标记资料缺口
       </label>
     );
   }
@@ -256,10 +287,10 @@ export function Stage2Plan({
 
       {nativeToolBindings.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
-          <strong>Tool Binding</strong>
+          <strong>工具接入状态</strong>
           {nativeToolBindings.map((binding) => (
             <div key={`${binding.skillId}:${binding.capability}`}>
-              {binding.skillId} · {binding.capability} → {binding.toolId} · {binding.required ? '必需' : '可选'} · {binding.status}
+              {binding.skillId} · {binding.capability} → {binding.toolId} · {binding.required ? '必需' : '可选'} · {binding.status === 'bound' ? '已接入' : '尚未接入'}
             </div>
           ))}
         </div>
@@ -347,16 +378,16 @@ export function Stage2Plan({
         </div>
       )}
 
-      {pending.some((input) => input.kind === 'value') && !locked && (
+      {visiblePending.some((input) => input.kind === 'value') && !locked && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入</div>
-          {pending.filter((input) => input.kind === 'value').map((input) => (
+          {visiblePending.filter((input) => input.kind === 'value').map((input) => (
             <label key={input.role} style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, fontSize: 13 }}>
               <span>
-                {pendingRequirementByKey.get(input.role)?.requirement.question ?? input.label}
+                {pendingInputQuestion(input, pendingRequirementByKey.get(input.role)?.requirement.question)}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                   {' '}· {pendingRequirementByKey.get(input.role)?.requirement.required === false ? '可选' : '必需'}
-                  {' '}· 用于 {pendingRequirementByKey.get(input.role)?.targetInvocationIds.join('、') || `步骤 ${input.targets.map((target) => target.step_no).join('/')}`}
+                  {' '}· 将用于本次分析
                 </span>
               </span>
               {input.multiple ? (
@@ -384,15 +415,15 @@ export function Stage2Plan({
         </div>
       )}
 
-      {pending.some((input) => input.kind === 'dataset') && !locked && (
+      {visiblePending.some((input) => input.kind === 'dataset') && !locked && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV（匿名、UTF-8 数据）</div>
-          {pending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
+          {visiblePending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
             const selected = datasets[datasetInput.role];
             return (
               <div key={datasetInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
                 <span style={{ fontSize: 13 }}>
-                  {pendingRequirementByKey.get(datasetInput.role)?.requirement.question ?? datasetInput.label}
+                  {pendingInputQuestion(datasetInput, pendingRequirementByKey.get(datasetInput.role)?.requirement.question)}
                   {' '}· {pendingRequirementByKey.get(datasetInput.role)?.requirement.required === false ? '可选' : '必需'}
                 </span>
                 <input
@@ -473,16 +504,16 @@ export function Stage2Plan({
         </div>
       )}
 
-      {pending.some((input) => input.kind === 'visual') && !locked && (
+      {visiblePending.some((input) => input.kind === 'visual') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（同一张图会自动用于所有需要它的 Skill）</div>
-          {pending.filter((input) => input.kind === 'visual').map((pu) => (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（同一张图会自动用于所有需要它的分析能力）</div>
+          {visiblePending.filter((input) => input.kind === 'visual').map((pu) => (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                {pendingRequirementByKey.get(pu.role)?.requirement.question ?? pu.label}
+                {pendingInputQuestion(pu, pendingRequirementByKey.get(pu.role)?.requirement.question)}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                   {' '}· {pendingRequirementByKey.get(pu.role)?.requirement.required === false ? '可选' : '必需'}
-                  {' '}· 用于 {pendingRequirementByKey.get(pu.role)?.targetInvocationIds.join('、') || `步骤 ${pu.targets.map((t) => t.step_no).join('/')}`}
+                  {' '}· 将用于本次分析
                 </span>
               </span>
               {(images[pu.role] ?? []).map((dataUrl, index) => (
@@ -531,7 +562,7 @@ export function Stage2Plan({
             <span role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>
               {missingAnswers.length > 0 && `请先回答全部确认项：${missingAnswers.map(({ question, key }) => question ?? key).join('、')}`}
               {missingAnswers.length > 0 && (missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) ? '；' : ''}
-              {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map((input) => input.label).join('、')}`}
+              {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map(pendingInputLabel).join('、')}`}
               {missingInputs.length > 0 && (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 ? '；' : ''}
               {(portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 && `计划仍有未覆盖需求：${portfolio!.uncoveredRequiredDemandIds.join('、')}`}
             </span>

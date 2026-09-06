@@ -288,7 +288,7 @@ export function useTaskFlow() {
       return generation === restoreGeneration.current;
     } catch (cause) {
       if (generation !== restoreGeneration.current) return false;
-      setError(message(cause, 'Current 任务恢复失败'));
+      setError(message(cause, '任务恢复失败'));
       if (!options.silent) setPhase('error');
       return false;
     }

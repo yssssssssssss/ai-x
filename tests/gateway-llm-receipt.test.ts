@@ -64,6 +64,40 @@ test('Gateway forwards the caller output-token budget for long-form text generat
   ]);
 });
 
+test('Gateway sends uploaded images as multimodal message parts without embedding them in text context', async () => {
+  let requestBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      id: 'trace-vision',
+      model: 'pinned-model',
+      choices: [{ message: { content: '{"ok":true}' } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const recorder = new MemoryRecorder();
+  const llm = client(recorder);
+  const dataUrl = `data:image/png;base64,${Buffer.from('image-bytes').toString('base64')}`;
+
+  await llm.generateStructured({
+    prompt: '分析上传的页面截图',
+    schemaName: 'skill:vision-fixture',
+    schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } },
+    context: { resolvedInput: { screenshot: { kind: 'uploaded_image' } } },
+    images: [{ dataUrl, label: '京东页面截图 1' }],
+    receipt: { stage: 'skill', expectedModel: 'pinned-model' },
+  });
+
+  const messages = requestBody.messages as Array<{ role: string; content: unknown }>;
+  const content = messages[1]?.content as Array<Record<string, unknown>>;
+  assert.equal(Array.isArray(content), true);
+  assert.deepEqual(content.at(-1), {
+    type: 'image_url',
+    image_url: { url: dataUrl, detail: 'high' },
+  });
+  assert.doesNotMatch(String((content[0] as { text?: string }).text), /aW1hZ2UtYnl0ZXM/u);
+  assert.match(String((content[1] as { text?: string }).text), /京东页面截图 1/u);
+});
+
 test('Gateway cancellation aborts an in-flight provider request', async () => {
   globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;

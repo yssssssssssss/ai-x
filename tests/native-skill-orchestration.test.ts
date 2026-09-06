@@ -203,6 +203,31 @@ test('removes unverified generated links deterministically and records a Gap', (
   assert.equal(result.status, 'completed_with_gaps');
 });
 
+test('renders Markdown tables, emphasis, and dividers as structured HTML', async () => {
+  const result = createNativeSkillResult({
+    skillId: 'native-test', invocationId: 'inv-table',
+    draft: {
+      title: '表格报告', status: 'completed',
+      primary: {
+        format: 'markdown',
+        content: '# 结论\n\n**重点**\n\n| 问题 | 建议 |\n|---|---|\n| 信息层级 | 精简首屏 |\n\n---\n',
+      },
+      attachments: [], gaps: [],
+    },
+    sources: [],
+  });
+  const report = await finalizeSingleNativeReport({
+    taskId: 'task-table', planVersionId: 'plan-table', attemptId: 'attempt-table',
+    requirement: {}, result, verifiedSources: [], reportPolicy: 'skill_defined',
+  });
+  const html = renderNativeFinalReportHtml(report);
+  assert.match(html, /<table>/u);
+  assert.match(html, /<th>问题<\/th>/u);
+  assert.match(html, /<td>精简首屏<\/td>/u);
+  assert.match(html, /<strong>重点<\/strong>/u);
+  assert.match(html, /<hr>/u);
+});
+
 test('performs one Multi synthesis and sanitizes Skill-defined HTML', async () => {
   const result = createNativeSkillResult({
     skillId: 'native-test', invocationId: 'inv-native',

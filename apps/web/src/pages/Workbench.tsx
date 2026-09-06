@@ -267,7 +267,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                       stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
                       failure={exec.failure}
                       onRetry={() => flow.resumeStep('retry')}
-                      onReplan={() => flow.revisePlan('知识或 Skill 合同已变化，请基于当前 Requirement 重新生成计划。')}
+                      onReplan={() => flow.revisePlan('知识或分析能力已更新，请基于当前需求重新生成计划。')}
                       onAbort={() => flow.resumeStep('abort')}
                     />
                   </>
@@ -483,11 +483,11 @@ function FailureActionCard({
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
         {canReplan
-          ? '当前计划绑定的知识或 Skill 合同已变化，必须重新生成并再次确认计划；终止不会生成交付物。'
+          ? '当前计划使用的知识或分析能力已更新，请重新生成并确认计划；终止后不会生成报告。'
           : failure?.kind === 'deliverable_validation'
             ? '重试会优先复用已验证的计划步骤，只重新构建 Canonical Deliverable 及后续报告；复用校验失败时才回退为完整重试。'
             : canRetry
-              ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
+              ? '重试会继续使用当前已确认的计划，从失败步骤重新执行；终止后不会生成报告。'
               : '该失败不可重试；终止任务后不会生成交付物。'}
       </p>
       <div style={{ display: 'flex', gap: 10 }}>
@@ -674,7 +674,7 @@ function TerminalTaskNotice({
 function CurrentHistoryNotice() {
   return (
     <aside style={{ color: 'var(--text-faint)', fontSize: 12, padding: '4px 2px 18px' }}>
-      Current 任务会保留在侧栏历史中；点击即可恢复最近状态和报告。
+      当前任务会保留在侧栏历史中；点击即可恢复最近状态和报告。
     </aside>
   );
 }
@@ -683,7 +683,7 @@ function AbortedNotice() {
   return (
     <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--danger)', fontWeight: 600 }}>任务已终止</div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>Current 任务已取消，未生成交付物。可新建任务重试。</div>
+      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>任务已取消，未生成报告。可新建任务重试。</div>
     </div>
   );
 }
