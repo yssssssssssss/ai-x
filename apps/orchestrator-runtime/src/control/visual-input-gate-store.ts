@@ -7,10 +7,6 @@ import {
   type BinaryArtifactWriteInput,
   type TrustedBinaryMetadata,
 } from './artifact-store.ts';
-import {
-  parseVisualInputDataUrls,
-  type VisualInputImage,
-} from '../report/visual-input-data-url.ts';
 
 const IMAGE_KIND = 'visual_input_image';
 const IMAGE_SCHEMA_VERSION = 'visual-input-image-v1';
@@ -18,7 +14,7 @@ const GATE_KIND = 'visual_input_gate';
 const GATE_SCHEMA_VERSION = 'visual-input-gate-v1';
 const MAX_VISUAL_FILES = 12;
 
-type SupportedMediaType = VisualInputImage['contentType'];
+type SupportedMediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 interface VisualInputGateImageV1 {
   artifactId: string;
@@ -81,16 +77,6 @@ export interface ResolvedInputGates {
   visuals: ResolvedVisualInput[];
 }
 
-export type PreparedVisualInputGate = {
-  taskId: string;
-  planVersionId: string;
-  gateKey: string;
-  multiple: boolean;
-} & (
-  | { requiredVisual: false; value: unknown }
-  | { requiredVisual: true; images: VisualInputImage[] }
-);
-
 export interface PublishedVisualInputGate {
   value?: unknown;
   evidenceRef?: string;
@@ -112,21 +98,6 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function isSingleImageValue(value: unknown): value is { dataUrl: string } {
-  return isRecord(value) && hasExactKeys(value, ['dataUrl']) && typeof value.dataUrl === 'string';
-}
-
-const INLINE_IMAGE_DATA_URL = /data:image\/[a-z0-9.+-]+;base64,/iu;
-
-function containsInlineImageData(value: unknown): boolean {
-  if (typeof value === 'string') return INLINE_IMAGE_DATA_URL.test(value);
-  if (Array.isArray(value)) return value.some(containsInlineImageData);
-  if (!isRecord(value)) return false;
-  return Object.entries(value).some(([key, child]) => (
-    key.toLowerCase() === 'dataurl' || containsInlineImageData(child)
-  ));
 }
 
 function manifestValue(value: unknown): VisualInputGateManifestV1 {
@@ -370,137 +341,6 @@ export class VisualInputGateStore {
     };
   }
 
-  async prepare(input: {
-    taskId: string;
-    planVersionId: string;
-    gateKey: string;
-    multiple: boolean;
-    requiredVisual: boolean;
-    value: unknown;
-  }): Promise<PreparedVisualInputGate> {
-    if (!input.requiredVisual) {
-      if (containsInlineImageData(input.value)) {
-        throw new VisualInputGateError('non-visual input contains a dataUrl');
-      }
-      return { ...input, requiredVisual: false, value: input.value };
-    }
-    if (input.multiple && Array.isArray(input.value) && input.value.length === 0) {
-      throw new VisualInputGateError('multiple input must not be empty');
-    }
-    const supplied = input.multiple
-      ? Array.isArray(input.value) && input.value.length > 0 && input.value.every(isSingleImageValue)
-      : isSingleImageValue(input.value);
-    if (!supplied) {
-      throw new VisualInputGateError(
-        input.multiple
-          ? 'multiple image input must be a non-empty array of {dataUrl}'
-          : 'single image input must be exactly {dataUrl}',
-      );
-    }
-    const images = await parseVisualInputDataUrls(input.value);
-    if ((!input.multiple && images.length !== 1) || images.length === 0) {
-      throw new VisualInputGateError('visual input did not resolve to the required image count');
-    }
-    return {
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      gateKey: input.gateKey,
-      multiple: input.multiple,
-      requiredVisual: true,
-      images,
-    };
-  }
-
-  async publishPrepared(
-    input: PreparedVisualInputGate,
-    publicationId?: string,
-  ): Promise<PublishedVisualInputGate> {
-    if (!input.requiredVisual) return { value: input.value, artifactIds: [] };
-
-    const references: VisualInputGateImageV1[] = [];
-    const artifactIds: string[] = [];
-    try {
-      for (const image of input.images) {
-        const artifact = await this.artifacts.writeBinary({
-          taskId: input.taskId,
-          planVersionId: input.planVersionId,
-          ...(publicationId === undefined ? {} : { publicationId }),
-          kind: IMAGE_KIND,
-          relativePath: `inputs/${randomUUID()}.${image.extension}`,
-          bytes: image.bytes,
-          schemaVersion: IMAGE_SCHEMA_VERSION,
-          sensitivity: 'internal',
-          redactionPolicyVersion: 'v1',
-        });
-        artifactIds.push(artifact.id);
-        assertPlanBoundArtifact({
-          artifact,
-          taskId: input.taskId,
-          planVersionId: input.planVersionId,
-          kind: IMAGE_KIND,
-          schemaVersion: IMAGE_SCHEMA_VERSION,
-        });
-        if (
-          artifact.mediaType !== image.contentType
-          || artifact.byteSize !== image.bytes.byteLength
-        ) {
-          throw new VisualInputGateError('sealed image metadata does not match its input');
-        }
-        references.push({
-          artifactId: artifact.id,
-          contentSha256: artifact.contentSha256!,
-          mediaType: image.contentType,
-          byteSize: image.bytes.byteLength,
-        });
-      }
-
-      const manifest: VisualInputGateManifestV1 = {
-        version: GATE_SCHEMA_VERSION,
-        taskId: input.taskId,
-        planVersionId: input.planVersionId,
-        gateKey: input.gateKey,
-        multiple: input.multiple,
-        images: references,
-      };
-      const artifact = await this.artifacts.writeJson({
-        taskId: input.taskId,
-        planVersionId: input.planVersionId,
-        ...(publicationId === undefined ? {} : { publicationId }),
-        kind: GATE_KIND,
-        relativePath: `inputs/${randomUUID()}-gate.json`,
-        value: manifest,
-        schemaVersion: GATE_SCHEMA_VERSION,
-        sensitivity: 'internal',
-        redactionPolicyVersion: 'v1',
-      });
-      artifactIds.push(artifact.id);
-      assertPlanBoundArtifact({
-        artifact,
-        taskId: input.taskId,
-        planVersionId: input.planVersionId,
-        kind: GATE_KIND,
-        schemaVersion: GATE_SCHEMA_VERSION,
-      });
-      return { evidenceRef: artifact.id, artifactIds };
-    } catch (error) {
-      await Promise.allSettled(artifactIds.map((artifactId) => (
-        this.artifacts.invalidateArtifactPublication(artifactId, 'visual input publication did not complete')
-      )));
-      throw error;
-    }
-  }
-
-  async publish(input: {
-    taskId: string;
-    planVersionId: string;
-    gateKey: string;
-    multiple: boolean;
-    requiredVisual: boolean;
-    value: unknown;
-  }): Promise<PublishedVisualInputGate> {
-    return this.publishPrepared(await this.prepare(input));
-  }
-
   async invalidate(publication: PublishedVisualInputGate, reason: string): Promise<void> {
     await Promise.all(publication.artifactIds.map((artifactId) => (
       this.artifacts.invalidateArtifactPublication(artifactId, reason)
@@ -535,9 +375,6 @@ export class VisualInputGateStore {
       }
       if (gate.evidenceRef && gate.value !== null) {
         throw new VisualInputGateError(`gate ${gate.gateKey} has both a value and evidence reference`);
-      }
-      if (!gate.evidenceRef && containsInlineImageData(gate.value)) {
-        throw new VisualInputGateError(`gate ${gate.gateKey} contains an unsealed dataUrl`);
       }
       if (pending.kind === 'visual' && !gate.evidenceRef) {
         throw new VisualInputGateError(`visual gate ${gate.gateKey} has no sealed evidence reference`);

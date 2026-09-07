@@ -557,7 +557,8 @@ ReportDocument 类型直接加入现有 API 合同；ZIP 是 Renderer 的第二�
 - 已接通 owner-bound 原始上传图片读取和浏览器 Blob 展示；
 - 已为 Industry 增加 `internal_documents`，并为两个材料型 Skill 增加 Document 输入复用；
 - 已完成聚焦测试、全量单测、类型检查、Registry/Knowledge lint 和 Web build；
-- 尚待完成：删除服务端旧 inline data URL 兼容入口、跨 Stage 1/2 的问询进一步合并，以及真实 Provider 双路径验收。
+- 已删除 Web 与 TaskWorkflow 的 inline data URL 路径；图片只通过 multipart Artifact 进入确认；
+- 尚待完成：跨 Stage 1/2 的问询进一步合并，以及真实 Provider 双路径验收。
 
 ## 17. 实施阶段
 

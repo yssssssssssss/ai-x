@@ -22,20 +22,6 @@ const PNG = Buffer.from(
   'base64',
 );
 
-test('plural pending input preserves every image for plural targets and projects the first to singular targets', () => {
-  const value = [{ artifactId: 'first' }, { artifactId: 'second' }];
-  assert.deepEqual(valueForPendingInputTarget({
-    value,
-    pendingMultiple: true,
-    targetMultiple: true,
-  }), value);
-  assert.deepEqual(valueForPendingInputTarget({
-    value,
-    pendingMultiple: true,
-    targetMultiple: false,
-  }), value[0]);
-});
-
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
@@ -66,24 +52,19 @@ function artifact(input: {
 class MemoryArtifacts {
   readonly binaryWrites: BinaryArtifactWriteInput[] = [];
   readonly jsonWrites: ArtifactWriteInput[] = [];
-  readonly invalidations: Array<{ artifactId: string; reason: string }> = [];
+  readonly invalidations: string[] = [];
   readonly artifacts = new Map<string, ControlArtifact>();
   readonly values = new Map<string, unknown>();
   readonly bytes = new Map<string, Buffer>();
-
-  constructor(private readonly failures: {
-    binaryWrite?: number;
-    invalidation?: boolean;
-  } = {}) {}
+  failManifest = false;
+  failBinaryAt: number | undefined;
 
   async writeBinary(input: BinaryArtifactWriteInput): Promise<ControlArtifact> {
     this.binaryWrites.push(input);
-    if (this.binaryWrites.length === this.failures.binaryWrite) {
-      throw new Error(`binary publication ${this.binaryWrites.length} failed`);
-    }
+    if (this.binaryWrites.length === this.failBinaryAt) throw new Error('binary write failed');
     const id = `binary-${this.binaryWrites.length}`;
     const bytes = Buffer.from(input.bytes);
-    const mediaType = bytes.equals(JPEG) ? 'image/jpeg' : bytes.equals(PNG) ? 'image/png' : 'image/webp';
+    const mediaType = bytes.equals(JPEG) ? 'image/jpeg' : 'image/png';
     const stored = artifact({
       id,
       taskId: input.taskId,
@@ -100,6 +81,7 @@ class MemoryArtifacts {
   }
 
   async writeJson(input: ArtifactWriteInput): Promise<ControlArtifact> {
+    if (this.failManifest) throw new Error('manifest write failed');
     this.jsonWrites.push(input);
     const id = `json-${this.jsonWrites.length}`;
     const bytes = Buffer.from(JSON.stringify(input.value));
@@ -117,11 +99,8 @@ class MemoryArtifacts {
     return stored;
   }
 
-  async readVerifiedBoundJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
-    return {
-      artifact: this.artifacts.get(artifactId)!,
-      value: structuredClone(this.values.get(artifactId)) as T,
-    };
+  async readVerifiedBoundJson<T>(artifactId: string) {
+    return { artifact: this.artifacts.get(artifactId)!, value: structuredClone(this.values.get(artifactId)) as T };
   }
 
   async readVerifiedBinary(artifactId: string): Promise<{
@@ -143,25 +122,17 @@ class MemoryArtifacts {
     };
   }
 
-  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
-    this.invalidations.push({ artifactId, reason });
-    if (this.failures.invalidation) throw new Error('compensation failed');
+  async invalidateArtifactPublication(artifactId: string): Promise<void> {
+    this.invalidations.push(artifactId);
     const stored = this.artifacts.get(artifactId);
-    if (!stored) return;
-    this.artifacts.set(artifactId, { ...stored, state: 'FAILED', failureReason: reason });
+    if (stored) this.artifacts.set(artifactId, { ...stored, state: 'FAILED' });
   }
 }
 
-function inputGate(evidenceRef: string | null, value: unknown = null): ControlGateRecord {
+function inputGate(evidenceRef: string): ControlGateRecord {
   return {
-    gateType: 'input',
-    gateKey: 'designImage',
-    requiredAuthority: 'owner',
-    decision: 'provided',
-    value,
-    evidenceRef,
-    actorUserId: 'owner-1',
-    actorRole: 'owner',
+    gateType: 'input', gateKey: 'designImage', requiredAuthority: 'owner',
+    decision: 'provided', value: null, evidenceRef, actorUserId: 'owner-1', actorRole: 'owner',
     idempotencyKey: 'input-1',
   };
 }
@@ -169,43 +140,26 @@ function inputGate(evidenceRef: string | null, value: unknown = null): ControlGa
 const pending = [{
   kind: 'visual' as const,
   role: 'designImage',
-  label: 'designImage',
+  label: '设计稿',
   multiple: false,
   targets: [{ step_no: 1, tool_id: 'design-experience-review', field: 'designImage', multiple: false }],
 }];
 
-test('seals visual bytes outside gate JSON and hydrates only after bound verification', async () => {
-  const artifacts = new MemoryArtifacts();
-  const store = new VisualInputGateStore(artifacts);
-  const dataUrl = `data:image/jpeg;base64,${JPEG.toString('base64')}`;
-
-  const published = await store.publish({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    gateKey: 'designImage',
-    multiple: false,
-    requiredVisual: true,
-    value: { dataUrl },
-  });
-
-  assert.equal(published.value, undefined);
-  assert.equal(typeof published.evidenceRef, 'string');
-  assert.equal(artifacts.binaryWrites.length, 1);
-  assert.equal(artifacts.jsonWrites.length, 1);
-  assert.doesNotMatch(JSON.stringify(artifacts.jsonWrites[0]!.value), /data:image|base64/u);
-
-  const resolved = await store.resolve({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    gates: [inputGate(published.evidenceRef!)],
-    pendingInputs: pending,
-  });
-
-  assert.deepEqual(resolved.gates[0]?.value, { dataUrl });
-  assert.deepEqual(resolved.visuals[0]?.images[0]?.bytes, JPEG);
+test('plural pending input preserves all values for plural targets and projects the first to singular targets', () => {
+  const value = [{ id: 'first' }, { id: 'second' }];
+  assert.deepEqual(valueForPendingInputTarget({
+    value,
+    pendingMultiple: true,
+    targetMultiple: true,
+  }), value);
+  assert.deepEqual(valueForPendingInputTarget({
+    value,
+    pendingMultiple: true,
+    targetMultiple: false,
+  }), value[0]);
 });
 
-test('uploads image bytes before confirmation without persisting Base64', async () => {
+test('uploads image bytes and resolves transient model data URLs from sealed Artifacts', async () => {
   const artifacts = new MemoryArtifacts();
   const store = new VisualInputGateStore(artifacts);
   const uploaded = await store.upload({
@@ -218,183 +172,77 @@ test('uploads image bytes before confirmation without persisting Base64', async 
   });
 
   assert.equal(uploaded.visualInputId, 'json-1');
-  assert.equal(artifacts.binaryWrites.length, 1);
   assert.doesNotMatch(JSON.stringify(artifacts.jsonWrites[0]!.value), /data:image|base64/u);
   const prepared = await store.prepareBinding({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    gateKey: 'designImage',
-    multiple: false,
-    visualInputId: uploaded.visualInputId,
+    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage',
+    multiple: false, visualInputId: uploaded.visualInputId,
   });
-  assert.equal(prepared.evidenceRef, uploaded.visualInputId);
   assert.deepEqual(prepared.artifactIds, ['binary-1', 'json-1']);
-});
 
-test('invalidates a sealed manifest when its post-write binding check fails', async () => {
-  class InvalidManifestArtifacts extends MemoryArtifacts {
-    override async writeJson(input: ArtifactWriteInput): Promise<ControlArtifact> {
-      const stored = await super.writeJson(input);
-      const invalid = { ...stored, kind: 'wrong-manifest-kind' };
-      this.artifacts.set(stored.id, invalid);
-      return invalid;
-    }
-  }
-
-  const artifacts = new InvalidManifestArtifacts();
-  const store = new VisualInputGateStore(artifacts);
-  const dataUrl = `data:image/png;base64,${PNG.toString('base64')}`;
-
-  await assert.rejects(() => store.publish({
+  const resolved = await store.resolve({
     taskId: 'task-1',
     planVersionId: 'plan-1',
-    gateKey: 'designImage',
-    multiple: false,
-    requiredVisual: true,
-    value: { dataUrl },
-  }), /Artifact binding is invalid/u);
-
-  assert.deepEqual(
-    [...artifacts.artifacts.values()].map(({ state }) => state),
-    ['FAILED', 'FAILED'],
-  );
-});
-
-test('invalidates earlier binaries when a later image publication fails', async () => {
-  const artifacts = new MemoryArtifacts({ binaryWrite: 2 });
-  const store = new VisualInputGateStore(artifacts);
-
-  await assert.rejects(() => store.publish({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    gateKey: 'designImage',
-    multiple: true,
-    requiredVisual: true,
-    value: [
-      { dataUrl: `data:image/jpeg;base64,${JPEG.toString('base64')}` },
-      { dataUrl: `data:image/png;base64,${PNG.toString('base64')}` },
-    ],
-  }), /binary publication 2 failed/u);
-
-  assert.equal(artifacts.artifacts.get('binary-1')?.state, 'FAILED');
-  assert.deepEqual(artifacts.invalidations.map(({ artifactId }) => artifactId), ['binary-1']);
-  assert.equal(artifacts.jsonWrites.length, 0);
-});
-
-test('compensation failure never masks the original publication error', async () => {
-  const artifacts = new MemoryArtifacts({ binaryWrite: 2, invalidation: true });
-  const store = new VisualInputGateStore(artifacts);
-
-  await assert.rejects(() => store.publish({
-    taskId: 'task-1',
-    planVersionId: 'plan-1',
-    gateKey: 'designImage',
-    multiple: true,
-    requiredVisual: true,
-    value: [
-      { dataUrl: `data:image/jpeg;base64,${JPEG.toString('base64')}` },
-      { dataUrl: `data:image/png;base64,${PNG.toString('base64')}` },
-    ],
-  }), /binary publication 2 failed/u);
-});
-
-test('rejects nested, empty, and singular/multiple visual input shape mismatches', async () => {
-  const store = new VisualInputGateStore(new MemoryArtifacts());
-  const dataUrl = `data:image/png;base64,${PNG.toString('base64')}`;
-
-  await assert.rejects(() => store.publish({
-    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage', multiple: false,
-    requiredVisual: true,
-    value: { nested: { dataUrl } },
-  }), /single image input must be exactly/u);
-  await assert.rejects(() => store.publish({
-    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage', multiple: true,
-    requiredVisual: true,
-    value: [],
-  }), /multiple input/u);
-  await assert.rejects(() => store.publish({
-    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage', multiple: false,
-    requiredVisual: true,
-    value: [{ dataUrl }],
-  }), /single image input/u);
-});
-
-test('rejects visual URL/path fallbacks and inline images in non-visual values', async () => {
-  const store = new VisualInputGateStore(new MemoryArtifacts());
-  const dataUrl = `data:image/png;base64,${PNG.toString('base64')}`;
-  for (const value of [
-    {},
-    { url: 'https://images.example.test/design.png' },
-    { path: '/tmp/design.png' },
-    { image: dataUrl },
-  ]) {
-    await assert.rejects(() => store.publish({
-      taskId: 'task-1',
-      planVersionId: 'plan-1',
-      gateKey: 'designImage',
-      multiple: false,
-      requiredVisual: true,
-      value,
-    }), /single image input must be exactly/u);
-  }
-  for (const value of [
-    dataUrl,
-    { image: dataUrl },
-    { nested: [`prefix ${dataUrl}`] },
-  ]) {
-    await assert.rejects(() => store.publish({
-      taskId: 'task-1',
-      planVersionId: 'plan-1',
-      gateKey: 'brief',
-      multiple: false,
-      requiredVisual: false,
-      value,
-    }), /non-visual input contains a dataUrl/u);
-  }
-});
-
-test('fails closed on legacy raw data URLs and conflicting gate storage', async () => {
-  const store = new VisualInputGateStore(new MemoryArtifacts());
-  const dataUrl = `data:image/jpeg;base64,${JPEG.toString('base64')}`;
-  await assert.rejects(() => store.resolve({
-    taskId: 'task-1', planVersionId: 'plan-1', gates: [inputGate(null, { dataUrl })], pendingInputs: pending,
-  }), /unsealed dataUrl/u);
-
-  const artifacts = new MemoryArtifacts();
-  const published = await new VisualInputGateStore(artifacts).publish({
-    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage', multiple: false,
-    requiredVisual: true, value: { dataUrl },
+    gates: [inputGate(uploaded.visualInputId)],
+    pendingInputs: pending,
   });
-  await assert.rejects(() => new VisualInputGateStore(artifacts).resolve({
-    taskId: 'task-1', planVersionId: 'plan-1',
-    gates: [inputGate(published.evidenceRef!, { dataUrl })], pendingInputs: pending,
-  }), /both a value and evidence reference/u);
+  const value = resolved.gates[0]?.value as { dataUrl: string };
+  assert.match(value.dataUrl, /^data:image\/png;base64,/u);
+  assert.deepEqual(Buffer.from(value.dataUrl.split(',')[1]!, 'base64'), PNG);
+});
+
+test('rejects unsupported MIME and singular/multiple mismatches at upload', async () => {
+  const store = new VisualInputGateStore(new MemoryArtifacts());
+  await assert.rejects(() => store.upload({
+    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage',
+    multiple: false, taskSensitivity: 'internal',
+    files: [{ fileName: 'design.png', mediaType: 'image/jpeg', bytes: PNG }],
+  }), /metadata does not match/u);
+  await assert.rejects(() => store.upload({
+    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage',
+    multiple: false, taskSensitivity: 'internal', files: [],
+  }), /exactly one image/u);
+});
+
+test('invalidates all written images when publication fails', async () => {
+  const artifacts = new MemoryArtifacts();
+  artifacts.failManifest = true;
+  const store = new VisualInputGateStore(artifacts);
+  await assert.rejects(() => store.upload({
+    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'screenshots',
+    multiple: true, taskSensitivity: 'internal',
+    files: [
+      { fileName: 'one.png', mediaType: 'image/png', bytes: PNG },
+      { fileName: 'two.jpg', mediaType: 'image/jpeg', bytes: JPEG },
+    ],
+  }), /manifest write failed/u);
+  assert.deepEqual(artifacts.invalidations, ['binary-1', 'binary-2']);
 });
 
 test('rejects foreign manifests and duplicate image Artifact references', async () => {
   const artifacts = new MemoryArtifacts();
   const store = new VisualInputGateStore(artifacts);
-  const jpegUrl = `data:image/jpeg;base64,${JPEG.toString('base64')}`;
-  const pngUrl = `data:image/png;base64,${PNG.toString('base64')}`;
-  const published = await store.publish({
-    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage', multiple: true,
-    requiredVisual: true,
-    value: [{ dataUrl: jpegUrl }, { dataUrl: pngUrl }],
+  const uploaded = await store.upload({
+    taskId: 'task-1', planVersionId: 'plan-1', gateKey: 'designImage',
+    multiple: false, taskSensitivity: 'internal',
+    files: [{ fileName: 'design.png', mediaType: 'image/png', bytes: PNG }],
   });
-  const manifest = artifacts.values.get(published.evidenceRef!) as Record<string, unknown>;
-  manifest.taskId = 'foreign-task';
-  artifacts.values.set(published.evidenceRef!, manifest);
+  const manifest = artifacts.values.get(uploaded.visualInputId) as Record<string, unknown>;
+  artifacts.values.set(uploaded.visualInputId, { ...manifest, taskId: 'task-foreign' });
   await assert.rejects(() => store.resolve({
-    taskId: 'task-1', planVersionId: 'plan-1', gates: [inputGate(published.evidenceRef!)],
-    pendingInputs: [{ ...pending[0]!, multiple: true }],
-  }), /manifest does not match/u);
+    taskId: 'task-1', planVersionId: 'plan-1',
+    gates: [inputGate(uploaded.visualInputId)], pendingInputs: pending,
+  }), /active plan/u);
 
-  manifest.taskId = 'task-1';
-  const images = manifest.images as Array<Record<string, unknown>>;
-  images[1] = structuredClone(images[0]);
-  artifacts.values.set(published.evidenceRef!, manifest);
+  artifacts.values.set(uploaded.visualInputId, {
+    ...manifest,
+    multiple: true,
+    images: [
+      ...manifest.images as unknown[],
+      ...(manifest.images as unknown[]),
+    ],
+  });
   await assert.rejects(() => store.resolve({
-    taskId: 'task-1', planVersionId: 'plan-1', gates: [inputGate(published.evidenceRef!)],
-    pendingInputs: [{ ...pending[0]!, multiple: true }],
+    taskId: 'task-1', planVersionId: 'plan-1',
+    gates: [inputGate(uploaded.visualInputId)], pendingInputs: [{ ...pending[0]!, multiple: true }],
   }), /duplicated/u);
 });

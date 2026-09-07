@@ -1985,7 +1985,7 @@ test('rejects a legacy raw visual gate before materialization or Tool side effec
 
   await assert.rejects(
     () => engine.execute({ lease, expectedModel: 'pinned-model' }),
-    /unsealed dataUrl/u,
+    /no sealed evidence reference/u,
   );
   assert.equal(materializeCalls, 0);
   assert.equal(adapter.calls, 0);
@@ -2048,13 +2048,13 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   );
-  const published = await visualInputGates.publish({
+  const published = await visualInputGates.upload({
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     gateKey: 'designImage',
     multiple: false,
-    requiredVisual: true,
-    value: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+    taskSensitivity: 'internal',
+    files: [{ fileName: 'design.png', mediaType: 'image/png', bytes: png }],
   });
   await repository.recordGate({
     taskId: lease.taskId,
@@ -2064,7 +2064,7 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     gateKey: 'designImage',
     requiredAuthority: 'owner',
     decision: 'provided',
-    evidenceRef: published.evidenceRef,
+    evidenceRef: published.visualInputId,
     actorUserId: ownerId,
     actorRole: 'owner',
     idempotencyKey: `sealed-visual-${randomUUID()}`,
