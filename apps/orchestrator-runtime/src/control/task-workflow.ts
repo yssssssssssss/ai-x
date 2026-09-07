@@ -29,9 +29,6 @@ import { assertValidReportReviewArtifact } from '../report/report-review-service
 import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
 import { parseReportPackageV2, parseReportPackageV3 } from '../../../../packages/api-contract/report-package.ts';
 import {
-  VisualInputDataUrlError,
-} from '../report/visual-input-data-url.ts';
-import {
   DatasetInputGateError,
   type DatasetInputGateStore,
   type PreparedDatasetInputGate,
@@ -43,7 +40,6 @@ import {
 } from './document-input-gate-store.ts';
 import {
   VisualInputGateError,
-  type PreparedVisualInputGate,
   type PublishedVisualInputGate,
   type VisualInputGateStore,
 } from './visual-input-gate-store.ts';
@@ -384,7 +380,7 @@ export class TaskWorkflowService {
     private readonly terminalArtifacts?: WorkflowArtifactReader,
     private readonly visualInputGates?: Pick<
       VisualInputGateStore,
-      'prepare' | 'prepareBinding' | 'publishPrepared' | 'invalidate'
+      'prepareBinding' | 'invalidate'
     >,
     private readonly datasetInputGates?: Pick<
       DatasetInputGateStore,
@@ -739,8 +735,7 @@ export class TaskWorkflowService {
       throw new TaskWorkflowGateError(['input_values.document']);
     }
 
-    const preparedVisualInputs = new Map<string, PreparedVisualInputGate>();
-    const preparedUploadedVisualInputs = new Map<string, PublishedVisualInputGate>();
+    const preparedVisualInputs = new Map<string, PublishedVisualInputGate>();
     const preparedDatasetInputs = new Map<string, PreparedDatasetInputGate>();
     const preparedDocumentInputs = new Map<string, PreparedDocumentInputGate>();
     const plainInputs = new Map<string, PublishedVisualInputGate & { kind: 'value' }>();
@@ -775,8 +770,11 @@ export class TaskWorkflowService {
           }));
           continue;
         }
-        if (pending.kind === 'visual' && typeof value === 'string' && value.trim()) {
-          preparedUploadedVisualInputs.set(pending.role, await this.visualInputGates!.prepareBinding({
+        if (pending.kind === 'visual') {
+          if (typeof value !== 'string' || !value.trim()) {
+            throw new VisualInputGateError(`visual ${pending.role} requires one uploaded Visual id`);
+          }
+          preparedVisualInputs.set(pending.role, await this.visualInputGates!.prepareBinding({
             taskId: task.id,
             planVersionId: plan.id,
             gateKey: pending.role,
@@ -785,24 +783,12 @@ export class TaskWorkflowService {
           }));
           continue;
         }
-        if (!this.visualInputGates) {
-          if (containsInlineImageData(value)) throw new VisualInputGateError('input contains a dataUrl');
-          plainInputs.set(pending.role, { kind: 'value', value, artifactIds: [] });
-          continue;
-        }
-        preparedVisualInputs.set(pending.role, await this.visualInputGates.prepare({
-          taskId: task.id,
-          planVersionId: plan.id,
-          gateKey: pending.role,
-          multiple: pending.multiple,
-          requiredVisual: pending.kind === 'visual',
-          value,
-        }));
+        if (containsInlineImageData(value)) throw new VisualInputGateError('input contains a dataUrl');
+        plainInputs.set(pending.role, { kind: 'value', value, artifactIds: [] });
       }
     } catch (error) {
       if (
         error instanceof VisualInputGateError
-        || error instanceof VisualInputDataUrlError
         || error instanceof DatasetInputGateError
         || error instanceof DocumentInputGateError
       ) {
@@ -872,26 +858,8 @@ export class TaskWorkflowService {
       }
       return Promise.resolve();
     };
-    let publicationId: string | undefined;
     try {
-      if ([...preparedVisualInputs.values()].some((prepared) => prepared.requiredVisual)) {
-        publicationId = await this.repository.beginVisualPublication({
-          taskId: task.id,
-          planVersionId: plan.id,
-          idempotencyKey: input.idempotencyKey,
-          requestHash: hash,
-          expectedVersion: input.expectedVersion,
-          reservationToken,
-        });
-      }
       for (const [role, prepared] of preparedVisualInputs) {
-        const published = await this.visualInputGates!.publishPrepared(prepared, publicationId);
-        publishedInputs.set(role, {
-          ...published,
-          kind: prepared.requiredVisual ? 'visual' : 'value',
-        });
-      }
-      for (const [role, prepared] of preparedUploadedVisualInputs) {
         publishedInputs.set(role, { ...prepared, kind: 'visual' });
       }
       for (const [role, prepared] of preparedDatasetInputs) {
@@ -947,7 +915,6 @@ export class TaskWorkflowService {
         requestHash: hash,
         expectedVersion: input.expectedVersion,
         reservationToken,
-        ...(publicationId === undefined ? {} : { publicationId }),
         actorUserId: input.actor.userId,
         actorService: input.actor.service,
         actorRole: input.actor.role,
@@ -956,19 +923,6 @@ export class TaskWorkflowService {
       });
       return { state: transitioned.state, stateVersion: transitioned.stateVersion };
     } catch (error) {
-      if (publicationId) {
-        await this.repository.settleVisualPublicationAfterFailure({
-          publicationId,
-          taskId: task.id,
-          planVersionId: plan.id,
-          idempotencyKey: input.idempotencyKey,
-          requestHash: hash,
-          expectedVersion: input.expectedVersion,
-          reservationToken,
-          releaseReservation: true,
-          reason: 'confirmation did not commit',
-        });
-      }
       const released = await this.repository.releaseCommand({
         taskId: task.id,
         commandType: 'confirmation',
