@@ -187,6 +187,7 @@ export type IndustryMaterialRole =
   | 'jd_screenshots'
   | 'competitor_screenshots'
   | 'competitor_platform_names'
+  | 'internal_documents'
   | 'user_research_dataset'
   | 'internal_metrics_dataset';
 
@@ -253,7 +254,7 @@ export function missingRequiredClarificationAnswers(
 }
 
 export interface PendingUpload {
-  kind?: 'value' | 'visual' | 'dataset';
+  kind?: 'value' | 'document' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;

@@ -134,6 +134,9 @@ test('native Stage4 exposes final report and Skill result views with original an
   assert.match(reportSource, />最终报告</u);
   assert.match(reportSource, />分析明细</u);
   assert.match(reportSource, /controlFinalReportHtml/u);
+  assert.match(reportSource, /controlVisualAsset/u);
+  assert.match(reportSource, /controlFinalReportZip/u);
+  assert.match(reportSource, /下载离线报告/u);
   assert.match(reportSource, /下载原始报告/u);
   assert.match(reportSource, /下载 HTML/u);
   assert.match(reportSource, /selectedResult\.primary\.content/u);

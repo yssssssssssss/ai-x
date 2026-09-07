@@ -10,6 +10,16 @@ interface ClarificationChoice {
   description: string;
 }
 
+const TASK_TYPE_LABELS: Readonly<Record<string, string>> = {
+  competitive_research: '竞品研究',
+  user_research_planning: '用户研究规划',
+  research_synthesis: '研究综合',
+  voc_diagnosis: '用户声音诊断',
+  design_audit: '设计体验诊断',
+  a11y_audit: '无障碍诊断',
+  industry_market_analysis: '行业市场分析',
+};
+
 function userFacingClarificationOption(option: string): string {
   return /上传.*(?:截图|图片)|(?:截图|图片).*上传/u.test(option)
     ? option.replace(/我(?:现在|先)?上传/u, '我可以在下一步上传')
@@ -81,7 +91,7 @@ export function CurrentStage1Clarify({
         <b>当前理解</b>
         <p style={{ margin: '6px 0', color: 'var(--text-dim)' }}>{response.structuredTask.research_goal}</p>
         <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-          {response.structuredTask.business_domain} · {response.structuredTask.task_type}
+          {response.structuredTask.business_domain} · {TASK_TYPE_LABELS[response.structuredTask.task_type] ?? '专业分析'}
         </div>
       </div>
 
@@ -223,15 +233,15 @@ export function CurrentStage1Clarify({
       {response.structuredTask.assumptions.length > 0 && (
         <div style={{ marginBottom: 14 }}>
           <b style={{ fontSize: 13 }}>系统假设（可编辑）</b>
-          {response.structuredTask.assumptions.map((assumption) => (
+          {response.structuredTask.assumptions.map((assumption, index) => (
             <label key={assumption.key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, fontSize: 13 }}>
-              <span style={{ width: 100, color: 'var(--text-faint)' }}>{assumption.key}</span>
+              <span style={{ width: 100, color: 'var(--text-faint)' }}>补充条件 {index + 1}</span>
               <input
                 className="clarification-field"
                 value={assumptionEdits[assumption.key] ?? assumption.value}
                 disabled={disabled || !assumption.editable}
                 onChange={(event) => setAssumptionEdits((previous) => ({ ...previous, [assumption.key]: event.target.value }))}
-                aria-label={`编辑假设 ${assumption.key}`}
+                aria-label={`编辑补充条件 ${index + 1}`}
                 style={{ flex: 1 }}
               />
             </label>

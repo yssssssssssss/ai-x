@@ -234,6 +234,8 @@ skills:
     enabled: true
     task_types:
       - voc_diagnosis
+    document_inputs:
+      - user_materials
     required_tools:
       - tavily-web-search
     risk_level: low
@@ -733,6 +735,8 @@ skills:
     dataset_inputs:
       - user_research_dataset
       - internal_metrics_dataset
+    document_inputs:
+      - internal_documents
     required_tools:
       - tavily-web-search
     optional_tools:
@@ -764,6 +768,7 @@ skills:
         - jd_screenshots
         - competitor_screenshots
         - competitor_platform_names
+        - internal_documents
         - user_research_dataset
         - internal_metrics_dataset
       shareable_prerequisites:
@@ -777,6 +782,8 @@ skills:
     enabled: true
     task_types:
       - user_research_planning
+    document_inputs:
+      - user_materials
     risk_level: low
     composition:
       modes:
@@ -794,6 +801,8 @@ skills:
     enabled: true
     task_types:
       - user_research_planning
+    document_inputs:
+      - user_materials
     risk_level: low
     composition:
       modes:

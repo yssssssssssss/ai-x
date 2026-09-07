@@ -32,6 +32,8 @@ import {
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
 import { DatasetInputGateError } from '../../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
+import { DocumentInputGateError } from '../../../orchestrator-runtime/src/control/document-input-gate-store.ts';
+import { VisualInputGateError } from '../../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import {
   InvalidScenarioSelectionError,
   planningGuidanceFromStored,
@@ -75,15 +77,21 @@ export interface ControlTasksRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  readFinalReportZip?(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null>;
   readVisualAsset?(input: {
     taskId: string;
     assetId: string;
     ownerUserId: string;
   }): Promise<{
     artifact: { id: string };
-    manifestArtifact: { schemaVersion: string };
     bytes: Uint8Array;
-    manifest: unknown;
+    manifestArtifact?: { schemaVersion: string };
+    manifest?: unknown;
+    mediaType?: 'image/png' | 'image/jpeg' | 'image/webp';
+    inputAsset?: true;
   } | null>;
   readHtmlBundle?(input: {
     taskId: string;
@@ -112,6 +120,22 @@ export interface ControlTasksRuntime {
       sampling: string;
       piiConfirmedAbsent: boolean;
     };
+  }): Promise<unknown>;
+  uploadDocument?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+  }): Promise<unknown>;
+  uploadVisual?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
   }): Promise<unknown>;
   clarification?: ControlClarificationPort;
 }
@@ -218,7 +242,13 @@ function publicError(error: unknown): {
   body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
 } {
   if (error instanceof DatasetInputGateError) {
-    return { status: 422, body: { error: error.message, code: error.code } };
+    return { status: 422, body: { error: 'CSV 文件格式无效或与当前计划不匹配', code: error.code } };
+  }
+  if (error instanceof DocumentInputGateError) {
+    return { status: 422, body: { error: '文档格式无效或与当前计划不匹配', code: error.code } };
+  }
+  if (error instanceof VisualInputGateError) {
+    return { status: 422, body: { error: '图片格式无效或与当前计划不匹配' } };
   }
   if (error instanceof TaskWorkflowGateError) {
     return { status: 422, body: { error: error.message, unresolved: error.unresolved } };
@@ -245,7 +275,7 @@ function publicError(error: unknown): {
   if (error instanceof ControlPlaneConflictError) {
     return { status: 409, body: { error: error.message } };
   }
-  return { status: 500, body: { error: 'control workflow failed' } };
+  return { status: 500, body: { error: '任务处理失败' } };
 }
 
 function responseError(res: Response, error: unknown): void {
@@ -597,6 +627,75 @@ function readDatasetMultipart(req: Request): Promise<ParsedDatasetUpload> {
   });
 }
 
+interface ParsedMaterialFiles {
+  files: Array<{ fileName: string; mediaType: string; bytes: Buffer }>;
+}
+
+function readMaterialFilesMultipart(
+  req: Request,
+  invalid: (message: string) => Error,
+): Promise<ParsedMaterialFiles> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 20, fields: 0, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(invalid(error instanceof Error ? error.message : 'invalid multipart request'));
+      return;
+    }
+    const files: Array<{ index: number; fileName: string; mediaType: string; chunks: Buffer[]; tooLarge: boolean }> = [];
+    let rejected = false;
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file') {
+        stream.resume();
+        rejected = true;
+        reject(invalid('multipart request only accepts file fields'));
+        return;
+      }
+      const file = {
+        index: files.length,
+        fileName: info.filename,
+        mediaType: info.mimeType,
+        chunks: [] as Buffer[],
+        tooLarge: false,
+      };
+      files.push(file);
+      stream.on('limit', () => { file.tooLarge = true; });
+      stream.on('data', (chunk: Buffer) => file.chunks.push(Buffer.from(chunk)));
+      stream.on('error', reject);
+    });
+    parser.on('field', () => {
+      rejected = true;
+      reject(invalid('multipart request does not accept text fields'));
+    });
+    parser.on('filesLimit', () => {
+      rejected = true;
+      reject(invalid('file count exceeds 20 files'));
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      if (rejected) return;
+      try {
+        if (files.length === 0) throw invalid('at least one file field is required');
+        const oversized = files.find(({ tooLarge }) => tooLarge);
+        if (oversized) throw invalid(`file ${oversized.fileName} exceeds 10 MiB`);
+        resolve({
+          files: files
+            .sort((left, right) => left.index - right.index)
+            .map(({ fileName, mediaType, chunks }) => ({
+              fileName,
+              mediaType,
+              bytes: Buffer.concat(chunks),
+            })),
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.pipe(parser);
+  });
+}
+
 export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
@@ -726,11 +825,40 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       res.set({
         'Cache-Control': 'private, no-store',
         'Content-Disposition': 'inline; filename="report.html"',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         'Content-Type': 'text/html; charset=utf-8',
         'X-Content-Type-Options': 'nosniff',
       });
       res.send(html);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report.zip', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.readFinalReportZip) {
+      res.status(409).json({ error: '离线报告暂不可用' });
+      return;
+    }
+    try {
+      const bytes = await runtime.readFinalReportZip({
+        taskId: req.params.id,
+        ownerUserId: actor.userId,
+      });
+      if (!bytes) {
+        res.status(404).json({ error: '离线报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('研究报告.zip')}`,
+        'Content-Type': 'application/zip',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(Buffer.from(bytes));
     } catch (error) {
       responseError(res, error);
     }
@@ -751,26 +879,41 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
         assetId: req.params.assetId,
         ownerUserId: actor.userId,
       });
-      if (
-        !asset
-        || asset.artifact.id !== req.params.assetId
-      ) {
+      if (!asset || asset.artifact.id !== req.params.assetId) {
         hidden();
         return;
       }
-      assertVisualAssetManifestSchema(asset.manifest);
-      const manifest: VisualAssetManifest = asset.manifest;
-      if (
-        manifest.assetId !== req.params.assetId
-        || asset.manifestArtifact.schemaVersion !== manifest.version
-      ) {
-        hidden();
-        return;
+      let mediaType: string;
+      if (asset.inputAsset === true) {
+        if (
+          asset.mediaType !== 'image/png'
+          && asset.mediaType !== 'image/jpeg'
+          && asset.mediaType !== 'image/webp'
+        ) {
+          hidden();
+          return;
+        }
+        mediaType = asset.mediaType;
+      } else {
+        if (!asset.manifest || !asset.manifestArtifact) {
+          hidden();
+          return;
+        }
+        assertVisualAssetManifestSchema(asset.manifest);
+        const manifest: VisualAssetManifest = asset.manifest;
+        if (
+          manifest.assetId !== req.params.assetId
+          || asset.manifestArtifact.schemaVersion !== manifest.version
+        ) {
+          hidden();
+          return;
+        }
+        mediaType = manifest.mediaType;
       }
       res.set({
         'Cache-Control': 'private, no-store',
         'Content-Disposition': 'inline',
-        'Content-Type': manifest.mediaType,
+        'Content-Type': mediaType,
       });
       res.send(Buffer.from(asset.bytes));
     } catch {
@@ -1042,6 +1185,80 @@ router.post('/:id/plans/:planVersionId/inputs/:role/dataset', async (req, res) =
       mediaType: upload.mediaType,
       bytes: upload.bytes,
       metadata: upload.metadata,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/document', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadDocument) {
+    res.status(503).json({ error: '文档上传暂不可用' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readMaterialFilesMultipart(
+      req,
+      (message) => new DocumentInputGateError(message),
+    );
+    const result = await runtime.uploadDocument({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      files: upload.files,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/visual', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadVisual) {
+    res.status(503).json({ error: '图片上传暂不可用' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readMaterialFilesMultipart(
+      req,
+      (message) => new VisualInputGateError(message),
+    );
+    const result = await runtime.uploadVisual({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      files: upload.files,
     });
     res.status(201).set('Idempotency-Key', key).json(result);
   } catch (error) {

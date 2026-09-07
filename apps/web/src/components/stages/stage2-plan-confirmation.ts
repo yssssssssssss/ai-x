@@ -1,5 +1,4 @@
-import type { DatasetUpload, PendingUpload, Upload } from '../../api/client.ts';
-import { pendingImageUploads } from '../../pending-upload-values.ts';
+import type { DatasetUpload, DocumentUpload, PendingUpload, VisualUpload } from '../../api/client.ts';
 
 type DatasetMetadata = DatasetUpload['metadata'];
 
@@ -58,8 +57,9 @@ export function reconcileDatasetColumnMetadata(
 export interface PlanConfirmationPayload {
   confirmationAnswers: Record<string, unknown>;
   inputValues: Record<string, unknown>;
-  uploads: Upload[];
+  visualUploads: VisualUpload[];
   datasetUploads: DatasetUpload[];
+  documentUploads?: DocumentUpload[];
   waivedInputKeys?: string[];
 }
 
@@ -67,8 +67,9 @@ export function buildPlanConfirmationPayload(input: {
   confirmationAnswers: Readonly<Record<string, string>>;
   pending: readonly PendingUpload[];
   values: Readonly<Record<string, string>>;
-  images: Readonly<Record<string, readonly string[]>>;
+  images: Readonly<Record<string, readonly File[]>>;
   datasets?: Readonly<Record<string, DatasetUpload | undefined>>;
+  documents?: Readonly<Record<string, readonly File[] | undefined>>;
   waivedInputKeys?: readonly string[];
 }): PlanConfirmationPayload {
   const waived = new Set(input.waivedInputKeys ?? []);
@@ -80,20 +81,25 @@ export function buildPlanConfirmationPayload(input: {
       ? raw.split('\n').map((item) => item.trim()).filter(Boolean)
       : raw.trim();
   }
+  const documentUploads = input.pending.flatMap((pendingInput) => {
+    if (pendingInput.kind !== 'document' || waived.has(pendingInput.role)) return [];
+    const files = input.documents?.[pendingInput.role];
+    return files && files.length > 0 ? [{ role: pendingInput.role, files: [...files] }] : [];
+  });
   return {
     confirmationAnswers: { ...input.confirmationAnswers },
     inputValues,
-    uploads: pendingImageUploads(
-      input.pending.filter((pendingInput) => (
-        pendingInput.kind === 'visual' && !waived.has(pendingInput.role)
-      )),
-      input.images,
-    ),
+    visualUploads: input.pending.flatMap((pendingInput) => {
+      if (pendingInput.kind !== 'visual' || waived.has(pendingInput.role)) return [];
+      const files = input.images[pendingInput.role] ?? [];
+      return files.length > 0 ? [{ role: pendingInput.role, files: [...files] }] : [];
+    }),
     datasetUploads: input.pending.flatMap((pendingInput) => {
       if (pendingInput.kind !== 'dataset' || waived.has(pendingInput.role)) return [];
       const upload = input.datasets?.[pendingInput.role];
       return upload ? [upload] : [];
     }),
+    ...(documentUploads.length === 0 ? {} : { documentUploads }),
     ...(waived.size === 0 ? {} : { waivedInputKeys: [...waived] }),
   };
 }

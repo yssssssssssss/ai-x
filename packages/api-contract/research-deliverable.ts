@@ -225,6 +225,9 @@ export interface CurrentCapabilitySkill {
   intent_tags?: string[];
   inputs: string[];
   visual_inputs?: string[];
+  multiple_visual_inputs?: string[];
+  dataset_inputs?: string[];
+  document_inputs?: string[];
   outputs: string[];
   input_schema?: string;
   output_schema?: string;
@@ -262,7 +265,7 @@ export interface CurrentCapabilityDecisionReason {
 }
 
 export interface CurrentCapabilityPendingInput {
-  kind: 'value' | 'visual' | 'dataset';
+  kind: 'value' | 'document' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;
@@ -527,7 +530,7 @@ export interface ContributionLedgerV1 {
 }
 
 export interface PendingInput {
-  kind: 'value' | 'visual' | 'dataset';
+  kind: 'value' | 'document' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;

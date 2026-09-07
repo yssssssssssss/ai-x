@@ -27,8 +27,8 @@ test('Stage2Plan renders frozen resource cardinality gaps before confirmation', 
   const source = await readFile(component, 'utf8');
   assert.match(source, /skill_invocations\?\.flatMap/u);
   assert.match(source, /知识资源缺口/u);
-  assert.match(source, /gap\.selected_items/u);
-  assert.match(source, /gap\.min_items/u);
+  assert.match(source, /部分可选知识材料暂不可用/u);
+  assert.doesNotMatch(source, /gap\.query_id/u);
 });
 
 test('Stage2Plan exposes CSV field descriptions and units after reading the selected header', async () => {
@@ -41,6 +41,7 @@ test('Stage2Plan exposes CSV field descriptions and units after reading the sele
 });
 
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
+  const screenshot = new File(['fixture'], 'screen.png', { type: 'image/png' });
   const payload = buildPlanConfirmationPayload({
     confirmationAnswers: { scope: '中国主流平台' },
     pending: [{
@@ -61,15 +62,15 @@ test('Stage2 confirmation payload includes only declared pending inputs and no w
       scoring_weights: '{"需求理解": 1}',
     },
     images: {
-      screenshots: ['data:image/png;base64,fixture', 'data:image/png;base64,ignored'],
-      scoring_weights: ['data:text/plain,fixture'],
+      screenshots: [screenshot],
+      scoring_weights: [new File(['fixture'], 'ignored.txt', { type: 'text/plain' })],
     },
   });
 
   assert.deepEqual(payload, {
     confirmationAnswers: { scope: '中国主流平台' },
     inputValues: { competitors: ['京东', '淘宝'] },
-    uploads: [{ role: 'screenshots', dataUrl: 'data:image/png;base64,fixture' }],
+    visualUploads: [{ role: 'screenshots', files: [screenshot] }],
     datasetUploads: [],
   });
   assert.equal(JSON.stringify(payload).includes('scoring_weights'), false);
@@ -92,10 +93,38 @@ test('Stage2 confirmation omits explicitly waived optional inputs', () => {
   assert.deepEqual(payload, {
     confirmationAnswers: {},
     inputValues: {},
-    uploads: [],
+    visualUploads: [],
     datasetUploads: [],
     waivedInputKeys: ['user_materials'],
   });
+});
+
+test('Stage2Plan offers document uploads without an anonymization confirmation', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /支持 Markdown 和 TXT/u);
+  assert.match(source, /accept="\.md,\.txt,text\/markdown,text\/plain"/u);
+  assert.doesNotMatch(source, /readAsDataURL/u);
+  assert.doesNotMatch(source, /我确认文件已匿名化/u);
+});
+
+test('Stage2 confirmation keeps uploaded documents as opaque pre-upload requests', () => {
+  const files = [
+    new File(['# 背景'], 'background.md', { type: 'text/markdown' }),
+    new File(['访谈内容'], 'interview.txt', { type: 'text/plain' }),
+  ];
+  const payload = buildPlanConfirmationPayload({
+    confirmationAnswers: {},
+    pending: [{
+      kind: 'document', role: 'internal_documents', label: '内部业务材料', multiple: true,
+      targets: [{ step_no: 4, tool_id: 'industry-market-analysis', field: 'internal_documents', multiple: true }],
+    }],
+    values: {}, images: {}, documents: { internal_documents: files },
+  });
+
+  assert.deepEqual(payload.inputValues, {});
+  assert.deepEqual(payload.visualUploads, []);
+  assert.deepEqual(payload.datasetUploads, []);
+  assert.deepEqual(payload.documentUploads, [{ role: 'internal_documents', files }]);
 });
 
 test('Stage2 parses quoted UTF-8 CSV headers and scopes field metadata to the selected columns', () => {
@@ -142,6 +171,6 @@ test('Stage2 confirmation keeps an uploaded Dataset as an opaque pre-upload requ
   });
 
   assert.deepEqual(payload.inputValues, {});
-  assert.deepEqual(payload.uploads, []);
+  assert.deepEqual(payload.visualUploads, []);
   assert.deepEqual(payload.datasetUploads, [dataset]);
 });

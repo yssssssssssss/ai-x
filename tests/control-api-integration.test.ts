@@ -1219,6 +1219,195 @@ test('Dataset multipart upload forwards the owner-bound Idempotency-Key and pars
   }
 });
 
+test('Document multipart upload forwards all selected files without inline Base64', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'document route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证文档上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:document-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadDocument: async (input: unknown) => {
+      calls.push(input);
+      return {
+        documentInputId: 'document-1',
+        files: [{
+          fileName: 'background.md', mediaType: 'text/markdown; charset=utf-8',
+          contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 8,
+        }],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('file', new Blob(['# 业务背景'], { type: 'text/markdown' }), 'background.md');
+    form.append('file', new Blob(['访谈内容'], { type: 'text/plain' }), 'interview.txt');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/internal_documents/document`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(response.headers.get('Idempotency-Key'), key);
+    assert.equal(calls.length, 1);
+    const call = calls[0] as {
+      taskId: string; planVersionId: string; role: string; ownerUserId: string;
+      idempotencyKey: string; files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+    };
+    assert.deepEqual({
+      taskId: call.taskId,
+      planVersionId: call.planVersionId,
+      role: call.role,
+      ownerUserId: call.ownerUserId,
+      idempotencyKey: call.idempotencyKey,
+      files: call.files.map((file) => ({
+        fileName: file.fileName,
+        mediaType: file.mediaType,
+        content: Buffer.from(file.bytes).toString('utf8'),
+      })),
+    }, {
+      taskId: task.id,
+      planVersionId: plan.id,
+      role: 'internal_documents',
+      ownerUserId,
+      idempotencyKey: key,
+      files: [{ fileName: 'background.md', mediaType: 'text/markdown', content: '# 业务背景' },
+        { fileName: 'interview.txt', mediaType: 'text/plain', content: '访谈内容' }],
+    });
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('Visual multipart upload forwards image bytes without data URLs', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'visual route',
+    taskType: 'design_audit',
+    structuredTask: { research_goal: '验证图片上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:visual-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadVisual: async (input: unknown) => {
+      calls.push(input);
+      return {
+        visualInputId: 'visual-1',
+        images: [{ contentSha256: `sha256:${'3'.repeat(64)}`, mediaType: 'image/png', byteSize: 4 }],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }), 'screen.png');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/jd_screenshots/visual`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(calls.length, 1);
+    const call = calls[0] as { files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }> };
+    assert.deepEqual(call.files.map((file) => ({
+      fileName: file.fileName,
+      mediaType: file.mediaType,
+      bytes: [...file.bytes],
+    })), [{ fileName: 'screen.png', mediaType: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47] }]);
+    assert.doesNotMatch(JSON.stringify(call), /data:image|base64/u);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('owner can download a generated native report ZIP', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'zip route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证离线报告下载' },
+    state: 'completed',
+  });
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    readFinalReportZip: async () => new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await fetch(`${local.baseUrl}/api/control-tasks/${task.id}/final-report.zip`, {
+      headers: { authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}` },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.headers.get('content-type'), 'application/zip');
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0x50, 0x4b, 0x03, 0x04]);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('owner can read a sealed uploaded image through the report Asset route', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'uploaded image route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证报告图片读取' },
+    state: 'completed',
+  });
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    readVisualAsset: async () => ({
+      artifact: { id: 'input-image-1' },
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: 'image/png' as const,
+      inputAsset: true as const,
+    }),
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await fetch(`${local.baseUrl}/api/control-tasks/${task.id}/assets/input-image-1`, {
+      headers: { authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}` },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [1, 2, 3]);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
 test('GET /api/control-tasks lists only tasks owned by the authenticated user', async () => {
   const ownerTask = await repository.createTask({
     conversationId,

@@ -37,6 +37,11 @@ import {
   type PreparedDatasetInputGate,
 } from './dataset-input-gate-store.ts';
 import {
+  DocumentInputGateError,
+  type DocumentInputGateStore,
+  type PreparedDocumentInputGate,
+} from './document-input-gate-store.ts';
+import {
   VisualInputGateError,
   type PreparedVisualInputGate,
   type PublishedVisualInputGate,
@@ -216,7 +221,7 @@ function planShape(plan: ControlPlanVersionDetail): WorkflowPlanShape {
 
 function pendingInputRequirements(
   plan: ControlPlanVersionDetail,
-): Array<{ kind: 'value' | 'visual' | 'dataset'; role: string; multiple: boolean }> {
+): Array<{ kind: 'value' | 'document' | 'visual' | 'dataset'; role: string; multiple: boolean }> {
   try {
     return parsePendingInputContracts(plan.pendingInputs);
   } catch {
@@ -379,10 +384,14 @@ export class TaskWorkflowService {
     private readonly terminalArtifacts?: WorkflowArtifactReader,
     private readonly visualInputGates?: Pick<
       VisualInputGateStore,
-      'prepare' | 'publishPrepared' | 'invalidate'
+      'prepare' | 'prepareBinding' | 'publishPrepared' | 'invalidate'
     >,
     private readonly datasetInputGates?: Pick<
       DatasetInputGateStore,
+      'prepareBinding' | 'invalidate'
+    >,
+    private readonly documentInputGates?: Pick<
+      DocumentInputGateStore,
       'prepareBinding' | 'invalidate'
     >,
   ) {}
@@ -726,9 +735,14 @@ export class TaskWorkflowService {
     if (pendingInputs.some(({ kind }) => kind === 'dataset') && !this.datasetInputGates) {
       throw new TaskWorkflowGateError(['input_values.dataset']);
     }
+    if (pendingInputs.some(({ kind }) => kind === 'document') && !this.documentInputGates) {
+      throw new TaskWorkflowGateError(['input_values.document']);
+    }
 
     const preparedVisualInputs = new Map<string, PreparedVisualInputGate>();
+    const preparedUploadedVisualInputs = new Map<string, PublishedVisualInputGate>();
     const preparedDatasetInputs = new Map<string, PreparedDatasetInputGate>();
+    const preparedDocumentInputs = new Map<string, PreparedDocumentInputGate>();
     const plainInputs = new Map<string, PublishedVisualInputGate & { kind: 'value' }>();
     try {
       for (const pending of pendingInputs) {
@@ -744,6 +758,30 @@ export class TaskWorkflowService {
             gateKey: pending.role,
             ownerUserId: input.actor.userId,
             datasetInputId: value,
+          }));
+          continue;
+        }
+        if (pending.kind === 'document') {
+          if (typeof value !== 'string' || !value.trim()) {
+            throw new DocumentInputGateError(`document ${pending.role} requires one uploaded Document id`);
+          }
+          preparedDocumentInputs.set(pending.role, await this.documentInputGates!.prepareBinding({
+            taskId: task.id,
+            planVersionId: plan.id,
+            gateKey: pending.role,
+            ownerUserId: input.actor.userId,
+            documentInputId: value,
+            multiple: pending.multiple,
+          }));
+          continue;
+        }
+        if (pending.kind === 'visual' && typeof value === 'string' && value.trim()) {
+          preparedUploadedVisualInputs.set(pending.role, await this.visualInputGates!.prepareBinding({
+            taskId: task.id,
+            planVersionId: plan.id,
+            gateKey: pending.role,
+            multiple: pending.multiple,
+            visualInputId: value,
           }));
           continue;
         }
@@ -766,9 +804,14 @@ export class TaskWorkflowService {
         error instanceof VisualInputGateError
         || error instanceof VisualInputDataUrlError
         || error instanceof DatasetInputGateError
+        || error instanceof DocumentInputGateError
       ) {
         throw new TaskWorkflowGateError([
-          error instanceof DatasetInputGateError ? 'input_values.dataset' : 'input_values.dataUrl',
+          error instanceof DatasetInputGateError
+            ? 'input_values.dataset'
+            : error instanceof DocumentInputGateError
+              ? 'input_values.document'
+              : 'input_values.dataUrl',
         ]);
       }
       throw error;
@@ -804,16 +847,24 @@ export class TaskWorkflowService {
       reservationToken = reservation.reservationToken;
     }
 
-    const publishedInputs = new Map<string, (PublishedVisualInputGate | PreparedDatasetInputGate) & {
-      kind: 'value' | 'visual' | 'dataset';
+    const publishedInputs = new Map<string, (
+      PublishedVisualInputGate | PreparedDatasetInputGate | PreparedDocumentInputGate
+    ) & {
+      kind: 'value' | 'document' | 'visual' | 'dataset';
     }>();
     for (const [role, value] of plainInputs) publishedInputs.set(role, value);
     const invalidatePublishedInput = (
-      published: (PublishedVisualInputGate | PreparedDatasetInputGate) & { kind: 'value' | 'visual' | 'dataset' },
+      published: (
+        PublishedVisualInputGate | PreparedDatasetInputGate | PreparedDocumentInputGate
+      ) & { kind: 'value' | 'document' | 'visual' | 'dataset' },
       reason: string,
     ): Promise<void> => {
       if (published.kind === 'dataset') {
         return this.datasetInputGates?.invalidate(published as PreparedDatasetInputGate, reason)
+          ?? Promise.resolve();
+      }
+      if (published.kind === 'document') {
+        return this.documentInputGates?.invalidate(published as PreparedDocumentInputGate, reason)
           ?? Promise.resolve();
       }
       if (published.kind === 'visual') {
@@ -840,8 +891,14 @@ export class TaskWorkflowService {
           kind: prepared.requiredVisual ? 'visual' : 'value',
         });
       }
+      for (const [role, prepared] of preparedUploadedVisualInputs) {
+        publishedInputs.set(role, { ...prepared, kind: 'visual' });
+      }
       for (const [role, prepared] of preparedDatasetInputs) {
         publishedInputs.set(role, { ...prepared, kind: 'dataset' });
+      }
+      for (const [role, prepared] of preparedDocumentInputs) {
+        publishedInputs.set(role, { ...prepared, kind: 'document' });
       }
       const gates = [
         ...Object.entries(input.confirmationAnswers).map(([key, value]) => ({
@@ -863,7 +920,11 @@ export class TaskWorkflowService {
             ...('value' in published && published.value !== undefined ? { value: published.value } : {}),
             ...(published.evidenceRef === undefined ? {} : {
               evidenceRef: published.evidenceRef,
-              evidenceKind: published.kind === 'dataset' ? 'dataset' as const : 'visual' as const,
+              evidenceKind: published.kind === 'dataset'
+                ? 'dataset' as const
+                : published.kind === 'document'
+                  ? 'document' as const
+                  : 'visual' as const,
             }),
             idempotencyKey: `${input.idempotencyKey}:input:${role}`,
           };

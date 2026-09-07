@@ -18,8 +18,9 @@ import {
   type OrchestrationModeV1,
   type PlanProgress,
   type PlanResponse,
-  type Upload,
   type DatasetUpload,
+  type DocumentUpload,
+  type VisualUpload,
 } from '../api/client.ts';
 import {
   approvalSubmissionAllowed,
@@ -538,8 +539,9 @@ export function useTaskFlow() {
   async function confirmPlan(
     userAnswers: Record<string, unknown>,
     pendingValues: Record<string, unknown> = {},
-    uploads: Upload[] = [],
+    visualUploads: VisualUpload[] = [],
     datasetUploads: DatasetUpload[] = [],
+    documentUploads: DocumentUpload[] = [],
     waivedInputKeys: string[] = [],
   ) {
     if (!candidatesResp || !selectedCandidate || stateVersion == null) return;
@@ -557,22 +559,22 @@ export function useTaskFlow() {
           : [],
         userAnswers,
       );
-      const uploadsByRole = new Map<string, Array<{ dataUrl: string }>>();
-      for (const upload of uploads) {
-        const value = { dataUrl: upload.dataUrl };
-        const values = uploadsByRole.get(upload.role);
-        if (values) values.push(value);
-        else uploadsByRole.set(upload.role, [value]);
-      }
       const inputValues: Record<string, unknown> = Object.create(null);
       for (const [role, value] of Object.entries(pendingValues)) {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
         if (pendingInput?.kind === 'value') inputValues[role] = value;
       }
-      for (const [role, values] of uploadsByRole) {
-        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
+      for (const upload of visualUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
         if (pendingInput?.kind !== 'visual') continue;
-        inputValues[role] = pendingInput.multiple ? values : values[0];
+        const uploaded = await api.uploadControlVisuals(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.files,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.visualInputId;
       }
       for (const upload of datasetUploads) {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
@@ -586,6 +588,18 @@ export function useTaskFlow() {
           createRequestId(),
         );
         inputValues[upload.role] = uploaded.datasetInputId;
+      }
+      for (const upload of documentUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
+        if (pendingInput?.kind !== 'document') continue;
+        const uploaded = await api.uploadControlDocuments(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.files,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.documentInputId;
       }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,

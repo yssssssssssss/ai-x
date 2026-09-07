@@ -7,6 +7,7 @@ import type {
 
 export const NATIVE_SKILL_EXECUTION_PLAN_VERSION = 'native-skill-execution-plan-v1' as const;
 export const NATIVE_SKILL_RESULT_VERSION = 'native-skill-result-v1' as const;
+export const NATIVE_REPORT_DOCUMENT_VERSION = 'native-report-document-v1' as const;
 export const NATIVE_FINAL_REPORT_VERSION = 'native-final-report-v1' as const;
 export const DEFAULT_REPORT_PROMPT_VERSION = 'default-report-v1' as const;
 export const DEFAULT_REPORT_PROMPT = [
@@ -29,7 +30,7 @@ export const SKILL_INPUT_SOURCES = [
 
 export type SkillInputSource = typeof SKILL_INPUT_SOURCES[number];
 export type MaterialInputSource = Exclude<SkillInputSource, 'knowledge' | 'tool'>;
-export type SkillInputKind = 'value' | 'visual' | 'dataset';
+export type SkillInputKind = 'value' | 'document' | 'visual' | 'dataset';
 
 export interface SkillInputRequirement {
   key: string;
@@ -92,6 +93,88 @@ export interface NativeAttachment {
   contentHash: string;
 }
 
+export interface NativeReportSummary {
+  conclusion: string;
+  findings: string[];
+  actions: string[];
+}
+
+interface NativeReportBlockBase {
+  sourceIds: string[];
+}
+
+export interface NativeReportMarkdownBlock extends NativeReportBlockBase {
+  type: 'markdown';
+  content: string;
+}
+
+export interface NativeReportTableBlock extends NativeReportBlockBase {
+  type: 'table';
+  columns: string[];
+  rows: string[][];
+}
+
+export interface NativeReportMetricBlock extends NativeReportBlockBase {
+  type: 'metric-group';
+  metrics: Array<{ label: string; value: string; note?: string }>;
+}
+
+export interface NativeReportImageBlock extends NativeReportBlockBase {
+  type: 'image';
+  assetId: string;
+  caption: string;
+  altText: string;
+  display: 'phone-frame' | 'thumbnail' | 'full-width';
+}
+
+export interface NativeReportQuadrantBlock extends NativeReportBlockBase {
+  type: 'quadrant';
+  xAxis: string;
+  yAxis: string;
+  points: Array<{ label: string; x: number; y: number }>;
+}
+
+export interface NativeReportTimelineBlock extends NativeReportBlockBase {
+  type: 'timeline';
+  items: Array<{ title: string; description: string; tag?: string }>;
+}
+
+export interface NativeReportWireframeBlock extends NativeReportBlockBase {
+  type: 'wireframe';
+  title: string;
+  elements: Array<{ label: string; description?: string }>;
+}
+
+export type NativeReportBlock =
+  | NativeReportMarkdownBlock
+  | NativeReportTableBlock
+  | NativeReportMetricBlock
+  | NativeReportImageBlock
+  | NativeReportQuadrantBlock
+  | NativeReportTimelineBlock
+  | NativeReportWireframeBlock;
+
+export interface NativeReportSection {
+  id: string;
+  title: string;
+  blocks: NativeReportBlock[];
+}
+
+export interface NativeReportTab {
+  id: string;
+  title: string;
+  sections: NativeReportSection[];
+}
+
+export interface NativeReportDocumentV1 {
+  version: typeof NATIVE_REPORT_DOCUMENT_VERSION;
+  title: string;
+  subtitle?: string;
+  summary?: NativeReportSummary;
+  tabs: NativeReportTab[];
+  assetIds: string[];
+}
+
 export interface NativeSkillResult {
   version: typeof NATIVE_SKILL_RESULT_VERSION;
   skillId: string;
@@ -102,6 +185,8 @@ export interface NativeSkillResult {
   attachments: NativeAttachment[];
   sources: SourceReference[];
   gaps: string[];
+  reportDocument?: NativeReportDocumentV1;
+  reportDocumentHash?: string;
   missingInputKeys?: string[];
 }
 
@@ -124,6 +209,8 @@ export interface NativeFinalReport {
   sources: SourceReference[];
   gaps: string[];
   skillResults: NativeFinalReportSkillReference[];
+  reportDocument?: NativeReportDocumentV1;
+  reportDocumentHash?: string;
 }
 
 export interface FrozenSkillPackageFile {
@@ -206,7 +293,7 @@ export type ReadableExecutionPlan =
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const INPUT_SOURCES = new Set<string>(SKILL_INPUT_SOURCES);
-const INPUT_KINDS = new Set<string>(['value', 'visual', 'dataset']);
+const INPUT_KINDS = new Set<string>(['value', 'document', 'visual', 'dataset']);
 const REPORT_SOURCE_TYPES = new Set<string>(['user_input', 'knowledge', 'tool_result']);
 const NATIVE_SKILL_RESULT_STATUSES = new Set<string>(['completed', 'completed_with_gaps', 'needs_input']);
 const COMPLETED_NATIVE_SKILL_RESULT_STATUSES = new Set<string>(['completed', 'completed_with_gaps']);
@@ -234,6 +321,11 @@ function exactKeys(
   const allowed = new Set([...required, ...optional]);
   for (const key of required) if (!Object.hasOwn(value, key)) fail(contract, `${field}.${key}`);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(contract, `${field}.${key}`);
+}
+
+function text(value: unknown, contract: string, field: string): string {
+  if (typeof value !== 'string') fail(contract, field);
+  return value;
 }
 
 function nonBlank(value: unknown, contract: string, field: string): string {
@@ -447,13 +539,200 @@ function parseNativeAttachments(value: unknown, contract: string, field: string)
   return parsed;
 }
 
+function reportSourceIds(value: unknown, contract: string, field: string): string[] {
+  const ids = optionalUniqueStrings(value, contract, field)
+    .map((id, index) => canonicalId(id, contract, `${field}[${index}]`));
+  if (ids.some((id) => !id.startsWith('S-'))) fail(contract, field);
+  return ids;
+}
+
+function reportStringArray(value: unknown, contract: string, field: string): string[] {
+  return optionalUniqueStrings(value, contract, field);
+}
+
+function parseNativeReportBlock(
+  value: unknown,
+  contract: string,
+  field: string,
+): NativeReportBlock {
+  const block = record(value, contract, field);
+  const sourceIds = reportSourceIds(block.sourceIds, contract, `${field}.sourceIds`);
+  if (block.type === 'markdown') {
+    exactKeys(block, ['type', 'content', 'sourceIds'], [], contract, field);
+    return { type: 'markdown', content: nonBlank(block.content, contract, `${field}.content`), sourceIds };
+  }
+  if (block.type === 'table') {
+    exactKeys(block, ['type', 'columns', 'rows', 'sourceIds'], [], contract, field);
+    const columns = uniqueStrings(block.columns, contract, `${field}.columns`);
+    if (!Array.isArray(block.rows) || block.rows.length === 0) fail(contract, `${field}.rows`);
+    const rows = block.rows.map((row, rowIndex) => {
+      if (!Array.isArray(row) || row.length !== columns.length) fail(contract, `${field}.rows[${rowIndex}]`);
+      return row.map((cell, cellIndex) => text(cell, contract, `${field}.rows[${rowIndex}][${cellIndex}]`));
+    });
+    return { type: 'table', columns, rows, sourceIds };
+  }
+  if (block.type === 'metric-group') {
+    exactKeys(block, ['type', 'metrics', 'sourceIds'], [], contract, field);
+    if (!Array.isArray(block.metrics) || block.metrics.length === 0) fail(contract, `${field}.metrics`);
+    const metrics = block.metrics.map((value, index) => {
+      const itemField = `${field}.metrics[${index}]`;
+      const item = record(value, contract, itemField);
+      exactKeys(item, ['label', 'value'], ['note'], contract, itemField);
+      return {
+        label: nonBlank(item.label, contract, `${itemField}.label`),
+        value: nonBlank(item.value, contract, `${itemField}.value`),
+        ...(item.note === undefined ? {} : { note: nonBlank(item.note, contract, `${itemField}.note`) }),
+      };
+    });
+    return { type: 'metric-group', metrics, sourceIds };
+  }
+  if (block.type === 'image') {
+    exactKeys(block, ['type', 'assetId', 'caption', 'altText', 'display', 'sourceIds'], [], contract, field);
+    if (block.display !== 'phone-frame' && block.display !== 'thumbnail' && block.display !== 'full-width') {
+      fail(contract, `${field}.display`);
+    }
+    return {
+      type: 'image',
+      assetId: canonicalId(block.assetId, contract, `${field}.assetId`),
+      caption: nonBlank(block.caption, contract, `${field}.caption`),
+      altText: nonBlank(block.altText, contract, `${field}.altText`),
+      display: block.display,
+      sourceIds,
+    };
+  }
+  if (block.type === 'quadrant') {
+    exactKeys(block, ['type', 'xAxis', 'yAxis', 'points', 'sourceIds'], [], contract, field);
+    if (!Array.isArray(block.points) || block.points.length === 0) fail(contract, `${field}.points`);
+    const points = block.points.map((value, index) => {
+      const itemField = `${field}.points[${index}]`;
+      const item = record(value, contract, itemField);
+      exactKeys(item, ['label', 'x', 'y'], [], contract, itemField);
+      if (
+        typeof item.x !== 'number' || !Number.isFinite(item.x) || item.x < 0 || item.x > 100
+        || typeof item.y !== 'number' || !Number.isFinite(item.y) || item.y < 0 || item.y > 100
+      ) fail(contract, itemField);
+      return {
+        label: nonBlank(item.label, contract, `${itemField}.label`),
+        x: item.x,
+        y: item.y,
+      };
+    });
+    return {
+      type: 'quadrant',
+      xAxis: nonBlank(block.xAxis, contract, `${field}.xAxis`),
+      yAxis: nonBlank(block.yAxis, contract, `${field}.yAxis`),
+      points,
+      sourceIds,
+    };
+  }
+  if (block.type === 'timeline') {
+    exactKeys(block, ['type', 'items', 'sourceIds'], [], contract, field);
+    if (!Array.isArray(block.items) || block.items.length === 0) fail(contract, `${field}.items`);
+    const items = block.items.map((value, index) => {
+      const itemField = `${field}.items[${index}]`;
+      const item = record(value, contract, itemField);
+      exactKeys(item, ['title', 'description'], ['tag'], contract, itemField);
+      return {
+        title: nonBlank(item.title, contract, `${itemField}.title`),
+        description: nonBlank(item.description, contract, `${itemField}.description`),
+        ...(item.tag === undefined ? {} : { tag: nonBlank(item.tag, contract, `${itemField}.tag`) }),
+      };
+    });
+    return { type: 'timeline', items, sourceIds };
+  }
+  if (block.type === 'wireframe') {
+    exactKeys(block, ['type', 'title', 'elements', 'sourceIds'], [], contract, field);
+    if (!Array.isArray(block.elements) || block.elements.length === 0) fail(contract, `${field}.elements`);
+    const elements = block.elements.map((value, index) => {
+      const itemField = `${field}.elements[${index}]`;
+      const item = record(value, contract, itemField);
+      exactKeys(item, ['label'], ['description'], contract, itemField);
+      return {
+        label: nonBlank(item.label, contract, `${itemField}.label`),
+        ...(item.description === undefined
+          ? {}
+          : { description: nonBlank(item.description, contract, `${itemField}.description`) }),
+      };
+    });
+    return {
+      type: 'wireframe',
+      title: nonBlank(block.title, contract, `${field}.title`),
+      elements,
+      sourceIds,
+    };
+  }
+  fail(contract, `${field}.type`);
+}
+
+export function parseNativeReportDocument(value: unknown): NativeReportDocumentV1 {
+  const contract = 'NativeReportDocumentV1';
+  const root = record(value, contract);
+  exactKeys(root, ['version', 'title', 'tabs', 'assetIds'], ['subtitle', 'summary'], contract, 'value');
+  if (root.version !== NATIVE_REPORT_DOCUMENT_VERSION) fail(contract, 'version');
+  if (!Array.isArray(root.tabs) || root.tabs.length === 0) fail(contract, 'tabs');
+  const tabs = root.tabs.map((value, tabIndex): NativeReportTab => {
+    const field = `tabs[${tabIndex}]`;
+    const tab = record(value, contract, field);
+    exactKeys(tab, ['id', 'title', 'sections'], [], contract, field);
+    if (!Array.isArray(tab.sections) || tab.sections.length === 0) fail(contract, `${field}.sections`);
+    return {
+      id: canonicalId(tab.id, contract, `${field}.id`),
+      title: nonBlank(tab.title, contract, `${field}.title`),
+      sections: tab.sections.map((value, sectionIndex): NativeReportSection => {
+        const sectionField = `${field}.sections[${sectionIndex}]`;
+        const section = record(value, contract, sectionField);
+        exactKeys(section, ['id', 'title', 'blocks'], [], contract, sectionField);
+        if (!Array.isArray(section.blocks) || section.blocks.length === 0) fail(contract, `${sectionField}.blocks`);
+        return {
+          id: canonicalId(section.id, contract, `${sectionField}.id`),
+          title: nonBlank(section.title, contract, `${sectionField}.title`),
+          blocks: section.blocks.map((block, blockIndex) => (
+            parseNativeReportBlock(block, contract, `${sectionField}.blocks[${blockIndex}]`)
+          )),
+        };
+      }),
+    };
+  });
+  if (new Set(tabs.map(({ id }) => id)).size !== tabs.length) fail(contract, 'tabs.id');
+  const sectionIds = tabs.flatMap(({ sections }) => sections.map(({ id }) => id));
+  if (new Set(sectionIds).size !== sectionIds.length) fail(contract, 'sections.id');
+  let summary: NativeReportSummary | undefined;
+  if (root.summary !== undefined) {
+    const value = record(root.summary, contract, 'summary');
+    exactKeys(value, ['conclusion', 'findings', 'actions'], [], contract, 'summary');
+    summary = {
+      conclusion: nonBlank(value.conclusion, contract, 'summary.conclusion'),
+      findings: reportStringArray(value.findings, contract, 'summary.findings'),
+      actions: reportStringArray(value.actions, contract, 'summary.actions'),
+    };
+  }
+  const assetIds = optionalUniqueStrings(root.assetIds, contract, 'assetIds')
+    .map((id, index) => canonicalId(id, contract, `assetIds[${index}]`));
+  const referencedAssets = [...new Set(tabs.flatMap(({ sections }) => sections.flatMap(({ blocks }) => (
+    blocks.flatMap((block) => block.type === 'image' ? [block.assetId] : [])
+  ))))];
+  if (!isSameStringSet(referencedAssets, assetIds)) fail(contract, 'assetIds');
+  return {
+    version: NATIVE_REPORT_DOCUMENT_VERSION,
+    title: nonBlank(root.title, contract, 'title'),
+    ...(root.subtitle === undefined ? {} : { subtitle: nonBlank(root.subtitle, contract, 'subtitle') }),
+    ...(summary === undefined ? {} : { summary }),
+    tabs,
+    assetIds,
+  };
+}
+
+export function nativeReportDocumentHash(document: NativeReportDocumentV1): string {
+  return contentHash(JSON.stringify(parseNativeReportDocument(document)));
+}
+
 export function parseNativeSkillResult(value: unknown): NativeSkillResult {
   const contract = 'NativeSkillResult';
   const root = record(value, contract);
   exactKeys(
     root,
     ['version', 'skillId', 'invocationId', 'title', 'status', 'primary', 'attachments', 'sources', 'gaps'],
-    ['missingInputKeys'],
+    ['reportDocument', 'reportDocumentHash', 'missingInputKeys'],
     contract,
     'value',
   );
@@ -471,16 +750,33 @@ export function parseNativeSkillResult(value: unknown): NativeSkillResult {
   const gaps = optionalUniqueStrings(root.gaps, contract, 'gaps');
   if (status === 'completed_with_gaps' && gaps.length === 0) fail(contract, 'gaps');
   if (status === 'completed' && gaps.length > 0) fail(contract, 'status');
+  const reportDocument = root.reportDocument === undefined
+    ? undefined
+    : parseNativeReportDocument(root.reportDocument);
+  const reportDocumentHash = root.reportDocumentHash === undefined
+    ? undefined
+    : hash(root.reportDocumentHash, contract, 'reportDocumentHash');
+  if ((reportDocument === undefined) !== (reportDocumentHash === undefined)) {
+    fail(contract, 'reportDocument');
+  }
+  if (reportDocument && nativeReportDocumentHash(reportDocument) !== reportDocumentHash) {
+    fail(contract, 'reportDocumentHash');
+  }
+  const primary = parseNativeOutput(root.primary, contract, 'primary');
+  if (reportDocument && primary.format !== 'html') {
+    fail(contract, 'primary.format');
+  }
   return {
     version: NATIVE_SKILL_RESULT_VERSION,
     skillId: canonicalId(root.skillId, contract, 'skillId'),
     invocationId: canonicalId(root.invocationId, contract, 'invocationId'),
     title: nonBlank(root.title, contract, 'title'),
     status,
-    primary: parseNativeOutput(root.primary, contract, 'primary'),
+    primary,
     attachments: parseNativeAttachments(root.attachments, contract, 'attachments'),
     sources: parseSourceReferences(root.sources, contract, 'sources'),
     gaps,
+    ...(reportDocument === undefined ? {} : { reportDocument, reportDocumentHash: reportDocumentHash! }),
     ...(missingInputKeys === undefined ? {} : { missingInputKeys }),
   };
 }
@@ -499,7 +795,7 @@ export function parseNativeFinalReport(value: unknown): NativeFinalReport {
   exactKeys(
     root,
     ['version', 'taskId', 'planVersionId', 'attemptId', 'mode', 'title', 'primary', 'attachments', 'sources', 'gaps', 'skillResults'],
-    [],
+    ['reportDocument', 'reportDocumentHash'],
     contract,
     'value',
   );
@@ -526,6 +822,18 @@ export function parseNativeFinalReport(value: unknown): NativeFinalReport {
     fail(contract, 'skillResults.invocationId');
   }
   if (root.mode === 'single_skill' && skillResults.length !== 1) fail(contract, 'skillResults');
+  const reportDocument = root.reportDocument === undefined
+    ? undefined
+    : parseNativeReportDocument(root.reportDocument);
+  const reportDocumentHash = root.reportDocumentHash === undefined
+    ? undefined
+    : hash(root.reportDocumentHash, contract, 'reportDocumentHash');
+  if ((reportDocument === undefined) !== (reportDocumentHash === undefined)) {
+    fail(contract, 'reportDocument');
+  }
+  if (reportDocument && nativeReportDocumentHash(reportDocument) !== reportDocumentHash) {
+    fail(contract, 'reportDocumentHash');
+  }
   return {
     version: NATIVE_FINAL_REPORT_VERSION,
     taskId: canonicalId(root.taskId, contract, 'taskId'),
@@ -538,6 +846,7 @@ export function parseNativeFinalReport(value: unknown): NativeFinalReport {
     sources: parseSourceReferences(root.sources, contract, 'sources'),
     gaps: optionalUniqueStrings(root.gaps, contract, 'gaps'),
     skillResults,
+    ...(reportDocument === undefined ? {} : { reportDocument, reportDocumentHash: reportDocumentHash! }),
   };
 }
 

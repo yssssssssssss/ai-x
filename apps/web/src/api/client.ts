@@ -81,6 +81,16 @@ export interface DatasetUpload {
   metadata: DatasetUploadMetadata;
 }
 
+export interface DocumentUpload {
+  role: string;
+  files: File[];
+}
+
+export interface VisualUpload {
+  role: string;
+  files: File[];
+}
+
 // ---- 类型 ----
 // 契约类型集中在 packages/api-contract(前后端共享同一份,漂移编译期即炸)。
 // 这里 re-export,让前端各组件的 import 路径('./api/client.ts')保持不变。
@@ -98,9 +108,10 @@ export type {
 } from '../../../../packages/api-contract/plan.ts';
 export type {
   User,
-  Upload,
   DatasetUploadMetadata,
   DatasetUploadResponse,
+  DocumentUploadResponse,
+  VisualUploadResponse,
   Finding,
   Report,
   ExecLogRow,
@@ -120,6 +131,8 @@ export type {
 import type {
   DatasetUploadMetadata,
   DatasetUploadResponse,
+  DocumentUploadResponse,
+  VisualUploadResponse,
 } from '../../../../packages/api-contract/http.ts';
 import type {
   CurrentPlanningResponse,
@@ -399,6 +412,36 @@ export const api = {
       idempotencyKey,
     );
   },
+  uploadControlDocuments: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    files: readonly File[],
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    for (const file of files) form.append('file', file);
+    return reqForm<DocumentUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/document`,
+      form,
+      idempotencyKey,
+    );
+  },
+  uploadControlVisuals: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    files: readonly File[],
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    for (const file of files) form.append('file', file);
+    return reqForm<VisualUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/visual`,
+      form,
+      idempotencyKey,
+    );
+  },
   approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>
@@ -460,6 +503,14 @@ export const api = {
     );
     const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (mediaType !== 'text/html') throw new ApiError(502, '最终 HTML 报告媒体类型无效');
+    return { blob: await response.blob() };
+  },
+  controlFinalReportZip: async (taskId: string): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/final-report.zip`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/zip') throw new ApiError(502, '离线报告媒体类型无效');
     return { blob: await response.blob() };
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(

@@ -26,7 +26,9 @@ const MAX_BINARY_BYTE_SIZE = 10 * 1024 * 1024;
 const MAX_BINARY_PIXEL_COUNT = 20_000_000;
 const HTML_TEXT_MEDIA_TYPE = 'text/html; charset=utf-8';
 const MARKDOWN_TEXT_MEDIA_TYPE = 'text/markdown; charset=utf-8';
+const PLAIN_TEXT_MEDIA_TYPE = 'text/plain; charset=utf-8';
 const CSV_TEXT_MEDIA_TYPE = 'text/csv; charset=utf-8';
+type TextMediaType = typeof HTML_TEXT_MEDIA_TYPE | typeof MARKDOWN_TEXT_MEDIA_TYPE | typeof PLAIN_TEXT_MEDIA_TYPE;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export class ArtifactIntegrityError extends Error {
@@ -78,7 +80,7 @@ export interface BinaryArtifactWriteInput extends ArtifactWriteBase {
 
 export interface TextArtifactWriteInput extends ArtifactWriteBase {
   content: string;
-  mediaType: 'text/html; charset=utf-8' | 'text/markdown; charset=utf-8';
+  mediaType: TextMediaType;
   maxByteSize: number;
 }
 
@@ -720,8 +722,14 @@ export class ControlArtifactStore {
   }
 
   async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
-    if (input.mediaType !== HTML_TEXT_MEDIA_TYPE && input.mediaType !== MARKDOWN_TEXT_MEDIA_TYPE) {
-      throw new TextArtifactValidationError(`media type must be ${HTML_TEXT_MEDIA_TYPE} or ${MARKDOWN_TEXT_MEDIA_TYPE}`);
+    if (
+      input.mediaType !== HTML_TEXT_MEDIA_TYPE
+      && input.mediaType !== MARKDOWN_TEXT_MEDIA_TYPE
+      && input.mediaType !== PLAIN_TEXT_MEDIA_TYPE
+    ) {
+      throw new TextArtifactValidationError(
+        `media type must be ${HTML_TEXT_MEDIA_TYPE}, ${MARKDOWN_TEXT_MEDIA_TYPE}, or ${PLAIN_TEXT_MEDIA_TYPE}`,
+      );
     }
     if (!Number.isSafeInteger(input.maxByteSize) || input.maxByteSize <= 0) {
       throw new TextArtifactValidationError('maxByteSize must be a positive safe integer');
@@ -833,13 +841,22 @@ export class ControlArtifactStore {
     return this.readVerifiedUtf8Text(artifactId, MARKDOWN_TEXT_MEDIA_TYPE);
   }
 
+  async readVerifiedBoundPlainText(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, PLAIN_TEXT_MEDIA_TYPE);
+  }
+
+  async readVerifiedBoundDocument(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, [MARKDOWN_TEXT_MEDIA_TYPE, PLAIN_TEXT_MEDIA_TYPE]);
+  }
+
   private async readVerifiedUtf8Text(
     artifactId: string,
-    expectedMediaType: typeof HTML_TEXT_MEDIA_TYPE | typeof MARKDOWN_TEXT_MEDIA_TYPE,
+    expectedMediaType: TextMediaType | readonly TextMediaType[],
   ): Promise<{ artifact: ControlArtifact; content: string }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
-    if (artifact.mediaType !== expectedMediaType) {
-      throw new ArtifactIntegrityError(artifactId, `media type must be ${expectedMediaType}`);
+    const expected = Array.isArray(expectedMediaType) ? expectedMediaType : [expectedMediaType];
+    if (!artifact.mediaType || !expected.includes(artifact.mediaType as TextMediaType)) {
+      throw new ArtifactIntegrityError(artifactId, `media type must be ${expected.join(' or ')}`);
     }
     if (bytes.includes(0)) {
       throw new ArtifactIntegrityError(artifactId, 'contains a NUL byte');

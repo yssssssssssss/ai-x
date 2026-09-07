@@ -149,6 +149,19 @@ test('loads the original Industry package without a platform-rewritten copy', ()
   assert.equal(runSpec.selected_references.some(({ path }) => path.endsWith('报告模板-中档.md')), true);
   assert.equal(runSpec.selected_references.some(({ path }) => path.endsWith('报告模板-轻档.md')), false);
   assert.equal(runSpec.selected_references.some(({ path }) => path.endsWith('报告模板-重档.md')), false);
+  assert.deepEqual(
+    runSpec.input_requirements.find(({ key }) => key === 'internal_documents'),
+    {
+      key: 'internal_documents',
+      kind: 'document',
+      label: '内部业务材料',
+      description: '内部业务材料，用于完成本次分析。',
+      required: false,
+      multiple: true,
+      acceptedSources: ['upload', 'database'],
+      question: '请提供内部业务材料。',
+    },
+  );
 });
 
 test('loadSkillSchemas keeps only the universal output schema outside the Skill package', () => {

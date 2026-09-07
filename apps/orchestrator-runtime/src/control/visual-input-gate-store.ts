@@ -16,6 +16,7 @@ const IMAGE_KIND = 'visual_input_image';
 const IMAGE_SCHEMA_VERSION = 'visual-input-image-v1';
 const GATE_KIND = 'visual_input_gate';
 const GATE_SCHEMA_VERSION = 'visual-input-gate-v1';
+const MAX_VISUAL_FILES = 12;
 
 type SupportedMediaType = VisualInputImage['contentType'];
 
@@ -45,6 +46,21 @@ interface VisualInputArtifactPort {
     metadata: TrustedBinaryMetadata;
   }>;
   invalidateArtifactPublication(artifactId: string, reason: string): Promise<void>;
+}
+
+export interface VisualUploadFile {
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}
+
+export interface VisualUploadResult {
+  visualInputId: string;
+  images: Array<{
+    contentSha256: string;
+    mediaType: SupportedMediaType;
+    byteSize: number;
+  }>;
 }
 
 export interface ResolvedVisualInputImage {
@@ -208,6 +224,152 @@ export function valueForPendingInputTarget(input: {
 export class VisualInputGateStore {
   constructor(private readonly artifacts: VisualInputArtifactPort) {}
 
+  async upload(input: {
+    taskId: string;
+    planVersionId: string;
+    gateKey: string;
+    multiple: boolean;
+    taskSensitivity: 'public' | 'internal' | 'confidential';
+    files: VisualUploadFile[];
+  }): Promise<VisualUploadResult> {
+    if (
+      input.files.length === 0
+      || input.files.length > MAX_VISUAL_FILES
+      || (!input.multiple && input.files.length !== 1)
+    ) {
+      throw new VisualInputGateError(input.files.length > MAX_VISUAL_FILES
+        ? `image count exceeds ${MAX_VISUAL_FILES}`
+        : input.multiple
+          ? 'at least one image is required'
+          : 'exactly one image is required');
+    }
+    const artifactIds: string[] = [];
+    try {
+      const references: VisualInputGateImageV1[] = [];
+      for (const file of input.files) {
+        const bytes = Buffer.from(file.bytes);
+        const declaredMediaType = file.mediaType.split(';', 1)[0]!.trim().toLowerCase();
+        if (
+          declaredMediaType !== 'image/jpeg'
+          && declaredMediaType !== 'image/png'
+          && declaredMediaType !== 'image/webp'
+        ) {
+          throw new VisualInputGateError(`image ${file.fileName} media type is unsupported`);
+        }
+        const extension = declaredMediaType === 'image/jpeg'
+          ? 'jpg'
+          : declaredMediaType === 'image/png' ? 'png' : 'webp';
+        const artifact = await this.artifacts.writeBinary({
+          taskId: input.taskId,
+          planVersionId: input.planVersionId,
+          kind: IMAGE_KIND,
+          relativePath: `inputs/${randomUUID()}.${extension}`,
+          bytes,
+          schemaVersion: IMAGE_SCHEMA_VERSION,
+          sensitivity: input.taskSensitivity,
+          redactionPolicyVersion: 'v1',
+        });
+        artifactIds.push(artifact.id);
+        assertPlanBoundArtifact({
+          artifact,
+          taskId: input.taskId,
+          planVersionId: input.planVersionId,
+          kind: IMAGE_KIND,
+          schemaVersion: IMAGE_SCHEMA_VERSION,
+        });
+        if (
+          artifact.mediaType !== declaredMediaType
+          || artifact.byteSize !== bytes.byteLength
+        ) {
+          throw new VisualInputGateError('sealed image metadata does not match its input');
+        }
+        references.push({
+          artifactId: artifact.id,
+          contentSha256: artifact.contentSha256!,
+          mediaType: declaredMediaType,
+          byteSize: bytes.byteLength,
+        });
+      }
+      const manifest: VisualInputGateManifestV1 = {
+        version: GATE_SCHEMA_VERSION,
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        gateKey: input.gateKey,
+        multiple: input.multiple,
+        images: references,
+      };
+      const manifestArtifact = await this.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        kind: GATE_KIND,
+        relativePath: `inputs/${randomUUID()}-gate.json`,
+        value: manifest,
+        schemaVersion: GATE_SCHEMA_VERSION,
+        sensitivity: input.taskSensitivity,
+        redactionPolicyVersion: 'v1',
+        metadata: { role: input.gateKey },
+      });
+      artifactIds.push(manifestArtifact.id);
+      assertPlanBoundArtifact({
+        artifact: manifestArtifact,
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        kind: GATE_KIND,
+        schemaVersion: GATE_SCHEMA_VERSION,
+      });
+      return {
+        visualInputId: manifestArtifact.id,
+        images: references.map(({ contentSha256, mediaType, byteSize }) => ({
+          contentSha256,
+          mediaType,
+          byteSize,
+        })),
+      };
+    } catch (error) {
+      await Promise.allSettled(artifactIds.map((artifactId) => (
+        this.artifacts.invalidateArtifactPublication(artifactId, 'visual input upload did not complete')
+      )));
+      throw error;
+    }
+  }
+
+  async prepareBinding(input: {
+    taskId: string;
+    planVersionId: string;
+    gateKey: string;
+    multiple: boolean;
+    visualInputId: string;
+  }): Promise<PublishedVisualInputGate> {
+    const resolved = await this.resolve({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      gates: [{
+        gateType: 'input',
+        gateKey: input.gateKey,
+        requiredAuthority: 'owner',
+        decision: 'provided',
+        value: null,
+        evidenceRef: input.visualInputId,
+        actorUserId: null,
+        actorRole: null,
+        idempotencyKey: 'visual-upload-binding',
+      }],
+      pendingInputs: [{
+        kind: 'visual',
+        role: input.gateKey,
+        label: input.gateKey,
+        multiple: input.multiple,
+        targets: [{ step_no: 1, tool_id: 'visual-upload-binding', field: input.gateKey, multiple: input.multiple }],
+      }],
+    });
+    const visual = resolved.visuals[0];
+    if (!visual) throw new VisualInputGateError(`visual ${input.gateKey} did not resolve`);
+    return {
+      evidenceRef: input.visualInputId,
+      artifactIds: [...visual.images.map(({ artifact }) => artifact.id), input.visualInputId],
+    };
+  }
+
   async prepare(input: {
     taskId: string;
     planVersionId: string;
@@ -367,7 +529,7 @@ export class VisualInputGateStore {
         gates.push(gate);
         continue;
       }
-      if (pending.kind === 'dataset') {
+      if (pending.kind === 'dataset' || pending.kind === 'document') {
         gates.push(gate);
         continue;
       }

@@ -34,11 +34,6 @@ export interface User {
   role?: string;
 }
 
-export interface Upload {
-  role: string;
-  dataUrl: string;
-}
-
 export interface DatasetUploadMetadata {
   rowMeaning: string;
   timeRange: string;
@@ -55,6 +50,25 @@ export interface DatasetUploadResponse {
   byteSize: number;
   rowCount: number;
   columns: string[];
+}
+
+export interface DocumentUploadResponse {
+  documentInputId: string;
+  files: Array<{
+    fileName: string;
+    mediaType: 'text/markdown; charset=utf-8' | 'text/plain; charset=utf-8';
+    contentSha256: string;
+    byteSize: number;
+  }>;
+}
+
+export interface VisualUploadResponse {
+  visualInputId: string;
+  images: Array<{
+    contentSha256: string;
+    mediaType: 'image/jpeg' | 'image/png' | 'image/webp';
+    byteSize: number;
+  }>;
 }
 
 export interface Finding {

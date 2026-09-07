@@ -27,6 +27,7 @@ import {
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { DatasetInputGateStore } from '../apps/orchestrator-runtime/src/control/dataset-input-gate-store.ts';
+import { DocumentInputGateStore } from '../apps/orchestrator-runtime/src/control/document-input-gate-store.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import {
@@ -1094,6 +1095,75 @@ test('seals valid visual input and stores only its Artifact reference in the gat
   }
 });
 
+test('binds a multipart-uploaded visual by Artifact reference without inline data', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-multipart-visual-input-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const visualGates = new VisualInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      visualGates,
+    );
+    const created = await createCandidateTask(repository, 'multipart-visual-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'multipart-visual-input', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual', role: 'designImage', label: '设计稿', multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'multipart-visual-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const uploaded = await visualGates.upload({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      gateKey: 'designImage',
+      multiple: false,
+      taskSensitivity: 'internal',
+      files: [{ fileName: 'design.png', mediaType: 'image/png', bytes: png }],
+    });
+
+    await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'multipart-visual-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { designImage: uploaded.visualInputId },
+    });
+
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.value, null);
+    assert.equal(gate?.evidenceRef, uploaded.visualInputId);
+    const connection = await scopedDatabase.connect();
+    try {
+      const publications = await connection.query(
+        'SELECT count(*)::int AS count FROM control_visual_publications WHERE task_id = $1',
+        [created.task.id],
+      );
+      assert.equal(publications.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
 test('binds one uploaded Dataset by Artifact reference without creating a visual publication', async () => {
   const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-dataset-input-'));
   try {
@@ -1169,6 +1239,76 @@ test('binds one uploaded Dataset by Artifact reference without creating a visual
     } finally {
       connection.release();
     }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('binds uploaded documents by Artifact reference without creating a visual publication', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-document-input-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const documentGates = new DocumentInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+      new DatasetInputGateStore(artifacts),
+      documentGates,
+    );
+    const created = await createCandidateTask(repository, 'sealed-document-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'sealed-document-input', [currentStep({ input: { internal_documents: null } })]),
+      pendingInputs: [{
+        kind: 'document', role: 'internal_documents', label: '内部业务材料', multiple: true,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'internal_documents', multiple: true }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'sealed-document-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const uploaded = await documentGates.upload({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      role: 'internal_documents',
+      ownerUserId: ownerId,
+      taskSensitivity: 'internal',
+      multiple: true,
+      files: [
+        { fileName: '背景.md', mediaType: 'text/markdown', bytes: Buffer.from('# 背景') },
+        { fileName: '访谈.txt', mediaType: 'text/plain', bytes: Buffer.from('用户原话') },
+      ],
+    });
+
+    await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'sealed-document-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { internal_documents: uploaded.documentInputId },
+    });
+
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.value, null);
+    assert.equal(gate?.evidenceRef, uploaded.documentInputId);
+    const verified = await documentGates.resolve({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      ownerUserId: ownerId,
+      gates: [gate!],
+      pendingInputs: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.pendingInputs as never,
+    });
+    assert.equal(verified.documents[0]?.documents.length, 2);
+    assert.equal(Array.isArray(verified.gates[0]?.value), true);
   } finally {
     rmSync(artifactRoot, { recursive: true, force: true });
   }

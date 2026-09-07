@@ -367,12 +367,15 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       .map((role): CapabilityPendingInput => ({
         kind: skill.dataset_inputs?.includes(role) === true
           ? 'dataset'
-          : skill.visual_inputs?.includes(role) === true
-            ? 'visual'
-            : 'value',
+          : skill.document_inputs?.includes(role) === true
+            ? 'document'
+            : skill.visual_inputs?.includes(role) === true
+              ? 'visual'
+              : 'value',
         role,
         label: role,
-        multiple: skill.multiple_visual_inputs?.includes(role) === true,
+        multiple: skill.document_inputs?.includes(role) === true
+          || skill.multiple_visual_inputs?.includes(role) === true,
         capability_id: skill.id,
       }));
     if (reasons.length > 0) {

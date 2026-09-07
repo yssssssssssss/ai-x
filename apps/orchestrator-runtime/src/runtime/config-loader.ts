@@ -297,6 +297,7 @@ export interface SkillCapability {
   visual_inputs?: string[];
   multiple_visual_inputs?: string[];
   dataset_inputs?: string[];
+  document_inputs?: string[];
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
@@ -326,6 +327,7 @@ const SKILL_CAPABILITY_KEYS = new Set<keyof SkillCapability>([
   'visual_inputs',
   'multiple_visual_inputs',
   'dataset_inputs',
+  'document_inputs',
   'outputs',
   'input_schema',
   'output_schema',
@@ -621,6 +623,45 @@ export function skillDatasetInputIssue(skill: SkillCapability): string | null {
     : `dataset_inputs overlaps visual_inputs: ${overlap}`;
 }
 
+export function skillDocumentInputIssue(skill: SkillCapability): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const documentInputs = record.document_inputs;
+  if (documentInputs === undefined) return null;
+  if (
+    !Array.isArray(documentInputs)
+    || documentInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(documentInputs).size !== documentInputs.length
+  ) {
+    return 'document_inputs must be a unique array of canonical non-empty strings';
+  }
+  const inputs = record.inputs;
+  if (!Array.isArray(inputs)) return 'document_inputs requires an inputs array';
+  const compositionInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    ? record.composition as Record<string, unknown>
+    : {};
+  const requiredInputs = Array.isArray(compositionInputs.required_input_roles)
+    ? compositionInputs.required_input_roles as unknown[]
+    : [];
+  const optionalInputs = Array.isArray(compositionInputs.optional_input_roles)
+    ? compositionInputs.optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...requiredInputs, ...optionalInputs]);
+  const missingRole = documentInputs.find((role) => !declaredInputs.has(role));
+  if (missingRole !== undefined) return `document_inputs references an undeclared input: ${missingRole}`;
+  const visualInputs = Array.isArray(record.visual_inputs) ? record.visual_inputs : [];
+  const datasetInputs = Array.isArray(record.dataset_inputs) ? record.dataset_inputs : [];
+  const overlap = documentInputs.find((role) => visualInputs.includes(role) || datasetInputs.includes(role));
+  return overlap === undefined
+    ? null
+    : `document_inputs overlaps another material input: ${overlap}`;
+}
+
 export interface ToolRegistryEntry {
   id: string;
   name: string;
@@ -689,6 +730,7 @@ export interface SkillBindingEntry {
   visual_inputs?: string[];
   multiple_visual_inputs?: string[];
   dataset_inputs?: string[];
+  document_inputs?: string[];
   required_tools?: string[];
   optional_tools?: string[];
   risk_level: 'low' | 'medium' | 'high';

@@ -5,7 +5,14 @@ import {
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
 import type { NativeSkillInvocation } from '../../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
-import type { DatasetUpload, PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import type {
+  DatasetUpload,
+  DocumentUpload,
+  PlanResponse,
+  PlanStep,
+  PendingUpload,
+  VisualUpload,
+} from '../../api/client.ts';
 import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
 import { multiSkillPlanViewModel } from '../../multi-skill-view-model.ts';
 import { Header } from './Stage1Understand.tsx';
@@ -15,29 +22,12 @@ import {
   reconcileDatasetColumnMetadata,
 } from './stage2-plan-confirmation.ts';
 
-const INPUT_LABELS: Readonly<Record<string, string>> = {
-  designImage: '设计稿或页面截图',
-  page_url: '待评估页面链接',
-  jd_screenshots: '京东页面截图',
-  competitor_screenshots: '竞品页面截图',
-  competitor_platform_names: '竞品平台名称',
-  user_research_dataset: '用户研究数据',
-  internal_metrics_dataset: '内部指标数据',
-  analytics_dataset: '分析数据',
-};
-
-const INPUT_QUESTIONS: Readonly<Record<string, string>> = {
-  page_url: '如有可直接访问的页面，请填写完整链接。',
-  jd_screenshots: '请上传需要分析的京东页面截图，可一次选择多张。',
-  competitor_screenshots: '请上传需要对照的竞品页面截图，可一次选择多张。',
-};
-
 function pendingInputLabel(input: PendingUpload): string {
-  return INPUT_LABELS[input.role] ?? input.label;
+  return input.label;
 }
 
 function pendingInputQuestion(input: PendingUpload, fallback?: string): string {
-  return INPUT_QUESTIONS[input.role] ?? fallback ?? pendingInputLabel(input);
+  return fallback ?? input.label;
 }
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
@@ -51,8 +41,9 @@ export function Stage2Plan({
   onConfirm: (
     confirmationAnswers: Record<string, unknown>,
     inputValues: Record<string, unknown>,
-    uploads: Upload[],
+    visualUploads: VisualUpload[],
     datasetUploads: DatasetUpload[],
+    documentUploads: DocumentUpload[],
     waivedInputKeys: string[],
   ) => void;
   onRevise: (instruction: string) => void;
@@ -75,6 +66,9 @@ export function Stage2Plan({
   const nativeKnowledge = nativeInvocations.flatMap(({ skill_id: skillId, run_spec: runSpec }) => (
     runSpec.selected_references.map((reference) => ({ ...reference, skillId }))
   ));
+  const nativeRequirementByKey = new Map(nativeInvocations.flatMap(({ run_spec: runSpec }) => (
+    runSpec.input_requirements.map((requirement) => [requirement.key, requirement] as const)
+  )));
   const portfolio = multiSkillPlanViewModel(plan.plan);
   const orchestrationLabel = plan.plan.execution_contract_version === 'native-skill-execution-plan-v1'
     ? plan.plan.mode === 'multi_skill' ? '多项能力协作' : '单项能力执行'
@@ -84,8 +78,9 @@ export function Stage2Plan({
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
-  const [images, setImages] = useState<Record<string, string[]>>({});
+  const [images, setImages] = useState<Record<string, File[]>>({});
   const [datasets, setDatasets] = useState<Record<string, DatasetUpload | undefined>>({});
+  const [documents, setDocuments] = useState<Record<string, File[]>>({});
   const [datasetColumns, setDatasetColumns] = useState<Record<string, string[]>>({});
   const [datasetHeaderErrors, setDatasetHeaderErrors] = useState<Record<string, string | undefined>>({});
   const [values, setValues] = useState<Record<string, string>>({});
@@ -96,19 +91,18 @@ export function Stage2Plan({
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
   }
 
-  function readImage(file: File): Promise<string> {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(file);
-    });
+  function pickImages(pu: PendingUpload, files: File[]): void {
+    setImages((previous) => ({
+      ...previous,
+      [pu.role]: pu.multiple ? files : files.slice(0, 1),
+    }));
   }
 
-  async function pickImages(pu: PendingUpload, files: File[]): Promise<void> {
-    const selected = pu.multiple ? files : files.slice(0, 1);
-    const dataUrls = (await Promise.all(selected.map(readImage))).filter(Boolean);
-    setImages((previous) => ({ ...previous, [pu.role]: dataUrls }));
+  function pickDocuments(input: PendingUpload, files: File[]): void {
+    setDocuments((previous) => ({
+      ...previous,
+      [input.role]: input.multiple ? files : files.slice(0, 1),
+    }));
   }
 
   async function pickDataset(role: string, file: File | undefined): Promise<void> {
@@ -188,14 +182,16 @@ export function Stage2Plan({
       values,
       images,
       datasets,
+      documents,
       waivedInputKeys: effectiveWaivedInputKeys,
     });
     setConfirmed(true);
     onConfirm(
       payload.confirmationAnswers,
       payload.inputValues,
-      payload.uploads,
+      payload.visualUploads,
       payload.datasetUploads,
+      payload.documentUploads ?? [],
       payload.waivedInputKeys ?? [],
     );
   }
@@ -216,6 +212,7 @@ export function Stage2Plan({
   const missingInputs = visiblePending.filter((input) => {
     const requirement = pendingRequirementByKey.get(input.role)?.requirement;
     if (requirement?.required === false && waivedSet.has(input.role)) return false;
+    if (input.kind === 'document') return (documents[input.role] ?? []).length === 0;
     if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
     if (input.kind === 'value') {
       const raw = values[input.role] ?? '';
@@ -229,8 +226,7 @@ export function Stage2Plan({
         || Boolean(datasetHeaderErrors[input.role])
         || !dataset.metadata.rowMeaning.trim()
         || !dataset.metadata.timeRange.trim()
-        || !dataset.metadata.sampling.trim()
-        || !dataset.metadata.piiConfirmedAbsent;
+        || !dataset.metadata.sampling.trim();
     }
     return true;
   });
@@ -255,7 +251,7 @@ export function Stage2Plan({
 
   return (
     <section className="stage-card">
-      <Header n="2" title="待执行计划" note={locked ? '计划内容已锁定' : '确认前不执行'} />
+      <Header n="2" title="补充信息并确认" note={locked ? '内容已锁定' : '一次提交本次分析所需信息'} />
       <p style={{ margin: '-2px 0 12px', color: 'var(--text-faint)', fontSize: 12 }}>
         运行模式：{orchestrationLabel}
       </p>
@@ -287,42 +283,35 @@ export function Stage2Plan({
 
       {nativeToolBindings.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
-          <strong>工具接入状态</strong>
-          {nativeToolBindings.map((binding) => (
-            <div key={`${binding.skillId}:${binding.capability}`}>
-              {binding.skillId} · {binding.capability} → {binding.toolId} · {binding.required ? '必需' : '可选'} · {binding.status === 'bound' ? '已接入' : '尚未接入'}
-            </div>
-          ))}
+          <strong>外部能力状态</strong>
+          <div>
+            已接入 {nativeToolBindings.filter(({ status }) => status === 'bound').length} 项
+            {nativeToolBindings.some(({ status }) => status !== 'bound')
+              ? `；尚未接入 ${nativeToolBindings.filter(({ status }) => status !== 'bound').length} 项，报告将标明相应资料缺口`
+              : ''}
+          </div>
         </div>
       )}
 
       {nativeKnowledge.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
-          <strong>冻结知识</strong>
-          {nativeKnowledge.map((reference) => (
-            <div key={`${reference.skillId}:${reference.sourceId}:${reference.path}`}>
-              {reference.skillId} · {reference.logicalPath}
-            </div>
-          ))}
+          <strong>分析方法与知识</strong>
+          <div>已冻结 {nativeKnowledge.length} 份本次分析所需材料。</div>
         </div>
       )}
 
       {resourceGaps.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, color: 'var(--warn)', fontSize: 12 }}>
           <strong>知识资源缺口</strong>
-          {resourceGaps.map((gap) => (
-            <div key={`${gap.skillId}:${gap.query_id}`}>
-              {gap.skillId} · {gap.query_id}：已选 {gap.selected_items}，最低 {gap.min_items}。{gap.reason}
-            </div>
-          ))}
+          <div>部分可选知识材料暂不可用，报告将标明相应资料缺口。</div>
         </div>
       )}
 
       <div style={{ marginTop: 16 }}>
         <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>系统假设(可点击编辑)</div>
-        {assumptions.map((a) => (
+        {assumptions.map((a, index) => (
           <div key={a.key} style={{ display: 'flex', gap: 8, marginBottom: 6, fontSize: 13 }}>
-            <span style={{ color: 'var(--text-dim)', width: 120, flexShrink: 0 }}>{a.key}</span>
+            <span style={{ color: 'var(--text-dim)', width: 120, flexShrink: 0 }}>补充条件 {index + 1}</span>
             {a.editable && !locked ? (
               <input
                 value={a.value}
@@ -371,7 +360,8 @@ export function Stage2Plan({
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             {nativeInputs.resolved.map((input) => (
               <li key={input.key}>
-                {input.key} · {input.source} · 用于 {input.targetInvocationIds.join('、')}
+                {nativeRequirementByKey.get(input.key)?.label ?? '已提供输入'}
+                {' '}· {input.source === 'conversation' ? '来自当前需求' : input.source === 'upload' ? '来自上传材料' : '来自已授权数据'}
               </li>
             ))}
           </ul>
@@ -415,9 +405,41 @@ export function Stage2Plan({
         </div>
       )}
 
+      {visiblePending.some((input) => input.kind === 'document') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>
+            待上传业务材料（支持 Markdown 和 TXT）
+          </div>
+          {visiblePending.filter((input) => input.kind === 'document').map((documentInput) => (
+            <div key={documentInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+              <span style={{ fontSize: 13 }}>
+                {pendingInputQuestion(documentInput, pendingRequirementByKey.get(documentInput.role)?.requirement.question)}
+                {' '}· {pendingRequirementByKey.get(documentInput.role)?.requirement.required === false ? '可选' : '必需'}
+              </span>
+              <input
+                type="file"
+                accept=".md,.txt,text/markdown,text/plain"
+                multiple={documentInput.multiple}
+                disabled={locked || confirmed || waivedSet.has(documentInput.role)}
+                onChange={(event) => pickDocuments(
+                  documentInput,
+                  Array.from(event.currentTarget.files ?? []),
+                )}
+              />
+              {(documents[documentInput.role] ?? []).length > 0 && (
+                <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  已选择：{documents[documentInput.role]!.map(({ name }) => name).join('、')}
+                </span>
+              )}
+              {optionalWaiver(documentInput.role)}
+            </div>
+          ))}
+        </div>
+      )}
+
       {visiblePending.some((input) => input.kind === 'dataset') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV（匿名、UTF-8 数据）</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV 数据</div>
           {visiblePending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
             const selected = datasets[datasetInput.role];
             return (
@@ -438,7 +460,7 @@ export function Stage2Plan({
                   value={selected?.metadata.rowMeaning ?? ''}
                   disabled={!selected || locked || confirmed}
                   onChange={(event) => editDatasetMetadata(datasetInput.role, 'rowMeaning', event.target.value)}
-                  placeholder="一行代表什么，例如：一位匿名受访者"
+                  placeholder="一行代表什么，例如：一条用户研究记录"
                 />
                 <input
                   value={selected?.metadata.timeRange ?? ''}
@@ -488,15 +510,6 @@ export function Stage2Plan({
                     ))}
                   </fieldset>
                 ) : null}
-                <label style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={selected?.metadata.piiConfirmedAbsent ?? false}
-                    disabled={!selected || locked || confirmed || waivedSet.has(datasetInput.role)}
-                    onChange={(event) => editDatasetMetadata(datasetInput.role, 'piiConfirmedAbsent', event.target.checked)}
-                  />
-                  我确认文件已匿名化且不含姓名、手机号、地址、订单号等个人信息
-                </label>
                 {optionalWaiver(datasetInput.role)}
               </div>
             );
@@ -516,16 +529,18 @@ export function Stage2Plan({
                   {' '}· 将用于本次分析
                 </span>
               </span>
-              {(images[pu.role] ?? []).map((dataUrl, index) => (
-                <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-              ))}
+              {(images[pu.role] ?? []).length > 0 && (
+                <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  已选择：{images[pu.role]!.map(({ name }) => name).join('、')}
+                </span>
+              )}
               <input
                 type="file"
                 accept="image/*"
                 multiple={pu.multiple}
                 disabled={locked || confirmed || waivedSet.has(pu.role)}
                 onChange={(event) => {
-                  void pickImages(pu, Array.from(event.currentTarget.files ?? []));
+                  pickImages(pu, Array.from(event.currentTarget.files ?? []));
                 }}
                 style={{ fontSize: 12, color: 'var(--text-dim)' }}
               />
@@ -539,7 +554,7 @@ export function Stage2Plan({
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 18 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn-primary" onClick={confirm} disabled={revising || missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0}>
-              ✓ 确认计划
+              ✓ 确认并继续
             </button>
             <button
               className="btn-ghost"
@@ -570,7 +585,7 @@ export function Stage2Plan({
         </div>
       )}
       {(locked || confirmed) && (
-        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 计划已确认，内容已锁定</div>
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 信息已确认，正在按计划处理</div>
       )}
     </section>
   );
@@ -603,6 +618,13 @@ function formatSuggestion(value: unknown): string {
 
 function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
   const purpose = 'purpose' in step ? step.purpose : undefined;
+  const label = step.actor_type === 'skill'
+    ? '专业分析'
+    : step.actor_type === 'tool'
+      ? '资料处理'
+      : step.actor_type === 'reviewer'
+        ? '质量检查'
+        : step.actor_type === 'knowledge' ? '知识读取' : '内容生成';
   const cls =
     step.actor_type === 'skill' ? 'badge-skill'
     : step.actor_type === 'tool' ? 'badge-tool'
@@ -616,8 +638,7 @@ function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
         <div style={{ fontSize: 13 }}>{step.step_name}</div>
         {purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{purpose}</div>}
       </div>
-      <span className={`badge ${cls}`}>{step.actor_type.toUpperCase()}</span>
-      <code style={{ fontSize: 11, color: 'var(--text-faint)' }}>{step.actor_id}</code>
+      <span className={`badge ${cls}`}>{label}</span>
       {step.requires_approval && <span className="badge" style={{ background: 'rgba(251,191,36,.15)', color: 'var(--warn)' }}>需审批</span>}
     </div>
   );

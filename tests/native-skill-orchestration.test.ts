@@ -7,6 +7,7 @@ import {
   finalizeSingleNativeReport,
   renderNativeFinalReportHtml,
   sanitizeNativeHtml,
+  NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
   type NativeReportWriter,
 } from '../apps/orchestrator-runtime/src/report/native-reporting.ts';
 import {
@@ -18,6 +19,8 @@ import {
   parseNativeSkillResult,
   type NativeSkillRunSpec,
 } from '../packages/api-contract/native-skill-orchestration.ts';
+import { MockLLMClient } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -188,6 +191,69 @@ test('preserves a Skill-defined report and uses one default writer only when req
   assert.equal(calls, 1);
 });
 
+test('renders a NativeReportDocument without a second report call', async () => {
+  const reportDocument = {
+    version: 'native-report-document-v1' as const,
+    title: '行业分析',
+    assetIds: [],
+    tabs: [{
+      id: 'insight',
+      title: '行业洞察',
+      sections: [{
+        id: 'overview',
+        title: '核心判断',
+        blocks: [{ type: 'markdown' as const, content: '结论 [S-1]。', sourceIds: ['S-1'] }],
+      }],
+    }],
+  };
+  const result = createNativeSkillResult({
+    taskId: 'task-1',
+    skillId: 'industry-market-analysis',
+    invocationId: 'inv-industry',
+    draft: {
+      title: '行业分析',
+      status: 'completed',
+      reportDocument,
+      attachments: [],
+      gaps: [],
+    },
+    sources: [source],
+  });
+  assert.equal(result.primary.format, 'html');
+  assert.match(result.primary.content, /行业洞察/u);
+  assert.deepEqual(result.reportDocument, reportDocument);
+
+  const final = await finalizeSingleNativeReport({
+    taskId: 'task-1', planVersionId: 'plan-1', attemptId: 'attempt-1',
+    requirement: {}, result, verifiedSources: [source], reportPolicy: 'skill_defined',
+  });
+  assert.deepEqual(final.reportDocument, reportDocument);
+  assert.equal(final.reportDocumentHash, result.reportDocumentHash);
+  assert.match(renderNativeFinalReportHtml(final), /type="radio"/u);
+  assert.throws(() => parseNativeSkillResult({
+    ...result,
+    reportDocument: { ...reportDocument, title: '被篡改的标题' },
+  }), /reportDocumentHash/u);
+});
+
+test('mock HTML-policy Skill output follows the ReportDocument schema', async () => {
+  const generated = await new MockLLMClient().generateStructured({
+    prompt: '本次正式报告必须填写 reportDocument',
+    schema: NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+    schemaName: 'skill:industry-market-analysis',
+    context: {},
+    receipt: { stage: 'skill' },
+  });
+  new SchemaValidator().validateSchemaOrThrow(
+    NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+    generated.data,
+    'skill:industry-market-analysis',
+  );
+  const document = (generated.data as { reportDocument?: { version?: string; tabs?: unknown[] } }).reportDocument;
+  assert.equal(document?.version, 'native-report-document-v1');
+  assert.equal(document?.tabs?.length, 5);
+});
+
 test('removes unverified generated links deterministically and records a Gap', () => {
   const result = createNativeSkillResult({
     skillId: 'native-test', invocationId: 'inv-native',
@@ -228,14 +294,14 @@ test('renders Markdown tables, emphasis, and dividers as structured HTML', async
   assert.match(html, /<hr>/u);
 });
 
-test('performs one Multi synthesis and sanitizes Skill-defined HTML', async () => {
+test('performs one structured Multi synthesis and sanitizes historical Skill HTML', async () => {
   const result = createNativeSkillResult({
     skillId: 'native-test', invocationId: 'inv-native',
     draft: {
       title: 'Native result', status: 'completed',
       primary: {
-        format: 'html',
-        content: '<body><h1>Result [S-1]</h1></body><head><style>.x{background-image:image-set("//evil.test/pixel" 1x)}</style></head>',
+        format: 'markdown',
+        content: '# Result\n\nEvidence [S-1].',
       },
       attachments: [], gaps: [],
     }, sources: [source],
@@ -250,14 +316,28 @@ test('performs one Multi synthesis and sanitizes Skill-defined HTML', async () =
   assert.doesNotMatch(sanitizedHtml, /script|javascript:|xlink:href|srcset|evil\.test/u);
   let calls = 0;
   const writer: NativeReportWriter = {
-    async write() { calls += 1; return '# Combined\n\nEvidence [S-1].'; },
+    async write() {
+      calls += 1;
+      return {
+        version: 'native-report-document-v1',
+        title: 'Combined',
+        assetIds: [],
+        tabs: [{
+          id: 'summary', title: '综合结论', sections: [{
+            id: 'findings', title: '关键发现',
+            blocks: [{ type: 'markdown', content: 'Evidence [S-1].', sourceIds: ['S-1'] }],
+          }],
+        }],
+      };
+    },
   };
   const multi = await finalizeMultiNativeReport({
     taskId: 'task-1', planVersionId: 'plan-1', attemptId: 'attempt-1', title: 'Combined',
     requirement: {}, results: [result], verifiedSources: [source], writer,
-    reportPolicy: result.primary.format === 'html'
-      ? { kind: 'skill_defined', outputFormat: 'html', instructions: 'Use HTML.', instructionsHash: digest('Use HTML.') }
-      : { kind: 'default_llm', outputFormat: 'markdown', promptVersion: 'default-report-v1', promptHash: digest('prompt') },
+    reportPolicy: {
+      kind: 'skill_defined', outputFormat: 'html', instructions: 'Use structured report.',
+      instructionsHash: digest('Use structured report.'),
+    },
   });
   assert.equal(calls, 1);
   assert.equal(multi.report.primary.format, 'html');
@@ -266,15 +346,6 @@ test('performs one Multi synthesis and sanitizes Skill-defined HTML', async () =
   assert.match(rendered, /Content-Security-Policy/u);
   assert.equal((rendered.match(/<html\b/giu) ?? []).length, 1);
   assert.equal((rendered.match(/<head\b/giu) ?? []).length, 1);
-
-  const directHtml = await finalizeSingleNativeReport({
-    taskId: 'task-1', planVersionId: 'plan-1', attemptId: 'attempt-1',
-    requirement: {}, result, verifiedSources: [source], reportPolicy: 'skill_defined',
-  });
-  const renderedDirect = renderNativeFinalReportHtml(directHtml);
-  assert.ok(renderedDirect.indexOf('Content-Security-Policy') < renderedDirect.indexOf('image-set'));
-  assert.equal((renderedDirect.match(/<html\b/giu) ?? []).length, 1);
-  assert.equal((renderedDirect.match(/<head\b/giu) ?? []).length, 1);
 });
 
 test('rejects package manifests, references, and report policies that drift', () => {

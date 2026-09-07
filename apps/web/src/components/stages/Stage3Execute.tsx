@@ -146,9 +146,9 @@ export function Stage3Execute({
 
       {invocationGroups.some(({ id }) => id !== 'ungrouped') ? (
         <div className="execution-invocation-groups" aria-label="分析能力执行分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          {invocationGroups.map((group) => (
-            <span key={group.id} className="badge" title={group.consumerInvocationIds.join('、')}>
-              {group.label} · {group.stepNos.length} steps
+          {invocationGroups.map((group, index) => (
+            <span key={group.id} className="badge">
+              {group.shared ? '共享准备' : `分析任务 ${index + 1}`} · {group.stepNos.length} 个步骤
             </span>
           ))}
         </div>
@@ -233,7 +233,6 @@ export function Stage3Execute({
                   <span className={`execution-flow-actor actor-${actorTone(node.actorType)}`}>
                     {actorLabel(node.actorType)}
                   </span>
-                  <code>{node.actorId}</code>
                 </div>
               </div>
             );
@@ -245,7 +244,7 @@ export function Stage3Execute({
         {graph.nodes.map((node) => (
           <li key={node.id}>
             {node.stepNo !== undefined ? `步骤 ${node.stepNo}，` : ''}
-            {node.label}，{actorLabel(node.actorType)} {node.actorId}，状态{STATUS_LABELS[node.status]}
+            {node.label}，{actorLabel(node.actorType)}，状态{STATUS_LABELS[node.status]}
           </li>
         ))}
       </ol>

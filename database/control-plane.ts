@@ -3285,7 +3285,7 @@ export class ControlPlaneRepository {
       decision: string;
       value?: unknown;
       evidenceRef?: string | null;
-      evidenceKind?: 'visual' | 'dataset';
+      evidenceKind?: 'visual' | 'dataset' | 'document';
       idempotencyKey: string;
     }>;
   }): Promise<ControlTask> {
@@ -3308,8 +3308,8 @@ export class ControlPlaneRepository {
     if (new Set(evidenceRefs).size !== evidenceRefs.length) {
       throw new ControlPlaneConflictError('confirmation evidence references must be unique');
     }
-    if ((visualEvidenceRefs.length > 0) !== (input.publicationId !== undefined)) {
-      throw new ControlPlaneConflictError('confirmation visual evidence requires exactly one publication');
+    if (input.publicationId !== undefined && visualEvidenceRefs.length === 0) {
+      throw new ControlPlaneConflictError('confirmation visual publication has no visual evidence');
     }
 
     return this.transaction(async (connection) => {
@@ -3423,14 +3423,22 @@ export class ControlPlaneRepository {
       for (const gate of gates) {
         if (gate.evidenceRef) {
           const evidenceKind = gate.evidenceKind ?? 'visual';
-          const expectedKind = evidenceKind === 'dataset' ? 'dataset_input_profile' : 'visual_input_gate';
-          const expectedSchema = evidenceKind === 'dataset' ? 'dataset-input-profile-v1' : 'visual-input-gate-v1';
+          const expectedKind = evidenceKind === 'dataset'
+            ? 'dataset_input_profile'
+            : evidenceKind === 'document'
+              ? 'document_input_manifest'
+              : 'visual_input_gate';
+          const expectedSchema = evidenceKind === 'dataset'
+            ? 'dataset-input-profile-v1'
+            : evidenceKind === 'document'
+              ? 'document-input-manifest-v1'
+              : 'visual-input-gate-v1';
           const artifact = await connection.query(
             `SELECT 1 FROM control_artifacts
              WHERE id = $1 AND task_id = $2 AND plan_version_id = $3
                AND attempt_id IS NULL AND state = 'SEALED'
                AND kind = $4 AND schema_version = $5
-               AND ($6::text <> 'dataset' OR metadata_json->>'role' = $7)`,
+               AND ($6::text NOT IN ('dataset', 'document') OR metadata_json->>'role' = $7)`,
             [
               gate.evidenceRef,
               input.taskId,

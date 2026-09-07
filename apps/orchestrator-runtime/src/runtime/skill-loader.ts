@@ -21,6 +21,7 @@ import {
   getConfigRoot,
   SKILL_RESULT_ENVELOPE_SCHEMA,
   skillDatasetInputIssue,
+  skillDocumentInputIssue,
   skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillBindingFields,
@@ -97,12 +98,13 @@ const INPUT_LABELS: Readonly<Record<string, string>> = {
   user_research_dataset: '用户研究数据',
   internal_metrics_dataset: '内部指标数据',
   analytics_dataset: '分析数据',
+  internal_documents: '内部业务材料',
   user_materials: '用户材料',
   qualitative_insights: '定性研究洞察',
 };
 
 function inputLabel(key: string): string {
-  return INPUT_LABELS[key] ?? key.replaceAll('_', ' ');
+  return INPUT_LABELS[key] ?? '补充材料';
 }
 
 function contextText(value: unknown): string {
@@ -218,6 +220,7 @@ export class SkillLoader {
       visual_inputs: binding?.visual_inputs ?? [],
       multiple_visual_inputs: binding?.multiple_visual_inputs ?? [],
       dataset_inputs: binding?.dataset_inputs ?? [],
+      document_inputs: binding?.document_inputs ?? [],
       outputs: ['native_result'],
       output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
       required_tools: binding?.required_tools ?? stringArray(frontmatter.required_tools),
@@ -249,6 +252,7 @@ export class SkillLoader {
       const visualInputs = skill.visual_inputs ?? [];
       const multipleVisualInputs = skill.multiple_visual_inputs ?? [];
       const datasetInputs = skill.dataset_inputs ?? [];
+      const documentInputs = skill.document_inputs ?? [];
       const outputs = skill.outputs ?? [];
       const requiredTools = skill.required_tools ?? [];
       const optionalTools = skill.optional_tools ?? [];
@@ -261,6 +265,7 @@ export class SkillLoader {
           visual_inputs: Array.isArray(visualInputs) ? visualInputs : [],
           multiple_visual_inputs: Array.isArray(multipleVisualInputs) ? multipleVisualInputs : [],
           dataset_inputs: Array.isArray(datasetInputs) ? datasetInputs : [],
+          document_inputs: Array.isArray(documentInputs) ? documentInputs : [],
           outputs: Array.isArray(outputs) ? outputs : [],
           required_tools: Array.isArray(requiredTools) ? requiredTools : [],
           optional_tools: Array.isArray(optionalTools) ? optionalTools : [],
@@ -270,11 +275,13 @@ export class SkillLoader {
       const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
       const visualInputIssue = skillVisualInputIssue(skill);
       const datasetInputIssue = skillDatasetInputIssue(skill);
+      const documentInputIssue = skillDocumentInputIssue(skill);
       const optionalToolIssue = skillOptionalToolIssue(skill);
       if (
         unknownSkillBindingFields(skill).length > 0
         || visualInputIssue !== null
         || datasetInputIssue !== null
+        || documentInputIssue !== null
         || optionalToolIssue !== null
         || !Array.isArray(taskTypes)
         || !Array.isArray(inputs)
@@ -295,6 +302,7 @@ export class SkillLoader {
         visual_inputs: visualInputs,
         multiple_visual_inputs: multipleVisualInputs,
         dataset_inputs: datasetInputs,
+        document_inputs: documentInputs,
         outputs,
         required_tools: requiredTools,
         optional_tools: optionalTools,
@@ -385,7 +393,9 @@ export class SkillLoader {
       : [...new Set(fallbackRoles)].map((key) => {
           const kind = entry.dataset_inputs?.includes(key)
             ? 'dataset' as const
-            : entry.visual_inputs?.includes(key) ? 'visual' as const : 'value' as const;
+            : entry.document_inputs?.includes(key)
+              ? 'document' as const
+              : entry.visual_inputs?.includes(key) ? 'visual' as const : 'value' as const;
           const label = inputLabel(key);
           return {
             key,
@@ -393,7 +403,7 @@ export class SkillLoader {
             label,
             description: `${label}，用于完成本次分析。`,
             required: requiredRoles.has(key),
-            multiple: entry.multiple_visual_inputs?.includes(key) === true,
+            multiple: kind === 'document' || entry.multiple_visual_inputs?.includes(key) === true,
             acceptedSources: kind === 'value'
               ? ['conversation', 'upload', 'database'] as const
               : ['upload', 'database'] as const,

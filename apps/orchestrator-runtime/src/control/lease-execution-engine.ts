@@ -206,6 +206,10 @@ import {
   type ResolvedDatasetInput,
 } from './dataset-input-gate-store.ts';
 import {
+  DocumentInputGateStore,
+  type ResolvedDocumentInput,
+} from './document-input-gate-store.ts';
+import {
   VisualInputGateStore,
   valueForPendingInputTarget,
   type ResolvedVisualInput,
@@ -767,10 +771,12 @@ function nativeSourceReferences(input: {
   const sources: SourceReference[] = [];
   for (const resolved of input.resolvedInputs.resolved) {
     if (!resolved.targetInvocationIds.includes(input.invocationId)) continue;
+    const requirement = input.runSpec.input_requirements.find(({ key }) => key === resolved.key);
     sources.push({
       id: `S-input-${resolved.key}`,
-      title: resolved.key,
+      title: requirement?.label ?? '用户提供材料',
       type: 'user_input',
+      ...(resolved.valueRef.startsWith('requirement:') ? {} : { locator: resolved.valueRef }),
     });
   }
   const allowedStepNos = new Set([
@@ -785,7 +791,7 @@ function nativeSourceReferences(input: {
     if (urls.size === 0) {
       sources.push({
         id: `S-step-${output.stepNo}`,
-        title: output.actorId,
+        title: output.actorType === 'tool' ? '公开资料' : '内部知识',
         type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
       });
       continue;
@@ -795,17 +801,17 @@ function nativeSourceReferences(input: {
       index += 1;
       sources.push({
         id: `S-step-${output.stepNo}-${index}`,
-        title: `${output.actorId} ${index}`,
+        title: output.actorType === 'tool' ? `公开资料 ${index}` : `内部知识 ${index}`,
         type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
         url,
       });
     }
   }
-  for (const reference of input.runSpec.selected_references) {
+  for (const [index, reference] of input.runSpec.selected_references.entries()) {
     const identity = hashJson([reference.sourceId, reference.logicalPath]).slice('sha256:'.length, 'sha256:'.length + 24);
     sources.push({
       id: `S-K-${identity}`,
-      title: reference.path,
+      title: `分析方法资料 ${index + 1}`,
       type: 'knowledge',
       locator: reference.logicalPath,
       contentHash: reference.contentHash,
@@ -830,7 +836,15 @@ function nativeSkillPrompt(runSpec: NativeSkillRunSpec, imageCount = 0): string 
     '',
     '## 输出要求',
     '- 只返回符合给定 JSON Schema 的对象。',
-    `- primary.format 必须为 ${runSpec.report_policy.outputFormat}。`,
+    '- 所有用户可见的标题、正文、表头、标签、状态和资料缺口均使用简体中文；专有名词可保留原文。',
+    runSpec.report_policy.outputFormat === 'html'
+      ? [
+          '- 本次正式报告必须填写 reportDocument，不得填写 primary，不得输出 HTML、CSS、JavaScript 或 Base64。',
+          '- Tab 和章节必须遵循用户要求及原版 Skill 报告说明；只使用七类 Block：markdown、table、metric-group、image、quadrant、timeline、wireframe。',
+          '- image.assetId 只能来自 context.availableReportAssets；没有可用图片时不要生成 image Block。',,
+          '- Block 的 sourceIds 只能来自 context.sourceCatalog。',
+        ].join('\n')
+      : '- 本次结果必须填写 primary，primary.format 必须为 markdown，不得填写 reportDocument。',
     '- 内容只能使用已提供材料，并使用 sourceCatalog 中已有的 [S-*] 引用。',
     '- 不得新增 URL、来源 ID、事实或数字。',
     ...(imageCount > 0
@@ -843,6 +857,25 @@ function nativeSkillPrompt(runSpec: NativeSkillRunSpec, imageCount = 0): string 
       : '(none)',
     '- 不得请求清单外的新 key；其他资料不足时继续分析，使用 completed_with_gaps 并写入 gaps。',
   ].join('\n');
+}
+
+function documentTruncationGaps(value: unknown): string[] {
+  const files = new Set<string>();
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    if (!isRecord(candidate)) return;
+    if (
+      candidate.version === 'document-model-view-v1'
+      && candidate.truncated === true
+      && typeof candidate.fileName === 'string'
+    ) files.add(candidate.fileName);
+    for (const child of Object.values(candidate)) visit(child);
+  };
+  visit(value);
+  return [...files].map((fileName) => `材料「${fileName}」超过模型读取上限，本次仅分析前 512 KiB。`);
 }
 
 function nativeWaivedGaps(
@@ -2185,6 +2218,7 @@ export class LeaseExecutionEngine {
   private readonly llm: ReceiptLLMClient;
   private readonly visualInputGates: Pick<VisualInputGateStore, 'resolve'>;
   private readonly datasetInputGates: Pick<DatasetInputGateStore, 'resolve'>;
+  private readonly documentInputGates: Pick<DocumentInputGateStore, 'resolve'>;
 
   constructor(private readonly dependencies: {
     repository: ControlPlaneRepository;
@@ -2222,12 +2256,15 @@ export class LeaseExecutionEngine {
     };
     visualInputGates?: Pick<VisualInputGateStore, 'resolve'>;
     datasetInputGates?: Pick<DatasetInputGateStore, 'resolve'>;
+    documentInputGates?: Pick<DocumentInputGateStore, 'resolve'>;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
     this.visualInputGates = dependencies.visualInputGates
       ?? new VisualInputGateStore(dependencies.artifacts);
     this.datasetInputGates = dependencies.datasetInputGates
       ?? new DatasetInputGateStore(dependencies.artifacts);
+    this.documentInputGates = dependencies.documentInputGates
+      ?? new DocumentInputGateStore(dependencies.artifacts);
   }
 
   async execute(input: {
@@ -2244,7 +2281,9 @@ export class LeaseExecutionEngine {
     let reviewCoverage: ReviewCoverageIds | null = null;
     let deliverableId: string;
     let materializedVisualOriginals: MaterializedVisualOriginal[] = [];
+    let resolvedVisuals: ResolvedVisualInput[] = [];
     let resolvedDatasets: ResolvedDatasetInput[] = [];
+    let resolvedDocuments: ResolvedDocumentInput[] = [];
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
@@ -2281,6 +2320,7 @@ export class LeaseExecutionEngine {
         gates,
         pendingInputs,
       });
+      resolvedVisuals = resolvedVisualInputs.visuals;
       const resolvedDatasetInputs = await this.datasetInputGates.resolve({
         taskId: input.lease.taskId,
         planVersionId: input.lease.planVersionId,
@@ -2289,7 +2329,15 @@ export class LeaseExecutionEngine {
         pendingInputs,
       });
       resolvedDatasets = resolvedDatasetInputs.datasets;
-      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedDatasetInputs.gates, task.ownerUserId);
+      const resolvedDocumentInputs = await this.documentInputGates.resolve({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        ownerUserId: task.ownerUserId,
+        gates: resolvedDatasetInputs.gates,
+        pendingInputs,
+      });
+      resolvedDocuments = resolvedDocumentInputs.documents;
+      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedDocumentInputs.gates, task.ownerUserId);
       if (this.dependencies.visualInputMaterializer) {
         const materializer = this.dependencies.visualInputMaterializer;
         const materialized = await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
@@ -2389,6 +2437,18 @@ export class LeaseExecutionEngine {
           contentSha256: dataset.artifact.contentSha256,
         },
         value: dataset.profile,
+      });
+    }
+    for (const document of resolvedDocuments) {
+      if (!document.manifestArtifact.contentSha256) {
+        throw new ExecutionAuthenticityError(`Document ${document.gateKey} manifest hash is missing`);
+      }
+      resolvedArtifacts.set(document.manifestArtifact.id, {
+        artifact: {
+          id: document.manifestArtifact.id,
+          contentSha256: document.manifestArtifact.contentSha256,
+        },
+        value: document.documents,
       });
     }
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
@@ -2701,6 +2761,13 @@ export class LeaseExecutionEngine {
               frozenSkillExecution,
               nativeSkill,
               nativeResolvedInputs,
+              availableReportAssets: resolvedVisuals.flatMap(({ gateKey, images }) => (
+                images.map(({ artifact }, index) => ({
+                  assetId: artifact.id,
+                  role: gateKey,
+                  imageIndex: index + 1,
+                }))
+              )),
               onSkillPrepared: (fingerprint) => {
                 preparedSkillFingerprint = fingerprint;
               },
@@ -3211,7 +3278,7 @@ export class LeaseExecutionEngine {
                   ...(preparedSkillFingerprint ?? {
                     skillBodyHash: nativeSkill.runSpec.body_hash,
                     inputSchemaHash: nativeSkill.runSpec.input_requirements_hash,
-                    outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_VERSION),
+                    outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA),
                     payloadSchemaHash: null,
                     skillReferenceHashes: [
                       { path: nativeSkill.runSpec.entry_path, hash: nativeSkill.runSpec.body_hash },
@@ -5086,7 +5153,7 @@ export class LeaseExecutionEngine {
       ];
       return prior.skillBodyHash === runSpec.body_hash
         && prior.inputSchemaHash === runSpec.input_requirements_hash
-        && prior.outputSchemaHash === hashJson(NATIVE_SKILL_RESULT_VERSION)
+        && prior.outputSchemaHash === hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA)
         && prior.payloadSchemaHash === null
         && isDeepStrictEqual(prior.skillReferenceHashes, expectedReferenceHashes)
         && prior.inputHash === hashJson(resolvedInput)
@@ -5331,6 +5398,7 @@ export class LeaseExecutionEngine {
       runSpec: NativeSkillRunSpec;
     };
     nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
@@ -5812,6 +5880,7 @@ export class LeaseExecutionEngine {
       runSpec: NativeSkillRunSpec;
     };
     nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!input.nativeResolvedInputs) {
@@ -5828,15 +5897,16 @@ export class LeaseExecutionEngine {
       invocationId,
       runSpec,
     });
-    const deterministicGaps = nativeWaivedGaps(
-      input.nativeResolvedInputs,
-      invocationId,
-    );
+    const deterministicGaps = [
+      ...nativeWaivedGaps(input.nativeResolvedInputs, invocationId),
+      ...documentTruncationGaps(input.resolvedInput),
+    ];
     const context = {
       researchGoal: input.researchGoal,
       resolvedInput: compactLlmInput(input.resolvedInput),
       priorOutputs: verifiedPriorOutputs(input.outputs, input.step),
       sourceCatalog: sources,
+      availableReportAssets: input.availableReportAssets ?? [],
       waivedInputs: deterministicGaps,
     };
     const images = collectLlmImageInputs(input.resolvedInput);
@@ -5844,7 +5914,7 @@ export class LeaseExecutionEngine {
     const fingerprint: SkillExecutionFingerprint = {
       skillBodyHash: runSpec.body_hash,
       inputSchemaHash: runSpec.input_requirements_hash,
-      outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_VERSION),
+      outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA),
       payloadSchemaHash: null,
       skillReferenceHashes: [
         { path: runSpec.entry_path, hash: runSpec.body_hash },
@@ -5883,6 +5953,17 @@ export class LeaseExecutionEngine {
       generated.data,
       `skill:${input.step.actor_id}`,
     );
+    if (
+      (runSpec.report_policy.outputFormat === 'html' && generated.data.reportDocument === undefined)
+      || (runSpec.report_policy.outputFormat === 'markdown' && generated.data.primary?.format !== 'markdown')
+    ) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        `Skill output does not match report policy ${runSpec.report_policy.outputFormat}`,
+      );
+    }
     const allowedInputKeys = new Map(runSpec.input_requirements.map((requirement) => [requirement.key, requirement]));
     const requestedInputKeys = generated.data.missingInputKeys ?? [];
     const unknownInputKeys = requestedInputKeys.filter((key) => !allowedInputKeys.has(key));
@@ -5908,13 +5989,17 @@ export class LeaseExecutionEngine {
         }
       : generated.data;
     const result = createNativeSkillResult({
+      taskId: input.lease.taskId,
+      availableAssetIds: input.availableReportAssets?.map(({ assetId }) => assetId),
       skillId: input.step.actor_id,
       invocationId,
       draft,
       sources,
       deterministicGaps,
     });
-    assertNativeContentReferences(result.primary.content, sources);
+    if (result.reportDocument === undefined) {
+      assertNativeContentReferences(result.primary.content, sources);
+    }
     return {
       output: result,
       kind: 'skill_result',
@@ -5943,6 +6028,7 @@ export class LeaseExecutionEngine {
       runSpec: NativeSkillRunSpec;
     };
     nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {

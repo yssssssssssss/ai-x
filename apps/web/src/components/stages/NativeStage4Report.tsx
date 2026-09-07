@@ -23,22 +23,45 @@ export function NativeStage4Report({
   const [htmlError, setHtmlError] = useState('');
   const selectedResult = skillResults.find(({ invocationId }) => invocationId === selectedInvocationId)
     ?? skillResults[0];
+  const statusLabel = (status: NativeSkillResult['status']) => status === 'completed'
+    ? '已完成'
+    : status === 'completed_with_gaps' ? '已完成，存在资料缺口' : '需要补充资料';
 
   useEffect(() => {
     let active = true;
+    const objectUrls: string[] = [];
     setHtml(null);
     setHtmlError('');
-    void api.controlFinalReportHtml(taskId)
-      .then(async ({ blob }) => blob.text())
-      .then((content) => { if (active) setHtml(content); })
-      .catch((error: unknown) => {
-        if (active) setHtmlError(error instanceof Error ? error.message : 'HTML 报告加载失败');
-      });
-    return () => { active = false; };
+    void (async () => {
+      const { blob } = await api.controlFinalReportHtml(taskId);
+      let content = await blob.text();
+      const assetUrls = [...new Set(content.match(
+        /\/api\/control-tasks\/[^/"'<>\s]+\/assets\/[^"'<>\s]+/gu,
+      ) ?? [])];
+      for (const assetUrl of assetUrls) {
+        const encodedAssetId = assetUrl.split('/').at(-1);
+        if (!encodedAssetId) continue;
+        const asset = await api.controlVisualAsset(taskId, decodeURIComponent(encodedAssetId));
+        const objectUrl = URL.createObjectURL(asset.blob);
+        objectUrls.push(objectUrl);
+        content = content.replaceAll(assetUrl, objectUrl);
+      }
+      if (active) setHtml(content);
+    })().catch((error: unknown) => {
+      if (active) setHtmlError(error instanceof Error ? error.message : 'HTML 报告加载失败');
+    });
+    return () => {
+      active = false;
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+    };
   }, [taskId, finalReport.attemptId]);
 
   function download(name: string, content: string, type: string) {
-    const url = URL.createObjectURL(new Blob([content], { type }));
+    downloadBlob(name, new Blob([content], { type }));
+  }
+
+  function downloadBlob(name: string, blob: Blob) {
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = name;
@@ -61,34 +84,51 @@ export function NativeStage4Report({
       {view === 'final' ? (
         <>
           <div className="report-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => download(
-                `report-${taskId}.${finalReport.primary.format === 'html' ? 'html' : 'md'}`,
-                finalReport.primary.content,
-                finalReport.primary.format === 'html' ? 'text/html;charset=utf-8' : 'text/markdown;charset=utf-8',
-              )}
-            >
-              下载原始报告
-            </button>
-            {html ? (
+            {!finalReport.reportDocument ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => download(
+                  `研究报告-${taskId}.${finalReport.primary.format === 'html' ? 'html' : 'md'}`,
+                  finalReport.primary.content,
+                  finalReport.primary.format === 'html' ? 'text/html;charset=utf-8' : 'text/markdown;charset=utf-8',
+                )}
+              >
+                下载原始报告
+              </button>
+            ) : null}
+            {html && !finalReport.reportDocument ? (
               <button
                 type="button"
                 className="btn-ghost"
-                onClick={() => download(`report-${taskId}.html`, html, 'text/html;charset=utf-8')}
+                onClick={() => download(`研究报告-${taskId}.html`, html, 'text/html;charset=utf-8')}
               >
                 下载 HTML
               </button>
             ) : null}
-            {finalReport.attachments.map((attachment) => (
+            {finalReport.reportDocument ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => {
+                  void api.controlFinalReportZip(taskId)
+                    .then(({ blob }) => downloadBlob(`研究报告-${taskId}.zip`, blob))
+                    .catch((error: unknown) => setHtmlError(
+                      error instanceof Error ? error.message : '离线报告下载失败',
+                    ));
+                }}
+              >
+                下载离线报告
+              </button>
+            ) : null}
+            {finalReport.attachments.map((attachment, index) => (
               <button
                 key={attachment.path}
                 type="button"
                 className="btn-ghost"
                 onClick={() => download(attachment.path.split('/').at(-1) ?? 'attachment', attachment.content, attachment.mediaType)}
               >
-                下载 {attachment.path}
+                下载附件 {index + 1}
               </button>
             ))}
           </div>
@@ -120,8 +160,10 @@ export function NativeStage4Report({
           </div>
           {selectedResult ? (
             <article>
-              <p><b>状态：</b>{selectedResult.status}</p>
-              <pre className="native-report-content">{selectedResult.primary.content}</pre>
+              <p><b>状态：</b>{statusLabel(selectedResult.status)}</p>
+              {selectedResult.reportDocument
+                ? <p className="native-report-content">结构化分析已纳入最终报告。</p>
+                : <pre className="native-report-content">{selectedResult.primary.content}</pre>}
               {selectedResult.gaps.length > 0 ? (
                 <section>
                   <h3>资料缺口</h3>
@@ -131,14 +173,14 @@ export function NativeStage4Report({
               {selectedResult.attachments.length > 0 ? (
                 <section>
                   <h3>附件</h3>
-                  <ul>{selectedResult.attachments.map((attachment) => (
+                  <ul>{selectedResult.attachments.map((attachment, index) => (
                     <li key={attachment.path}>
                       <button
                         type="button"
                         className="btn-ghost"
                         onClick={() => download(attachment.path.split('/').at(-1) ?? 'attachment', attachment.content, attachment.mediaType)}
                       >
-                        {attachment.path}
+                        附件 {index + 1}
                       </button>
                     </li>
                   ))}</ul>
@@ -149,7 +191,6 @@ export function NativeStage4Report({
                 {selectedResult.sources.length === 0 ? <p>无</p> : (
                   <ul>{selectedResult.sources.map((source) => (
                     <li key={source.id}>
-                      <code>{source.id}</code>{' '}
                       {source.url
                         ? <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
                         : source.title}

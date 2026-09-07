@@ -1,6 +1,17 @@
 import type { FinalizedPlan } from '../../../../packages/api-contract/http.ts';
 import { multiSkillPlanViewModel } from '../multi-skill-view-model.ts';
 
+function nativeSkillDisplayName(
+  invocation: NonNullable<FinalizedPlan['skill_invocations']>[number],
+  index: number,
+): string {
+  if ('run_spec' in invocation) {
+    const heading = /^#\s+(.+)$/mu.exec(invocation.run_spec.body)?.[1]?.trim();
+    if (heading && /[\p{Script=Han}]/u.test(heading)) return heading;
+  }
+  return `专业分析能力 ${index + 1}`;
+}
+
 export function MultiSkillPlanSummary({ plan, compact = false }: {
   plan: FinalizedPlan;
   compact?: boolean;
@@ -20,9 +31,9 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
         </div>
         {!compact ? (
           <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
-            {invocations.map((invocation) => (
+            {invocations.map((invocation, index) => (
               <li key={invocation.invocation_id} style={{ marginTop: 5, fontSize: 12 }}>
-                <strong>分析能力</strong>{' · '}{invocation.skill_id}
+                <strong>{nativeSkillDisplayName(invocation, index)}</strong>
                 {' · '}{'required' in invocation && invocation.required === false ? '可选' : '必需'}
               </li>
             ))}
@@ -51,41 +62,24 @@ export function MultiSkillPlanSummary({ plan, compact = false }: {
       </div>
       {!compact ? (
         <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
-          {model.invocations.map((invocation) => (
+          {model.invocations.map((invocation, index) => (
             <li key={invocation.invocation_id} style={{ marginTop: 5, fontSize: 12 }}>
-              <strong>{invocation.role === 'synthesizer' ? '综合能力' : '分析能力'}</strong>
-              {' · '}{invocation.skill_id}
+              <strong>{invocation.role === 'synthesizer' ? '综合分析' : `专业分析 ${index + 1}`}</strong>
               {' · '}{invocation.required ? '必需' : '可选'}
-              {' · '}{invocation.question_ids.join(' / ')}
-              {' · '}{model.selections.find(({ invocation_id }) => invocation_id === invocation.invocation_id)?.reason_codes.join(' / ') ?? 'policy'}
-              {invocation.requested_artifact_types.length > 0
-                ? ` · ${invocation.requested_artifact_types.join(' / ')}`
-                : ''}
             </li>
           ))}
         </ul>
       ) : null}
       {!compact && model.sharedPrerequisites.length > 0 ? (
         <div style={{ marginTop: 10, fontSize: 12 }}>
-          <strong>共享阶段：</strong>
-          {model.sharedPrerequisites.map((item) => (
-            <span key={`${item.capability_type}:${item.capability_id}`}>
-              {item.capability_type} {item.capability_id} → {item.consumer_skill_ids.join('、')}
-            </span>
-          ))}
+          <strong>共享准备：</strong>
+          {model.sharedPrerequisites.length} 项资料准备将由相关分析能力共同使用
         </div>
       ) : null}
       {!compact && (model.rejected.length > 0 || model.capabilityGaps.length > 0) ? (
         <details style={{ marginTop: 10 }}>
-          <summary>未选能力与缺口（{model.rejected.length + model.capabilityGaps.length}）</summary>
-          <ul style={{ paddingLeft: 18, fontSize: 12 }}>
-            {model.rejected.map((item) => (
-              <li key={`${item.skill_id}:${item.reason_code}`}>{item.skill_id} · {item.reason_code} · {item.related_ids.join('、')}</li>
-            ))}
-            {model.capabilityGaps.map((gap) => (
-              <li key={`${gap.capability_type}:${gap.capability_id}`}>{gap.capability_id} · {gap.code} · {gap.message}</li>
-            ))}
-          </ul>
+          <summary>暂未采用的能力与资料缺口（{model.rejected.length + model.capabilityGaps.length}）</summary>
+          <p style={{ fontSize: 12 }}>这些项目不会阻止当前计划；执行结果会说明可能受影响的范围。</p>
         </details>
       ) : null}
       {model.uncoveredRequiredDemandIds.length > 0 ? (

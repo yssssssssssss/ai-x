@@ -96,6 +96,7 @@ import {
 import { createEditorialSummaryPipeline } from '../../orchestrator-runtime/src/editorial-summary-runtime.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { VisualInputMaterializer } from '../../orchestrator-runtime/src/report/visual-input-materializer.ts';
+import { renderNativeReportBundle } from '../../orchestrator-runtime/src/report/native-report-renderer.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
@@ -106,7 +107,16 @@ import {
   DatasetInputGateStore,
   type DatasetUploadResult,
 } from '../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
-import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
+import {
+  DocumentInputGateError,
+  DocumentInputGateStore,
+  type DocumentUploadResult,
+} from '../../orchestrator-runtime/src/control/document-input-gate-store.ts';
+import {
+  VisualInputGateError,
+  VisualInputGateStore,
+  type VisualUploadResult,
+} from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
 import { LocalZeroMcpClient } from './integrations/zero/zero-mcp-client.ts';
 import {
@@ -165,6 +175,89 @@ function datasetUploadReplay(value: unknown): DatasetUploadResult {
     || result.columns.some((column) => typeof column !== 'string')
   ) throw new Error('dataset upload replay is malformed');
   return result as DatasetUploadResult;
+}
+
+function visualUploadHash(input: {
+  taskId: string;
+  planVersionId: string;
+  role: string;
+  ownerUserId: string;
+  multiple: boolean;
+  files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+}): string {
+  const request = JSON.stringify({
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    role: input.role,
+    ownerUserId: input.ownerUserId,
+    multiple: input.multiple,
+    files: input.files.map((file) => ({
+      fileName: file.fileName,
+      mediaType: file.mediaType,
+      contentSha256: `sha256:${createHash('sha256').update(file.bytes).digest('hex')}`,
+    })),
+  });
+  return `sha256:${createHash('sha256').update(request).digest('hex')}`;
+}
+
+function visualUploadReplay(value: unknown): VisualUploadResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('visual upload replay is malformed');
+  }
+  const result = value as Partial<VisualUploadResult>;
+  if (
+    typeof result.visualInputId !== 'string'
+    || !Array.isArray(result.images)
+    || result.images.length === 0
+    || result.images.some((image) => (
+      typeof image.contentSha256 !== 'string'
+      || typeof image.mediaType !== 'string'
+      || typeof image.byteSize !== 'number'
+    ))
+  ) throw new Error('visual upload replay is malformed');
+  return result as VisualUploadResult;
+}
+
+function documentUploadHash(input: {
+  taskId: string;
+  planVersionId: string;
+  role: string;
+  ownerUserId: string;
+  multiple: boolean;
+  files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+}): string {
+  const request = JSON.stringify({
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    role: input.role,
+    ownerUserId: input.ownerUserId,
+    multiple: input.multiple,
+    files: input.files.map((file) => ({
+      fileName: file.fileName,
+      mediaType: file.mediaType,
+      contentSha256: `sha256:${createHash('sha256').update(file.bytes).digest('hex')}`,
+    })),
+  });
+  return `sha256:${createHash('sha256').update(request).digest('hex')}`;
+}
+
+function documentUploadReplay(value: unknown): DocumentUploadResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('document upload replay is malformed');
+  }
+  const result = value as Partial<DocumentUploadResult>;
+  if (
+    typeof result.documentInputId !== 'string'
+    || !Array.isArray(result.files)
+    || result.files.length === 0
+    || result.files.some((file) => (
+      typeof file.fileName !== 'string'
+      || typeof file.mediaType !== 'string'
+      || typeof file.contentSha256 !== 'string'
+      || typeof file.byteSize !== 'number'
+    ))
+  ) throw new Error('document upload replay is malformed');
+  return result as DocumentUploadResult;
 }
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
@@ -448,12 +541,21 @@ export interface ControlRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  readFinalReportZip(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
     taskId: string;
     assetId: string;
     ownerUserId: string;
-  }): Promise<VerifiedVisualAsset | null>;
+  }): Promise<VerifiedVisualAsset | {
+    artifact: ControlArtifact;
+    bytes: Uint8Array;
+    mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+    inputAsset: true;
+  } | null>;
   readHtmlBundle(input: {
     taskId: string;
     attemptId: string;
@@ -489,6 +591,22 @@ export interface ControlRuntime {
     rowCount: number;
     columns: string[];
   }>;
+  uploadDocument(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+  }): Promise<DocumentUploadResult>;
+  uploadVisual(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+  }): Promise<VisualUploadResult>;
 }
 
 export function visualAssetManifestStorageUri(storageUri: string): string | null {
@@ -894,6 +1012,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const visualInputGates = new VisualInputGateStore(artifacts);
   const datasetInputGates = new DatasetInputGateStore(artifacts);
+  const documentInputGates = new DocumentInputGateStore(artifacts);
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -910,6 +1029,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
     visualInputGates,
     datasetInputGates,
+    documentInputGates,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {
@@ -1020,7 +1140,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         expectedModel: expectedActualModel,
       });
     },
-  }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates);
+  }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates, documentInputGates);
   const zeroPublicationEnabled = overrides.zeroPublicationEnabled
     ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
   const zeroPublication = zeroPublicationEnabled
@@ -1053,6 +1173,59 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       readVisualAsset: (input) => visualAssets.readVerified(input),
     })
     : undefined;
+  const readOwnedVisualAsset = async (input: {
+    taskId: string;
+    assetId: string;
+    ownerUserId: string;
+  }): Promise<VerifiedVisualAsset | {
+    artifact: ControlArtifact;
+    bytes: Uint8Array;
+    mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+    inputAsset: true;
+  } | null> => {
+    const task = await repository.getTaskDetail(input.taskId);
+    if (
+      !task
+      || task.ownerUserId !== input.ownerUserId
+      || task.conversationOwnerUserId !== input.ownerUserId
+    ) {
+      return null;
+    }
+    const asset = await repository.getArtifact(input.assetId);
+    if (!asset || asset.taskId !== input.taskId || asset.state !== 'SEALED') return null;
+    if (asset.kind === 'visual_input_image' && asset.planVersionId && asset.attemptId === null) {
+      const verified = await artifacts.readVerifiedBinary(asset.id);
+      if (
+        verified.artifact.id !== asset.id
+        || verified.metadata.contentType === 'image/svg+xml'
+      ) return null;
+      return {
+        artifact: verified.artifact,
+        bytes: verified.bytes,
+        mediaType: verified.metadata.contentType,
+        inputAsset: true,
+      };
+    }
+    const manifestStorageUri = visualAssetManifestStorageUri(asset.storageUri);
+    if (
+      asset.kind !== 'visual_asset'
+      || !asset.planVersionId
+      || !asset.attemptId
+      || manifestStorageUri === null
+    ) {
+      return null;
+    }
+    const candidates = await repository.listArtifactsByStorageUri(manifestStorageUri);
+    const manifest = candidates.find((candidate) =>
+      candidate.state === 'SEALED'
+      && candidate.kind === 'visual_asset_manifest'
+      && candidate.taskId === asset.taskId
+      && candidate.planVersionId === asset.planVersionId
+      && candidate.attemptId === asset.attemptId,
+    );
+    if (!manifest) return null;
+    return visualAssets.readVerified({ assetId: asset.id, manifestArtifactId: manifest.id });
+  };
 
   return {
     controlPlanning,
@@ -1155,6 +1328,202 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         throw error;
       }
     },
+    uploadVisual: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_confirmation'
+        || task.activePlanVersionId !== input.planVersionId
+      ) throw new ControlPlaneConflictError('图片上传对应的任务或计划不可用');
+      const plan = await repository.getPlanVersionDetail(input.planVersionId);
+      if (!plan || plan.taskId !== task.id) throw new ControlPlaneConflictError('图片上传对应的计划不可用');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      const pending = parsePendingInputContracts(plan.pendingInputs).find(({ role }) => role === input.role);
+      if (!pending || pending.kind !== 'visual') {
+        throw new VisualInputGateError(`visual input role ${input.role} is not pending on the active plan`);
+      }
+
+      const commandType = `visual_upload:${input.role}`;
+      const requestHash = visualUploadHash({ ...input, multiple: pending.multiple });
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') throw new ControlPlaneConflictError('图片上传请求冲突，请重新选择文件');
+        if (reservation.status === 'replay') return visualUploadReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') throw new ControlPlaneConflictError('图片上传请求冲突，请重新选择文件');
+          if (waited.status === 'replay') return visualUploadReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let prepared: Awaited<ReturnType<VisualInputGateStore['prepareBinding']>> | null = null;
+      try {
+        const uploaded = await visualInputGates.upload({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: input.role,
+          taskSensitivity: structuredTask.sensitivity === 'public' || structuredTask.sensitivity === 'confidential'
+            ? structuredTask.sensitivity
+            : 'internal',
+          multiple: pending.multiple,
+          files: input.files,
+        });
+        prepared = await visualInputGates.prepareBinding({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: input.role,
+          multiple: pending.multiple,
+          visualInputId: uploaded.visualInputId,
+        });
+        await repository.completeDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          response: uploaded,
+        });
+        return uploaded;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return visualUploadReplay(completed.response);
+          }
+        }
+        if (prepared) {
+          await visualInputGates.invalidate(prepared, 'visual upload command did not commit');
+        }
+        throw error;
+      }
+    },
+    uploadDocument: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_confirmation'
+        || task.activePlanVersionId !== input.planVersionId
+      ) throw new ControlPlaneConflictError('文档上传对应的任务或计划不可用');
+      const plan = await repository.getPlanVersionDetail(input.planVersionId);
+      if (!plan || plan.taskId !== task.id) throw new ControlPlaneConflictError('文档上传对应的计划不可用');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      const pending = parsePendingInputContracts(plan.pendingInputs).find(({ role }) => role === input.role);
+      if (!pending || pending.kind !== 'document') {
+        throw new DocumentInputGateError(`document input role ${input.role} is not pending on the active plan`);
+      }
+
+      const commandType = `document_upload:${input.role}`;
+      const requestHash = documentUploadHash({ ...input, multiple: pending.multiple });
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') throw new ControlPlaneConflictError('文档上传请求冲突，请重新选择文件');
+        if (reservation.status === 'replay') return documentUploadReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') throw new ControlPlaneConflictError('文档上传请求冲突，请重新选择文件');
+          if (waited.status === 'replay') return documentUploadReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let prepared: Awaited<ReturnType<DocumentInputGateStore['prepareBinding']>> | null = null;
+      try {
+        const uploaded = await documentInputGates.upload({
+          taskId: task.id,
+          planVersionId: plan.id,
+          role: input.role,
+          ownerUserId: input.ownerUserId,
+          taskSensitivity: structuredTask.sensitivity === 'public' || structuredTask.sensitivity === 'confidential'
+            ? structuredTask.sensitivity
+            : 'internal',
+          multiple: pending.multiple,
+          files: input.files,
+        });
+        prepared = await documentInputGates.prepareBinding({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: input.role,
+          ownerUserId: input.ownerUserId,
+          documentInputId: uploaded.documentInputId,
+          multiple: pending.multiple,
+        });
+        await repository.completeDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          response: uploaded,
+        });
+        return uploaded;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return documentUploadReplay(completed.response);
+          }
+        }
+        if (prepared) {
+          await documentInputGates.invalidate(prepared, 'document upload command did not commit');
+        }
+        throw error;
+      }
+    },
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getFinalReport(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
@@ -1214,6 +1583,38 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       });
       if (!artifact) return null;
       return (await artifacts.readVerifiedBoundText(artifact.id)).content;
+    },
+    async readFinalReportZip(input) {
+      const final = await this.getFinalReport(input.taskId, input.ownerUserId);
+      if (!final?.report.reportDocument) return null;
+      const bundleAssets = [];
+      for (const [index, assetId] of final.report.reportDocument.assetIds.entries()) {
+        const asset = await readOwnedVisualAsset({
+          taskId: input.taskId,
+          assetId,
+          ownerUserId: input.ownerUserId,
+        });
+        if (
+          !asset
+          || !asset.artifact.contentSha256
+          || asset.artifact.planVersionId !== final.report.planVersionId
+        ) return null;
+        const mediaType = 'inputAsset' in asset ? asset.mediaType : asset.manifest.mediaType;
+        const extension = mediaType === 'image/jpeg'
+          ? 'jpg'
+          : mediaType === 'image/png' ? 'png' : mediaType === 'image/webp' ? 'webp' : 'svg';
+        bundleAssets.push({
+          assetId,
+          fileName: `${asset.artifact.contentSha256.slice('sha256:'.length)}-${index + 1}.${extension}`,
+          bytes: asset.bytes,
+        });
+      }
+      return renderNativeReportBundle({
+        document: final.report.reportDocument,
+        sources: final.report.sources,
+        gaps: final.report.gaps,
+        assets: bundleAssets,
+      });
     },
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
@@ -1285,40 +1686,6 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const publication = await editorialSummary.generate({ taskId: task.id });
       return readFile(publication.reportPath, 'utf8');
     },
-    async readVisualAsset(input) {
-      const task = await repository.getTaskDetail(input.taskId);
-      if (
-        !task
-        || task.ownerUserId !== input.ownerUserId
-        || task.conversationOwnerUserId !== input.ownerUserId
-      ) {
-        return null;
-      }
-      const asset = await repository.getArtifact(input.assetId);
-      const manifestStorageUri = asset
-        ? visualAssetManifestStorageUri(asset.storageUri)
-        : null;
-      if (
-        !asset
-        || asset.taskId !== input.taskId
-        || asset.kind !== 'visual_asset'
-        || asset.state !== 'SEALED'
-        || !asset.planVersionId
-        || !asset.attemptId
-        || manifestStorageUri === null
-      ) {
-        return null;
-      }
-      const candidates = await repository.listArtifactsByStorageUri(manifestStorageUri);
-      const manifest = candidates.find((candidate) =>
-        candidate.state === 'SEALED'
-        && candidate.kind === 'visual_asset_manifest'
-        && candidate.taskId === asset.taskId
-        && candidate.planVersionId === asset.planVersionId
-        && candidate.attemptId === asset.attemptId,
-      );
-      if (!manifest) return null;
-      return visualAssets.readVerified({ assetId: asset.id, manifestArtifactId: manifest.id });
-    },
+    readVisualAsset: readOwnedVisualAsset,
   };
 }

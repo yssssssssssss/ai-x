@@ -1,6 +1,6 @@
 # 可复用统一问询、材料输入与确定性报告 Renderer 开发方案
 
-> 状态：Proposed，已按“最小设计、避免重复审核与校验”重新收敛
+> 状态：In Progress，已按“最小设计、避免重复审核与校验”收敛
 > 日期：2026-09-07
 > 首条纵切：`industry-market-analysis` 中档、独立 5 Tab HTML 报告
 > 适用范围：新建 Task 与用户主动 Replan；`single_skill`、`multi_skill`
@@ -195,19 +195,23 @@ image/*             → visual
 
 ### 6.2 Document Artifact
 
-只保存一个 Raw Text Artifact，不建立第二份 Model View Artifact。模型视图在执行时从 Raw Artifact 确定性生成：
+每个文件只保存一份 Raw Text Artifact，不再保存第二份 Model View Artifact；多文件输入另有一个轻量 Manifest 只保存引用。模型视图在执行时从 Raw Artifact 确定性生成：
 
 ```ts
 interface DocumentInputManifestV1 {
-  version: 'document-input-v1';
+  version: 'document-input-manifest-v1';
   taskId: string;
   planVersionId: string;
+  ownerUserId: string;
   gateKey: string;
-  artifactId: string;
-  fileName: string;
-  mediaType: 'text/markdown' | 'text/plain';
-  byteSize: number;
-  contentHash: string;
+  multiple: boolean;
+  documents: Array<{
+    artifactId: string;
+    fileName: string;
+    mediaType: 'text/markdown; charset=utf-8' | 'text/plain; charset=utf-8';
+    byteSize: number;
+    contentSha256: string;
+  }>;
 }
 ```
 
@@ -268,17 +272,9 @@ wireframe      灰阶页面结构
 
 ### 6.5 NativeResult / FinalReport
 
-现有 `NativeSkillResult.primary` 增加 `report_document` 变体；现有 Markdown 继续保留。新任务不再让模型直接返回完整 HTML。
+现有 `NativeSkillResult` 增加可选的 `reportDocument` 与对应 Hash；`primary` 保存确定性渲染后的 HTML，Markdown Skill 保持现状。新任务不再让模型直接返回完整 HTML。
 
-现有 `NativeFinalReport` 增加：
-
-```text
-documentArtifactId
-onlineHtmlArtifactId
-bundleArtifactId
-```
-
-不保存图片 bytes、Base64 或本地路径。
+现有 `NativeFinalReport` 保存同一 ReportDocument 和 Hash；最终 HTML 继续封存为 Artifact，ZIP 在下载时由已封存的 ReportDocument 与图片确定性生成，不再持久化一份重复 Bundle。
 
 ## 7. 一次性中文问询
 
@@ -332,16 +328,15 @@ Industry 中档表单一次展示：
 
 ### 8.1 统一上传
 
-前端一个“确认并继续”动作完成所有文件上传和 Plan 确认。网络层可有多个请求，但用户不分批操作。
-
-新增共享接口：
+前端一个“确认并继续”动作完成所有文件上传和 Plan 确认。网络层复用三条已有语义明确的 multipart 路由，不再额外增加一个需要二次分派的通用材料协议：
 
 ```text
-POST /api/control-tasks/:taskId/materials/:role
-Content-Type: multipart/form-data
+POST /api/control-tasks/:taskId/plans/:planVersionId/inputs/:role/document
+POST /api/control-tasks/:taskId/plans/:planVersionId/inputs/:role/dataset
+POST /api/control-tasks/:taskId/plans/:planVersionId/inputs/:role/visual
 ```
 
-服务端依据冻结 PendingInput 判定文件类型，客户端不能声明任意用途。
+服务端根据冻结 PendingInput 校验 route 对应的输入类型，客户端不能自行提升用途。
 
 ### 8.2 Markdown/TXT
 
@@ -469,7 +464,9 @@ generate-persona           人群概览 / Persona / 痛点 / 设计机会
 ### API
 
 ```text
-POST /control-tasks/:id/materials/:role
+POST /control-tasks/:id/plans/:planVersionId/inputs/:role/document
+POST /control-tasks/:id/plans/:planVersionId/inputs/:role/dataset
+POST /control-tasks/:id/plans/:planVersionId/inputs/:role/visual
 GET  /control-tasks/:id/final-report
 GET  /control-tasks/:id/final-report.html
 GET  /control-tasks/:id/final-report.zip
@@ -512,13 +509,12 @@ GET  /control-tasks/:id/assets/:assetId
 
 ## 15. 文件范围
 
-### 新增文件（最多 3 个实现文件）
+### 新增文件（2 个实现文件）
 
 1. `apps/orchestrator-runtime/src/control/document-input-gate-store.ts`
-2. `apps/orchestrator-runtime/src/report/native-report-document.ts`
-3. `apps/orchestrator-runtime/src/report/native-report-renderer.ts`
+2. `apps/orchestrator-runtime/src/report/native-report-renderer.ts`
 
-ZIP 放入 Renderer 同文件的导出函数，首版不拆 `native-report-bundle.ts`。测试优先加入现有：
+ReportDocument 类型直接加入现有 API 合同；ZIP 是 Renderer 的第二种输出，不拆独立 Bundle 层。测试只为两个新边界增加聚焦文件，其余测试加入现有测试文件：
 
 - `tests/native-skill-orchestration.test.ts`
 - `tests/native-plan-input-resolution.test.ts`
@@ -549,7 +545,21 @@ ZIP 放入 Renderer 同文件的导出函数，首版不拆 `native-report-bundl
 
 只在包外增加 `internal_documents` 绑定，不修改原版 Skill Package。
 
-## 16. 实施阶段
+## 16. 当前实施进度
+
+截至本次首个开发批次：
+
+- 已完成 `document` 输入合同、Markdown/TXT Artifact、执行期有界模型视图；
+- 已完成图片 multipart 上传路径，Web 新流程不再生成 Base64 确认载荷；
+- 已将 Document、CSV、图片集中在 Stage 2 的一次提交中，并移除匿名化强制确认；
+- 已完成 `NativeReportDocumentV1`、7 类 Block、CSS-only Tab、在线 HTML 与按需 ZIP Renderer；
+- 已接通 Native Single ReportDocument，Multi 的唯一 Writer 可生成 ReportDocument；
+- 已接通 owner-bound 原始上传图片读取和浏览器 Blob 展示；
+- 已为 Industry 增加 `internal_documents`，并为两个材料型 Skill 增加 Document 输入复用；
+- 已完成聚焦测试、全量单测、类型检查、Registry/Knowledge lint 和 Web build；
+- 尚待完成：删除服务端旧 inline data URL 兼容入口、跨 Stage 1/2 的问询进一步合并，以及真实 Provider 双路径验收。
+
+## 17. 实施阶段
 
 ### Phase 0：冻结最小合同
 
@@ -610,7 +620,7 @@ ZIP 放入 Renderer 同文件的导出函数，首版不拆 `native-report-bundl
 
 不增加每阶段独立评审、三次重复真实运行或模型自评分。
 
-## 17. 最小测试集
+## 18. 最小测试集
 
 只保留能证明边界的测试：
 
@@ -625,7 +635,7 @@ ZIP 放入 Renderer 同文件的导出函数，首版不拆 `native-report-bundl
 
 不为每个 Block 建多套等价测试，不在 Renderer 重复 Source/Hash/owner 测试，不新增报告 Review Gate。
 
-## 18. 验收标准
+## 19. 验收标准
 
 ### 用户体验
 
@@ -665,7 +675,7 @@ git diff --check
 
 普通 CI 不调用真实 Provider。真实调用只在命令级 `ALLOW_REAL_PROVIDER=1` 下串行执行。
 
-## 19. 清理清单
+## 20. 清理清单
 
 新能力通过后删除：
 
@@ -681,7 +691,7 @@ git diff --check
 
 保留：历史 Artifact 数据、Markdown Renderer、凭据保护、Source/Hash/owner 校验和通用 Artifact 基础设施。
 
-## 20. 风险与处理
+## 21. 风险与处理
 
 | 风险 | 最小处理 |
 |---|---|
@@ -698,7 +708,7 @@ git diff --check
 | Renderer 失败 | 只重渲染 |
 | 中文漏网 | 一个用户语言边界测试 + Ego Lite 检查 |
 
-## 21. 提交顺序
+## 22. 提交顺序
 
 ```text
 1. docs: simplify native report renderer plan
@@ -711,7 +721,7 @@ git diff --check
 8. chore: remove superseded input and HTML paths
 ```
 
-## 22. 完成定义
+## 23. 完成定义
 
 - 新 Task 使用调整后的单一 Native v1 路径；
 - Industry 一个中文表单收齐材料；
@@ -729,7 +739,7 @@ git diff --check
 - 自动化、Web Build、两条真实路径和 Ego Lite 验收通过；
 - Worktree 干净。
 
-## 23. 最终架构结论
+## 24. 最终架构结论
 
 ```text
 统一中文问询

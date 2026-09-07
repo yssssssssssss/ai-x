@@ -217,9 +217,52 @@ function fixtureValue(schema: FixtureSchema): unknown {
 }
 
 // Skill mock follows the effective runtime schema, including an inlined domain payload contract.
-function skillFixtureFor(schemaName: string, schema: object): unknown | undefined {
+function skillFixtureFor(schemaName: string, schema: object, prompt: string): unknown | undefined {
   if (!schemaName.startsWith('skill:')) return undefined;
-  return fixtureValue(schema as FixtureSchema);
+  const root = schema as FixtureSchema;
+  const properties = root.properties ?? {};
+  if (!Object.hasOwn(properties, 'reportDocument')) return fixtureValue(root);
+  const common = {
+    title: fixtureValue(properties.title ?? { type: 'string' }),
+    status: fixtureValue(properties.status ?? { enum: ['completed'] }),
+    attachments: fixtureValue(properties.attachments ?? { type: 'array' }),
+    gaps: fixtureValue(properties.gaps ?? { type: 'array' }),
+  };
+  if (prompt.includes('必须填写 reportDocument')) {
+    if (schemaName === 'skill:industry-market-analysis') {
+      return {
+        ...common,
+        reportDocument: {
+          version: 'native-report-document-v1',
+          title: '行业市场分析报告',
+          subtitle: '基于当前材料生成',
+          summary: {
+            conclusion: '已完成当前证据范围内的行业分析。',
+            findings: ['报告结论以当前输入和已验证来源为准。'],
+            actions: ['优先处理证据充分且影响明确的问题。'],
+          },
+          tabs: ['行业洞察', '品类差异资产', '竞品分析', '体验诊断', '设计策略'].map((title, index) => ({
+            id: `tab-${index + 1}`,
+            title,
+            sections: [{
+              id: `section-${index + 1}`,
+              title,
+              blocks: [{ type: 'markdown', content: `${title}内容待真实材料补充。`, sourceIds: [] }],
+            }],
+          })),
+          assetIds: [],
+        },
+      };
+    }
+    return { ...common, reportDocument: fixtureValue(properties.reportDocument ?? {}) };
+  }
+  return { ...common, primary: fixtureValue(properties.primary ?? {}) };
+}
+
+function nativeReportDocumentFixtureFor(schemaName: string, schema: object): unknown | undefined {
+  return schemaName === 'native-final-report-document'
+    ? fixtureValue(schema as FixtureSchema)
+    : undefined;
 }
 
 function problemGraphFixtureFor(schemaName: string, context: object | undefined): unknown | undefined {
@@ -331,17 +374,16 @@ export class MockLLMClient implements LLMClient {
 
   async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
     const nativeSkillFixture = opts.schemaName.startsWith('skill:')
-      && Array.isArray((opts.schema as FixtureSchema).required)
-      && (opts.schema as FixtureSchema).required!.includes('primary')
-      ? skillFixtureFor(opts.schemaName, opts.schema)
+      ? skillFixtureFor(opts.schemaName, opts.schema, opts.prompt)
       : undefined;
     const data = (this.fixtures === defaultFixtures
       ? currentPlanCandidatesFixtureFor(opts.schemaName, opts.context)
       : undefined)
       ?? nativeSkillFixture
+      ?? nativeReportDocumentFixtureFor(opts.schemaName, opts.schema)
       ?? this.fixtures[opts.schemaName]
       ?? problemGraphFixtureFor(opts.schemaName, opts.context)
-      ?? skillFixtureFor(opts.schemaName, opts.schema);
+      ?? skillFixtureFor(opts.schemaName, opts.schema, opts.prompt);
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
     }

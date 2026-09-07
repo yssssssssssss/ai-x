@@ -205,6 +205,32 @@ test('seals visual bytes outside gate JSON and hydrates only after bound verific
   assert.deepEqual(resolved.visuals[0]?.images[0]?.bytes, JPEG);
 });
 
+test('uploads image bytes before confirmation without persisting Base64', async () => {
+  const artifacts = new MemoryArtifacts();
+  const store = new VisualInputGateStore(artifacts);
+  const uploaded = await store.upload({
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    gateKey: 'designImage',
+    multiple: false,
+    taskSensitivity: 'internal',
+    files: [{ fileName: 'design.png', mediaType: 'image/png', bytes: PNG }],
+  });
+
+  assert.equal(uploaded.visualInputId, 'json-1');
+  assert.equal(artifacts.binaryWrites.length, 1);
+  assert.doesNotMatch(JSON.stringify(artifacts.jsonWrites[0]!.value), /data:image|base64/u);
+  const prepared = await store.prepareBinding({
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    gateKey: 'designImage',
+    multiple: false,
+    visualInputId: uploaded.visualInputId,
+  });
+  assert.equal(prepared.evidenceRef, uploaded.visualInputId);
+  assert.deepEqual(prepared.artifactIds, ['binary-1', 'json-1']);
+});
+
 test('invalidates a sealed manifest when its post-write binding check fails', async () => {
   class InvalidManifestArtifacts extends MemoryArtifacts {
     override async writeJson(input: ArtifactWriteInput): Promise<ControlArtifact> {
