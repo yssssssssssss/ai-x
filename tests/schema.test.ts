@@ -130,6 +130,54 @@ test('ResearchTaskV2 要求成功标准、歧义和澄清问题', () => {
   assert.ok(errors.some((error) => error.includes('success_criteria')));
 });
 
+test('ResearchTaskV2 Industry 任务要求结构化范围和资料可用性', () => {
+  const industry = {
+    version: 'research-task-v2',
+    task_type: 'industry_market_analysis',
+    outcome_mode: 'answer',
+    business_domain: 'pet-food',
+    research_goal: '形成宠物食品行业与京东频道策略报告',
+    target_audience: ['频道产品与设计团队'],
+    scope: ['中国大陆线上宠物食品'],
+    constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '输出可追溯的行业结论与策略' }],
+    expected_deliverables: ['industry_market_analysis_report'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'internal',
+    pii_detected: false,
+    industry_scope: {
+      category: '宠物食品',
+      subcategories: ['猫用冻干'],
+      exclusions: ['线下渠道'],
+      analysis_depth: 'medium',
+      primary_focus: '竞品与设计策略',
+      secondary_focuses: ['用户洞察'],
+      decision_audience: ['频道产品与设计团队'],
+      decision_goal: '确定频道改版优先级',
+      time_window: '最近十二个月',
+    },
+    available_material_roles: ['competitor_screenshots'],
+    unavailable_material_roles: ['internal_metrics_dataset'],
+  };
+
+  assert.deepEqual(v.validate('research-task-v2', industry), []);
+  assert.ok(v.validate('research-task-v2', {
+    ...industry,
+    industry_scope: undefined,
+  }).length > 0);
+  assert.ok(v.validate('research-task-v2', {
+    ...industry,
+    available_material_roles: ['competitor_screenshots', 'competitor_screenshots'],
+  }).length > 0);
+  assert.ok(v.validate('research-task-v2', {
+    ...industry,
+    available_material_roles: ['公开可追溯行业报告'],
+  }).some((error) => error.includes('available_material_roles')));
+});
+
 test('ResearchTaskV2 合法 fixture 通过校验并保持 snake_case 字段', () => {
   const valid = {
     version: 'research-task-v2',

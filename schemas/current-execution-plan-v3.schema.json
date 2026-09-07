@@ -536,7 +536,7 @@
       "additionalProperties": false,
       "required": ["kind", "role", "label", "multiple", "capability_id"],
       "properties": {
-        "kind": { "enum": ["value", "visual"] },
+        "kind": { "enum": ["value", "document", "visual", "dataset"] },
         "role": { "$ref": "#/$defs/text" },
         "label": { "$ref": "#/$defs/text" },
         "multiple": { "type": "boolean" },
@@ -617,6 +617,8 @@
         "inputs": { "type": "array", "items": { "type": "string" } },
         "visual_inputs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
         "multiple_visual_inputs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+        "dataset_inputs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+        "document_inputs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
         "outputs": { "type": "array", "items": { "type": "string" } },
         "input_schema": { "type": "string" },
         "output_schema": { "type": "string" },

@@ -82,12 +82,12 @@ function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | '
 
 function actorLabel(actorType: string): string {
   switch (actorTone(actorType)) {
-    case 'llm': return 'MODEL';
-    case 'skill': return 'SKILL';
-    case 'tool': return 'TOOL';
-    case 'reviewer': return 'REVIEW';
-    case 'knowledge': return 'KNOWLEDGE';
-    case 'system': return 'SYSTEM';
+    case 'llm': return '模型';
+    case 'skill': return '分析能力';
+    case 'tool': return '工具';
+    case 'reviewer': return '人工复核';
+    case 'knowledge': return '知识';
+    case 'system': return '系统';
   }
 }
 
@@ -109,14 +109,16 @@ export function Stage3Execute({
   steps,
   log = [],
   phase = 'done',
+  native = false,
 }: {
   steps: readonly ExecutionFlowStepInput[];
   log?: readonly ExecLogRow[];
   phase?: ExecutionFlowPhase;
+  native?: boolean;
 }) {
   const graph = useMemo(
-    () => buildExecutionFlowGraph({ steps, log, phase }),
-    [steps, log, phase],
+    () => buildExecutionFlowGraph({ steps, log, phase, native }),
+    [steps, log, phase, native],
   );
   const layout = useMemo(() => createGraphLayout(graph), [graph]);
   const invocationGroups = useMemo(() => groupExecutionSteps(steps), [steps]);
@@ -143,10 +145,10 @@ export function Stage3Execute({
       </div>
 
       {invocationGroups.some(({ id }) => id !== 'ungrouped') ? (
-        <div className="execution-invocation-groups" aria-label="Skill Invocation 分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-          {invocationGroups.map((group) => (
-            <span key={group.id} className="badge" title={group.consumerInvocationIds.join('、')}>
-              {group.label} · {group.stepNos.length} steps
+        <div className="execution-invocation-groups" aria-label="分析能力执行分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          {invocationGroups.map((group, index) => (
+            <span key={group.id} className="badge">
+              {group.shared ? '共享准备' : `分析任务 ${index + 1}`} · {group.stepNos.length} 个步骤
             </span>
           ))}
         </div>
@@ -231,7 +233,6 @@ export function Stage3Execute({
                   <span className={`execution-flow-actor actor-${actorTone(node.actorType)}`}>
                     {actorLabel(node.actorType)}
                   </span>
-                  <code>{node.actorId}</code>
                 </div>
               </div>
             );
@@ -243,7 +244,7 @@ export function Stage3Execute({
         {graph.nodes.map((node) => (
           <li key={node.id}>
             {node.stepNo !== undefined ? `步骤 ${node.stepNo}，` : ''}
-            {node.label}，{actorLabel(node.actorType)} {node.actorId}，状态{STATUS_LABELS[node.status]}
+            {node.label}，{actorLabel(node.actorType)}，状态{STATUS_LABELS[node.status]}
           </li>
         ))}
       </ol>

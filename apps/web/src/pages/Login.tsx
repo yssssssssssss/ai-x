@@ -1,12 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, setToken, ApiError, type User } from '../api/client.ts';
 
+const DEVELOPMENT_TEST_ACCOUNT = {
+  email: 'test@ai-x.local',
+  password: 'test123456',
+} as const;
+const showDevelopmentTestAccount = ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname);
+
 // 默认走本地快捷登录，邮箱密码仅作其他账号的兜底入口。
 export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
   const [mode, setMode] = useState<'quick' | 'login' | 'register'>('quick');
   const [quickLoginAvailable, setQuickLoginAvailable] = useState<boolean | null>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(showDevelopmentTestAccount ? DEVELOPMENT_TEST_ACCOUNT.email : '');
+  const [password, setPassword] = useState(showDevelopmentTestAccount ? DEVELOPMENT_TEST_ACCOUNT.password : '');
   const [displayName, setDisplayName] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -63,6 +69,18 @@ export function Login({ onLoggedIn }: { onLoggedIn: (u: User) => void }) {
               ? '无需输入账号密码，直接进入当前工作空间'
               : mode === 'login' ? '使用其他账号登录' : '注册新账号'}
         </p>
+
+        {showDevelopmentTestAccount && (
+          <div style={{
+            margin: '16px 0', padding: 12, borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--bg)',
+            color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.7,
+          }}>
+            <strong style={{ color: 'var(--text)' }}>本地测试账号</strong>
+            <div>账号：<code>{DEVELOPMENT_TEST_ACCOUNT.email}</code></div>
+            <div>密码：<code>{DEVELOPMENT_TEST_ACCOUNT.password}</code></div>
+          </div>
+        )}
 
         {quickLoginAvailable === null ? (
           <div style={{ display: 'grid', placeItems: 'center', minHeight: 86 }}>

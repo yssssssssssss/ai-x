@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { readFileSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { getConfigRoot, hashFile, type SkillRegistryEntry } from '../runtime/config-loader.ts';
+import { getConfigRoot, hashFile, type SkillCapability } from '../runtime/config-loader.ts';
 import type { SkillLoader, LoadedSkillSchemas } from '../runtime/skill-loader.ts';
 import type { LoadedSkillExecutionContract } from './skill-execution-contract.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 
-export const SKILL_EXECUTION_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied verified inputs.';
+export const SKILL_EXECUTION_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied verified inputs. Write all user-facing semantic content in the same primary language as the research goal. When the research goal is Chinese, use Simplified Chinese except for proper nouns, standard abbreviations, identifiers, and source quotations.';
 const CONTRIBUTOR_EXECUTION_PROMPT_SUFFIX = 'Portfolio Contributor status describes execution completeness, not evidence strength. Use succeeded only when every required output field can be produced from the supplied input, frozen Knowledge, and upstream evidence; disclose inference and missing primary data in assumptions and limitations. Use degraded when required context or output is missing, or execution is incomplete.';
 
 export function buildSkillExecutionPrompt(
@@ -20,7 +20,7 @@ export function buildSkillExecutionPrompt(
 }
 
 export interface PreparedSkillExecution {
-  skill: SkillRegistryEntry;
+  skill: SkillCapability;
   body: { body: string; hash: string; path: string };
   schemas: LoadedSkillSchemas;
   schemaHashes: {

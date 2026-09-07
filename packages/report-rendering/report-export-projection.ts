@@ -15,8 +15,6 @@ import {
   assertReportDocumentV4Integrity,
 } from './report-document-visitor.ts';
 
-const REDACTED_REVIEW_ISSUE = 'Review issue details redacted from export.';
-
 export function safeReportReview(review: ReportReviewArtifact): Record<string, unknown> {
   return {
     version: review.version,
@@ -27,7 +25,7 @@ export function safeReportReview(review: ReportReviewArtifact): Record<string, u
     dimensions: review.dimensions.map((dimension) => ({
       id: dimension.id,
       passed: dimension.passed,
-      issues: dimension.issues.map(() => REDACTED_REVIEW_ISSUE),
+      issues: [...dimension.issues],
     })),
     revisionRound: review.revisionRound,
   };

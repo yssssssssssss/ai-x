@@ -8,7 +8,7 @@ import {
 } from '../evaluations/skills/content-overlay.ts';
 import { loadRuntimeKnowledgeIndex } from '../apps/orchestrator-runtime/src/knowledge/index.ts';
 import { dryRunContentEvaluation } from '../evaluations/skills/run.ts';
-import { loadSkillRegistry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import type { LoadedEvaluationCase } from '../evaluations/skills/types.ts';
 import type { KnowledgeContext, RetrievalRecord } from '../evaluations/skills/kb/types.ts';
 
@@ -93,7 +93,7 @@ test('existing KB evaluation dry-run reports the overlay and rejects production-
     contentVariant: 'enhanced',
   });
   assert.equal(report.status, 'ready');
-  assert.equal(report.selectedSkillIds.length, 24);
+  assert.equal(report.selectedSkillIds.length, 25);
   assert.equal(report.contentEvaluation.promotionSet.knowledgeCandidateIds.length, 15);
   assert.equal(report.contentEvaluation.promotionSet.assetCandidateIds.length, 1);
   assert.equal(report.contentEvaluation.promotionSet.draftSkillIds.length, 1);
@@ -137,7 +137,7 @@ test('C1 overlay preserves the reviewed content set after owner-waived productio
     assert.equal(runtimeIds.has(entry.metadata.id), true, entry.metadata.id);
     assert.equal(entry.metadata.status, 'approved');
   }
-  assert.equal(loadSkillRegistry().skills.find(({ id }) => id === 'solution-generation')?.status, 'draft');
+  assert.equal(new SkillLoader().listCapabilitySkills().find(({ id }) => id === 'solution-generation')?.status, 'draft');
   assert.equal(first.manifest.production_search_allowed, false);
   assert.equal(first.manifest.production_baseline.candidate_generation_mode, 'dynamic');
 });

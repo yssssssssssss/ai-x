@@ -30,7 +30,12 @@ export function parsePendingInputContracts(value: unknown): PendingInput[] {
     if (
       !isRecord(item)
       || !hasExactKeys(item, PENDING_INPUT_KEYS)
-      || (item.kind !== 'value' && item.kind !== 'visual')
+      || (
+        item.kind !== 'value'
+        && item.kind !== 'document'
+        && item.kind !== 'visual'
+        && item.kind !== 'dataset'
+      )
       || typeof item.role !== 'string'
       || item.role.trim().length === 0
       || typeof item.label !== 'string'
@@ -45,6 +50,10 @@ export function parsePendingInputContracts(value: unknown): PendingInput[] {
       throw new PendingInputContractError(`role ${item.role} is duplicated`);
     }
     roles.add(item.role);
+
+    if (item.kind === 'dataset' && item.multiple) {
+      throw new PendingInputContractError(`dataset ${item.role} does not support multiple files`);
+    }
 
     const targets = item.targets.map((target, targetIndex) => {
       if (

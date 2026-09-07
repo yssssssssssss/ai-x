@@ -111,3 +111,38 @@ test('deliverable intent clarification renders business-language choices', async
   assert.match(markup, /value="competitive_analysis_report"/u);
   assert.match(markup, /value="research_strategy_report"/u);
 });
+
+test('upload clarification clearly says that file selection happens on the next step', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        structuredTask: {
+          ...response.structuredTask,
+          clarification_questions: [{
+            key: 'materials',
+            question: '是否可以提供页面截图？',
+            rationale: '截图用于界面分析。',
+            options: ['我现在上传截图', '我暂时无法提供任何材料'],
+          }],
+        },
+      },
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /我可以在下一步上传截图/u);
+  assert.match(markup, /下一步会显示本地图片选择按钮/u);
+  assert.match(markup, /请上传 JPG、PNG 或 WebP 文件/u);
+  assert.match(markup, /图片 URL 不能代替上传/u);
+  assert.doesNotMatch(markup, />我现在上传截图</u);
+});

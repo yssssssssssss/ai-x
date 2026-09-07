@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "industry-market-content-patch-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operations"],
+  "properties": {
+    "version": { "const": "industry-market-content-patch-v1" },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/replaceText" },
+          { "$ref": "#/$defs/replaceSupport" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/text" }
+    },
+    "operationBase": {
+      "type": "object",
+      "required": ["op", "reviewIssueId", "targetNodeId", "reason"],
+      "properties": {
+        "op": { "type": "string" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "targetNodeId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    },
+    "replaceText": {
+      "allOf": [
+        { "$ref": "#/$defs/operationBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "reviewIssueId", "targetNodeId", "field", "value", "reason"],
+          "properties": {
+            "op": { "const": "replace_text" },
+            "reviewIssueId": { "$ref": "#/$defs/text" },
+            "targetNodeId": { "$ref": "#/$defs/text" },
+            "field": {
+              "enum": [
+                "title", "statement", "userNeed", "jdState", "competitorSupply",
+                "opportunity", "name", "rationale", "goal", "currentProblem",
+                "competitorReference", "designAction", "ownerType", "measurement",
+                "validationMethod", "platformInheritance", "categoryDelta", "definition",
+                "baseline", "target", "impact", "resolutionPath"
+              ]
+            },
+            "value": { "$ref": "#/$defs/text" },
+            "reason": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    },
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questionIds", "evidenceIds", "status", "confidence", "validationNeeded"],
+      "properties": {
+        "questionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/text" }
+        },
+        "evidenceIds": { "$ref": "#/$defs/ids" },
+        "status": { "enum": ["supported", "provisional", "unavailable"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "validationNeeded": { "type": "string" },
+        "sourceContributionUnitIds": { "$ref": "#/$defs/ids" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "supported" } }, "required": ["status"] },
+          "then": { "properties": { "evidenceIds": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["provisional", "unavailable"] } }, "required": ["status"] },
+          "then": { "properties": { "validationNeeded": { "minLength": 1, "pattern": "\\S" } } }
+        }
+      ]
+    },
+    "replaceSupport": {
+      "allOf": [
+        { "$ref": "#/$defs/operationBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "reviewIssueId", "targetNodeId", "value", "reason"],
+          "properties": {
+            "op": { "const": "replace_support" },
+            "reviewIssueId": { "$ref": "#/$defs/text" },
+            "targetNodeId": { "$ref": "#/$defs/text" },
+            "value": { "$ref": "#/$defs/support" },
+            "reason": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    }
+  }
+}

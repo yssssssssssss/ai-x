@@ -13,6 +13,7 @@ export class LlmActorRunner implements ActorRunner {
     const gen = await this.llm.generateText({
       prompt:
         `你是研究编排中的一步:「${step.step_name}」。${step.purpose ?? ''}\n` +
+        `所有面向用户的语义内容必须使用与 research_goal 相同的主要语言；中文研究目标使用简体中文，专有名词、标准缩写和来源原文除外。\n` +
         `基于已有执行结果(检索数据 + 竞品分析)完成这一步,产出简洁小结;` +
         `凡引用数据的结论标明来源,无据推断需说明。`,
       context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },

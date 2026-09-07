@@ -141,7 +141,7 @@ function registryFixture(
     deliverables: entries,
   }));
   writeFixtureFile(root, 'orchestrator/decision-graph.yaml', stringifyYaml({ version: 1, nodes: [] }));
-  writeFixtureFile(root, 'orchestrator/skill-registry.yaml', stringifyYaml({ version: 1, skills: [] }));
+  writeFixtureFile(root, 'orchestrator/skill-bindings.yaml', stringifyYaml({ version: 1, skills: [] }));
   writeFixtureFile(root, 'orchestrator/tool-registry.yaml', stringifyYaml({ version: 1, tools: [] }));
   for (const entry of entries) {
     if (!isAbsolute(entry.payload_schema) && !entry.payload_schema.split(/[\\/]/u).includes('..')) {
@@ -634,7 +634,7 @@ class NoCallLLM implements LLMClient {
   }
 }
 
-test('LeaseExecutionEngine accepts a registry-resolved non-research_plan before evidence execution', async () => {
+test('LeaseExecutionEngine permits a prompt-only plan when no Core Tool is declared', async () => {
   const competitiveEntry: DeliverableRegistryEntry = {
     ...RESEARCH_PLAN_ENTRY,
     id: 'competitive_analysis_report',
@@ -703,17 +703,10 @@ test('LeaseExecutionEngine accepts a registry-resolved non-research_plan before 
     },
   });
 
-  await assert.rejects(
-    () => engine.execute({ lease, expectedModel: 'fixture-model' }),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /execution has no valid core Tool evidence/iu);
-      assert.doesNotMatch(error.message, /deliverable type is unsupported/iu);
-      return true;
-    },
-  );
+  const result = await engine.execute({ lease, expectedModel: 'fixture-model' });
+  assert.equal(result.status, 'paused');
   assert.equal(llm.calls, 0);
-  assert.equal(recordedSteps.at(-1)?.stepName, 'evidence manifest');
+  assert.equal(recordedSteps.some(({ stepName }) => stepName === 'evidence manifest'), true);
 });
 
 const NONRESEARCH_ENTRY: DeliverableRegistryEntry = {

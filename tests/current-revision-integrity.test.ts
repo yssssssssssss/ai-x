@@ -13,6 +13,9 @@ import {
   TaskWorkflowService,
   type WorkflowPlanRevisionDriver,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
+import {
+  parseNativeSkillExecutionPlanV1,
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import { MockLLMClient } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
@@ -184,6 +187,32 @@ function candidateSteps(mode: CandidateProfile) {
   }];
 }
 
+function currentCandidateSteps(
+  mode: CandidateProfile,
+): CurrentResearchPlanningResult['candidates'][number]['steps'] {
+  return [
+    ...candidateSteps(mode),
+    {
+      step_no: 99,
+      step_name: `${mode} synthesis`,
+      actor_type: 'skill',
+      actor_id: 'competitive-web-research',
+      question_ids: ['source-question'],
+      depends_on: [1],
+      input: { research_goal: mode, sources: null },
+      input_bindings: [{
+        target_pointer: '/sources',
+        source_step_no: 1,
+        source_pointer: '/results',
+      }],
+      expected_outputs: [{ pointer: '/payload', description: '研究结果' }],
+      acceptance_criteria: ['形成可追溯结论'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+  ];
+}
+
 async function createSelectedTask(options: {
   candidateId?: CandidateProfile;
   candidateProfiles?: CandidateProfile[];
@@ -201,6 +230,7 @@ async function createSelectedTask(options: {
     originalInput: `original ${suffix}`,
     taskType: 'user_research_planning',
     structuredTask: options.structuredTask ?? finalizedTask(),
+    orchestrationMode: 'single_skill',
     candidates: candidateProfiles.map((candidateId) => ({
       candidateId,
       plan: {
@@ -337,7 +367,7 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
       title: id,
       rationale: id,
       tradeoffs: id,
-      steps: candidateSteps(id),
+      steps: currentCandidateSteps(id),
       assumptions: [],
       activated_nodes: ['D3_method_selection'],
     })),
@@ -402,6 +432,13 @@ function compiledRevisionPlan(taskId: string, title: string) {
   const candidate = result.candidates.find((item) => item.id === 'speed')!;
   return {
     task_id: taskId,
+    execution_contract_version: 'current-execution-plan-v2' as const,
+    skill_invocations: [{
+      invocation_id: 'competitive-web-research:2',
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call' as const,
+      step_nos: [2],
+    }],
     deliverable_type: 'research_plan' as const,
     evidence_requirements: evidenceRequirements.map((requirement) => ({
       ...requirement,
@@ -410,7 +447,13 @@ function compiledRevisionPlan(taskId: string, title: string) {
     problem_graph: result.problemGraph,
     problem_graph_provenance: result.problemGraphProvenance,
     capability_decisions: result.capabilityResolution,
-    steps: candidate.steps.map((step, index) => ({ ...step, step_no: index + 1 })),
+    steps: candidate.steps.map((step, index) => ({
+      ...step,
+      step_no: index + 1,
+      ...(step.actor_type === 'skill'
+        ? { skill_invocation_id: 'competitive-web-research:2' }
+        : {}),
+    })),
     candidate_metadata: {
       title,
       rationale: 'Apply user instruction',
@@ -560,24 +603,68 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal(persisted.candidateId, 'speed');
   assert.equal((persisted.plan as Record<string, unknown>).deliverable_type, 'research_plan');
   assert.deepEqual((persisted.plan as Record<string, unknown>).evidence_requirements, evidenceRequirements);
-  assert.deepEqual(persisted.pendingInputs, []);
-  assert.deepEqual((persisted.plan as Record<string, unknown>).candidate_metadata, {
+  const nativePlan = parseNativeSkillExecutionPlanV1(persisted.plan);
+  assert.deepEqual(
+    (persisted.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+    ['public_evidence'],
+  );
+  assert.deepEqual(nativePlan.candidate_metadata, {
     title: 'speed',
     rationale: 'speed',
     tradeoffs: 'speed',
     recommended: false,
   });
   assert.deepEqual(
-    (persisted.plan as Record<string, unknown>).planning_provenance,
+    nativePlan.planning_provenance,
     planningResult(instruction).planningProvenance,
   );
-  assert.deepEqual((persisted.plan as Record<string, unknown>).activated_nodes, ['D3_method_selection']);
-  const steps = (persisted.plan as { steps: Array<Record<string, unknown>> }).steps;
+  assert.deepEqual(nativePlan.activated_nodes, ['D3_method_selection']);
+  assert.equal(nativePlan.execution_contract_version, 'native-skill-execution-plan-v1');
+  assert.equal(nativePlan.mode, 'single_skill');
+  assert.equal(nativePlan.skill_invocations.length, 1);
+  assert.equal(nativePlan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
+  assert.equal(nativePlan.skill_invocations[0]?.skill_id, 'competitive-web-research');
+  const steps = nativePlan.steps;
+  assert.equal(steps.length, 2);
   assert.equal(steps[0]?.step_name, 'speed search');
   assert.equal(steps[0]?.step_no, 1);
+  assert.equal(steps[1]?.skill_invocation_id, 'competitive-web-research:2');
   assert.equal('extra_client_field' in (steps[0] ?? {}), false);
   assert.equal(persisted.planHash, canonicalPlanHash(persisted.plan));
 });
+
+test('production revision rejects a single_skill candidate without one Skill Invocation', async () => {
+  const runtime = await buildRuntime({
+    async plan(input) {
+      const result = planningResult(input.originalInput);
+      return {
+        ...result,
+        candidates: result.candidates.map((candidate) => ({
+          ...candidate,
+          steps: candidateSteps(candidate.id),
+        })),
+      };
+    },
+  });
+  const seeded = await createSelectedTask({
+    candidateId: 'speed',
+    workflow: runtime.workflow,
+    suffix: 'single-skill-revision-without-invocation',
+  });
+
+  await assert.rejects(() => runtime.workflow.revise({
+    taskId: seeded.created.task.id,
+    expectedVersion: seeded.selected.stateVersion,
+    revisionInstruction: '重新生成但漏掉 Skill',
+    idempotencyKey: 'single-skill-revision-without-invocation',
+    actor: { userId: ownerId, role: 'owner' },
+  }), /single_skill_invocation_count_invalid/u);
+
+  const unchanged = await repository.getTaskDetail(seeded.created.task.id);
+  assert.equal(unchanged?.activePlanVersionId, seeded.selectedPlan.id);
+  assert.equal(unchanged?.state, 'awaiting_confirmation');
+});
+
 test('revision keeps a selected controlled profile and returns the stable 409 when it is no longer eligible', async () => {
   const runtime = await buildRuntime({
     async plan(input) {
@@ -712,7 +799,10 @@ test('production runtime replaces legacy value and visual pending-input plans wi
     const persisted = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(persisted);
     new SchemaValidator().validateOrThrow('current-execution-plan', persisted.plan);
-    assert.deepEqual(persisted.pendingInputs, []);
+    assert.deepEqual(
+      (persisted.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.equal(persisted.candidateId, activePlan.candidateId);
     assert.notEqual(persisted.id, activePlan.id);
     const preservedLegacy = await repository.getPlanVersionDetail(activePlan.id);
@@ -922,7 +1012,10 @@ test('migration 009 quarantines a legacy active plan and leaves it reachable thr
     const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(currentPlan);
     new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
-    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.deepEqual(
+      (currentPlan.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.notEqual(currentPlan.id, activePlan.id);
 
     const versionAfterRevision = (await repository.getTaskDetail(seeded.created.task.id))!.stateVersion;
@@ -1514,7 +1607,10 @@ test('migration 009 makes every malformed PendingInput quarantine recoverable th
     const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
     assert.ok(currentPlan);
     new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
-    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.deepEqual(
+      (currentPlan.pendingInputs as Array<{ role: string }>).map((input) => input.role),
+      ['public_evidence'],
+    );
     assert.equal(await repository.isPlanPendingInputQuarantined(currentPlan.id), false);
     assert.equal(
       await repository.isPlanPendingInputQuarantined(fixture.planVersionId),

@@ -18,9 +18,13 @@ import {
 import type {
   EvidenceEntry,
   EvidenceManifest,
+  IndustryMarketAnalysisPayloadV1,
   ResearchDeliverableEnvelope,
   ResearchStrategyReportPayloadV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+
+type ExportablePayload = ResearchStrategyReportPayloadV2 | IndustryMarketAnalysisPayloadV1;
+type ExportableDeliverable = ResearchDeliverableEnvelope<ExportablePayload>;
 import {
   safeReportDocumentV3,
   safeReportDocumentV4,
@@ -305,32 +309,43 @@ function assertExactDeliverableShape(deliverable: Record<string, unknown>): void
   strings(deliverable.risksAndOpenIssues, 'Deliverable risksAndOpenIssues');
 }
 
-function parseResearchStrategyDeliverable(
+function parseExportableDeliverable(
   value: unknown,
   binding: Pick<StandaloneHtmlBundleInput, 'taskId' | 'planVersionId' | 'attemptId'>,
   evidenceManifestArtifactId: string,
-): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
+): ExportableDeliverable {
   const deliverable = object(value, 'Deliverable');
   assertExactDeliverableShape(deliverable);
   assertValueBinding(deliverable, binding, 'Deliverable');
   if (
     deliverable.version !== 'research-deliverable-v1'
-    || deliverable.deliverableType !== 'research_strategy_report'
     || deliverable.evidenceManifestArtifactId !== evidenceManifestArtifactId
-  ) throw new Error('Deliverable is not the supported research strategy Content v2 envelope');
+  ) throw new Error('Deliverable is not a supported reviewed envelope');
   const payload = object(deliverable.payload, 'Deliverable payload');
-  if (payload.schemaVersion !== 'research-strategy-content-v2') {
-    throw new Error('Deliverable payload is not research-strategy-content-v2');
+  if (
+    deliverable.deliverableType === 'research_strategy_report'
+    && payload.schemaVersion === 'research-strategy-content-v2'
+  ) {
+    SIDECAR_SCHEMAS.validateFileOrThrow(
+      'schemas/deliverables/research-strategy-report-v2.schema.json',
+      deliverable.payload,
+    );
+  } else if (
+    deliverable.deliverableType === 'industry_market_analysis_report'
+    && payload.schemaVersion === 'industry-market-analysis-v1'
+  ) {
+    SIDECAR_SCHEMAS.validateFileOrThrow(
+      'schemas/deliverables/industry-market-analysis-report.schema.json',
+      deliverable.payload,
+    );
+  } else {
+    throw new Error('Deliverable payload is not a supported reviewed report payload');
   }
-  SIDECAR_SCHEMAS.validateFileOrThrow(
-    'schemas/deliverables/research-strategy-report-v2.schema.json',
-    deliverable.payload,
-  );
-  return deliverable as unknown as ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2>;
+  return deliverable as unknown as ExportableDeliverable;
 }
 
 function safeDeliverable(
-  deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2>,
+  deliverable: ExportableDeliverable,
 ): Record<string, unknown> {
   return {
     version: deliverable.version,
@@ -407,24 +422,27 @@ function parseFinalReportReview(
   value: unknown,
   binding: Pick<StandaloneHtmlBundleInput, 'taskId' | 'planVersionId' | 'attemptId'>,
   deliverableArtifactId: string,
-): ReportReviewArtifact & { version: 'report-review-v2'; verdict: 'pass' } {
+): ReportReviewArtifact & { version: 'report-review-v2' | 'report-review-v3'; verdict: 'pass' } {
   assertValidReportReviewArtifact(value, SIDECAR_SCHEMAS);
   const review = value as ReportReviewArtifact;
   assertValueBinding(review as unknown as Record<string, unknown>, binding, 'Report Review');
   if (
-    review.version !== 'report-review-v2'
+    (review.version !== 'report-review-v2' && review.version !== 'report-review-v3')
     || review.verdict !== 'pass'
     || review.deliverableArtifactId !== deliverableArtifactId
-  ) throw new Error('Report Review is not the final passing v2 Review');
-  return review as ReportReviewArtifact & { version: 'report-review-v2'; verdict: 'pass' };
+  ) throw new Error('Report Review is not a final passing v2 or v3 Review');
+  return review as ReportReviewArtifact & { version: 'report-review-v2' | 'report-review-v3'; verdict: 'pass' };
 }
 
-function evidenceArtifactKind(kind: EvidenceEntry['kind']): string {
-  switch (kind) {
+function evidenceArtifactKind(entry: EvidenceEntry): string {
+  switch (entry.kind) {
     case 'tool_output': return 'tool_output';
-    case 'knowledge_excerpt': return 'knowledge_output';
+    case 'knowledge_excerpt': return entry.toolId === 'joyspace-read'
+      ? 'knowledge_snapshot'
+      : 'knowledge_output';
     case 'screenshot': return 'visual_asset_manifest';
     case 'user_constraint': return 'chart_data';
+    case 'dataset': return 'dataset_input_profile';
   }
 }
 
@@ -450,7 +468,7 @@ async function readValidatedEvidenceSidecar(input: {
     assertArtifactBinding({
       artifact: evidence.artifact,
       artifactId: entry.artifactId,
-      kind: evidenceArtifactKind(entry.kind),
+      kind: evidenceArtifactKind(entry),
       binding: input.binding,
     });
     if (evidence.artifact.contentSha256 !== entry.artifactContentSha256) {
@@ -476,7 +494,7 @@ async function readValidatedDeliverableSidecar(input: {
   reportPackage: ReportPackageV2;
   binding: StandaloneHtmlBundleInput;
   evidence: { manifest: EvidenceManifest; resolver: EvidenceArtifactResolver };
-}): Promise<ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2>> {
+}): Promise<ExportableDeliverable> {
   const result = await input.artifacts.readVerifiedBoundJson<unknown>(
     input.reportPackage.deliverableArtifactId,
   );
@@ -487,7 +505,7 @@ async function readValidatedDeliverableSidecar(input: {
     schemaVersion: 'research-deliverable-v1-review-gated',
     binding: input.binding,
   });
-  const deliverable = parseResearchStrategyDeliverable(
+  const deliverable = parseExportableDeliverable(
     result.value,
     input.binding,
     input.reportPackage.evidenceManifestArtifactId,
@@ -506,22 +524,22 @@ async function readValidatedReviewSidecar(input: {
   artifacts: StandaloneBundleArtifactReader;
   reportPackage: ReportPackageV2;
   binding: StandaloneHtmlBundleInput;
-}): Promise<ReportReviewArtifact & { version: 'report-review-v2'; verdict: 'pass' }> {
+}): Promise<ReportReviewArtifact & { version: 'report-review-v2' | 'report-review-v3'; verdict: 'pass' }> {
   const result = await input.artifacts.readVerifiedBoundJson<unknown>(
     input.reportPackage.reportReviewArtifactId,
   );
-  assertArtifactBinding({
-    artifact: result.artifact,
-    artifactId: input.reportPackage.reportReviewArtifactId,
-    kind: 'report_review',
-    schemaVersion: 'report-review-v2',
-    binding: input.binding,
-  });
   const review = parseFinalReportReview(
     result.value,
     input.binding,
     input.reportPackage.deliverableArtifactId,
   );
+  assertArtifactBinding({
+    artifact: result.artifact,
+    artifactId: input.reportPackage.reportReviewArtifactId,
+    kind: 'report_review',
+    schemaVersion: review.version,
+    binding: input.binding,
+  });
   if (basename(result.artifact.storageUri) !== `review-r${review.revisionRound}.json`) {
     throw new Error('Report Review does not use its final revision path');
   }
@@ -887,6 +905,7 @@ export class StandaloneHtmlReportPackageService {
         manifest: EvidenceManifest;
         resolver: EvidenceArtifactResolver;
       } | undefined;
+      let deliverableSidecar: ExportableDeliverable | undefined;
       try {
         evidenceSidecar = await readValidatedEvidenceSidecar({
           artifacts: this.options.artifacts,
@@ -899,13 +918,13 @@ export class StandaloneHtmlReportPackageService {
       }
       try {
         if (!evidenceSidecar) throw new Error('Deliverable export requires a valid Evidence Manifest');
-        const deliverable = await readValidatedDeliverableSidecar({
+        deliverableSidecar = await readValidatedDeliverableSidecar({
           artifacts: this.options.artifacts,
           reportPackage: packageValue,
           binding: input,
           evidence: evidenceSidecar,
         });
-        entries.set('deliverable.json', jsonBytes(safeDeliverable(deliverable)));
+        entries.set('deliverable.json', jsonBytes(safeDeliverable(deliverableSidecar)));
       } catch {
         omittedSidecar = true;
       }

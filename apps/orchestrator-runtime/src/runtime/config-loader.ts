@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 import {
+  parseSkillInputRequirements,
+  type SkillInputRequirement,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
+import {
   CONTRIBUTION_TYPES,
   type ContributionType,
   type EvidenceClass,
@@ -32,7 +36,7 @@ function orchestratorPath(file: string): string {
 // 相对项目根的配置路径(用于 hashFile 版本追溯)。
 export const CONFIG_PATHS = {
   decisionGraph: 'orchestrator/decision-graph.yaml',
-  skillRegistry: 'orchestrator/skill-registry.yaml',
+  skillBindings: 'orchestrator/skill-bindings.yaml',
   toolRegistry: 'orchestrator/tool-registry.yaml',
   evidencePolicy: 'orchestrator/evidence-policy.yaml',
   reportTemplates: 'orchestrator/report-templates',
@@ -280,7 +284,7 @@ export interface DecisionNode {
 
 export type SkillComposition = SkillCompositionContract;
 
-export interface SkillRegistryEntry {
+export interface SkillCapability {
   id: string;
   name: string;
   path: string;
@@ -292,6 +296,8 @@ export interface SkillRegistryEntry {
   inputs?: string[];
   visual_inputs?: string[];
   multiple_visual_inputs?: string[];
+  dataset_inputs?: string[];
+  document_inputs?: string[];
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
@@ -304,9 +310,11 @@ export interface SkillRegistryEntry {
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
   composition?: SkillComposition;
+  input_requirements?: SkillInputRequirement[];
+  report_template?: string;
 }
 
-const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
+const SKILL_CAPABILITY_KEYS = new Set<keyof SkillCapability>([
   'id',
   'name',
   'path',
@@ -318,6 +326,8 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'inputs',
   'visual_inputs',
   'multiple_visual_inputs',
+  'dataset_inputs',
+  'document_inputs',
   'outputs',
   'input_schema',
   'output_schema',
@@ -330,10 +340,38 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'cost_level',
   'risk_level',
   'composition',
+  'input_requirements',
+  'report_template',
 ]);
 
-export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
-  return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+export function unknownSkillBindingFields(skill: SkillCapability): string[] {
+  return Object.keys(skill).filter((key) => !SKILL_CAPABILITY_KEYS.has(key as keyof SkillCapability));
+}
+
+export function skillNativeBindingIssues(skill: SkillCapability): string[] {
+  const hasRequirements = skill.input_requirements !== undefined;
+  const hasTemplate = skill.report_template !== undefined;
+  if (!hasRequirements && !hasTemplate) return [];
+  const issues: string[] = [];
+  if (!hasRequirements) issues.push('report_template requires input_requirements');
+  if (!hasTemplate) issues.push('input_requirements requires report_template');
+  if (hasRequirements) {
+    try {
+      parseSkillInputRequirements(skill.input_requirements);
+    } catch (error) {
+      issues.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (
+    hasTemplate
+    && (
+      typeof skill.report_template !== 'string'
+      || !skill.report_template.trim()
+      || skill.report_template.startsWith('/')
+      || skill.report_template.split('/').includes('..')
+    )
+  ) issues.push('report_template must be a safe project-relative path');
+  return issues;
 }
 
 const SKILL_COMPOSITION_FIELDS = new Set([
@@ -370,7 +408,7 @@ function canonicalUniqueStringArray(value: unknown, allowEmpty = false): value i
 
 export function skillCompositionIssues(skill: unknown): string[] {
   if (skill === null || typeof skill !== 'object' || Array.isArray(skill)) {
-    return ['skill registry entry must be an object'];
+    return ['skill capability must be an object'];
   }
   const skillRecord = skill as Record<string, unknown>;
   if (skillRecord.composition === undefined) return [];
@@ -464,7 +502,7 @@ export function skillCompositionIssues(skill: unknown): string[] {
   return issues;
 }
 
-export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposition {
+export function resolveSkillComposition(skill: SkillCapability): SkillComposition {
   if (!skill.composition) {
     return {
       modes: ['standalone'],
@@ -472,7 +510,7 @@ export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposi
       compatible_deliverables: [],
       required_input_roles: [...(skill.inputs ?? [])],
       optional_input_roles: [],
-      standalone_reason: 'legacy registry entry without a composition contract',
+      standalone_reason: 'installed Skill package without a composition binding',
     };
   }
   const issues = skillCompositionIssues(skill);
@@ -480,7 +518,7 @@ export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposi
   return structuredClone(skill.composition);
 }
 
-export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null {
+export function skillOptionalToolIssue(skill: SkillCapability): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const optionalTools = record.optional_tools;
   if (optionalTools === undefined) return null;
@@ -503,7 +541,7 @@ export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null
     : `optional_tools overlaps required_tools: ${overlap}`;
 }
 
-export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null {
+export function skillVisualInputIssue(skill: SkillCapability): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const visualInputs = record.visual_inputs;
   const multipleVisualInputs = record.multiple_visual_inputs;
@@ -525,7 +563,14 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
   }
   const inputs = record.inputs;
   if (!Array.isArray(inputs)) return 'visual_inputs requires an inputs array';
-  const missingRole = visualInputs.find((role) => !inputs.includes(role));
+  const optionalInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    && Array.isArray((record.composition as Record<string, unknown>).optional_input_roles)
+    ? (record.composition as Record<string, unknown>).optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...optionalInputs]);
+  const missingRole = visualInputs.find((role) => !declaredInputs.has(role));
   if (missingRole !== undefined) return `visual_inputs references an undeclared input: ${missingRole}`;
   if (multipleVisualInputs === undefined) return null;
   if (
@@ -543,6 +588,78 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
   return nonVisualRole === undefined
     ? null
     : `multiple_visual_inputs references a non-visual input: ${nonVisualRole}`;
+}
+
+export function skillDatasetInputIssue(skill: SkillCapability): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const datasetInputs = record.dataset_inputs;
+  if (datasetInputs === undefined) return null;
+  if (
+    !Array.isArray(datasetInputs)
+    || datasetInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(datasetInputs).size !== datasetInputs.length
+  ) {
+    return 'dataset_inputs must be a unique array of canonical non-empty strings';
+  }
+  const inputs = record.inputs;
+  if (!Array.isArray(inputs)) return 'dataset_inputs requires an inputs array';
+  const optionalInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    && Array.isArray((record.composition as Record<string, unknown>).optional_input_roles)
+    ? (record.composition as Record<string, unknown>).optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...optionalInputs]);
+  const missingRole = datasetInputs.find((role) => !declaredInputs.has(role));
+  if (missingRole !== undefined) return `dataset_inputs references an undeclared input: ${missingRole}`;
+  const visualInputs = Array.isArray(record.visual_inputs) ? record.visual_inputs : [];
+  const overlap = datasetInputs.find((role) => visualInputs.includes(role));
+  return overlap === undefined
+    ? null
+    : `dataset_inputs overlaps visual_inputs: ${overlap}`;
+}
+
+export function skillDocumentInputIssue(skill: SkillCapability): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const documentInputs = record.document_inputs;
+  if (documentInputs === undefined) return null;
+  if (
+    !Array.isArray(documentInputs)
+    || documentInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(documentInputs).size !== documentInputs.length
+  ) {
+    return 'document_inputs must be a unique array of canonical non-empty strings';
+  }
+  const inputs = record.inputs;
+  if (!Array.isArray(inputs)) return 'document_inputs requires an inputs array';
+  const compositionInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    ? record.composition as Record<string, unknown>
+    : {};
+  const requiredInputs = Array.isArray(compositionInputs.required_input_roles)
+    ? compositionInputs.required_input_roles as unknown[]
+    : [];
+  const optionalInputs = Array.isArray(compositionInputs.optional_input_roles)
+    ? compositionInputs.optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...requiredInputs, ...optionalInputs]);
+  const missingRole = documentInputs.find((role) => !declaredInputs.has(role));
+  if (missingRole !== undefined) return `document_inputs references an undeclared input: ${missingRole}`;
+  const visualInputs = Array.isArray(record.visual_inputs) ? record.visual_inputs : [];
+  const datasetInputs = Array.isArray(record.dataset_inputs) ? record.dataset_inputs : [];
+  const overlap = documentInputs.find((role) => visualInputs.includes(role) || datasetInputs.includes(role));
+  return overlap === undefined
+    ? null
+    : `document_inputs overlaps another material input: ${overlap}`;
 }
 
 export interface ToolRegistryEntry {
@@ -604,8 +721,24 @@ export function loadDecisionGraph(): { version: number; nodes: DecisionNode[] } 
   return loadYaml(orchestratorPath('decision-graph.yaml'));
 }
 
-export function loadSkillRegistry(): { version: number; skills: SkillRegistryEntry[] } {
-  return loadYaml(orchestratorPath('skill-registry.yaml'));
+export interface SkillBindingEntry {
+  id: string;
+  enabled: boolean;
+  task_types?: string[];
+  inputs?: string[];
+  input_requirements?: SkillInputRequirement[];
+  visual_inputs?: string[];
+  multiple_visual_inputs?: string[];
+  dataset_inputs?: string[];
+  document_inputs?: string[];
+  required_tools?: string[];
+  optional_tools?: string[];
+  risk_level: 'low' | 'medium' | 'high';
+  composition?: SkillComposition;
+}
+
+export function loadSkillBindings(): { version: number; skills: SkillBindingEntry[] } {
+  return loadYaml(orchestratorPath('skill-bindings.yaml'));
 }
 
 export function loadToolRegistry(): { version: number; tools: ToolRegistryEntry[] } {

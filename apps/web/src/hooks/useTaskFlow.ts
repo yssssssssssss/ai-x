@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReadableCurrentExecutionPlan } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  NativeFinalReport,
+  ReadableExecutionPlan,
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import {
   api,
   type ClarificationRequiredResponse,
   type ClarifyControlTaskRequest,
   type ControlApprovalRequirement,
-  type ControlDeliverableResponse,
   type ControlExecutionResult,
   type ControlPlanRecovery,
   type ControlPlanCandidatesResponse,
   type CurrentTaskReadResponse,
   type CurrentPlanCandidate,
   type ExecLogRow,
+  type OrchestrationModeV1,
   type PlanProgress,
   type PlanResponse,
-  type Upload,
+  type DatasetUpload,
+  type DocumentUpload,
+  type VisualUpload,
 } from '../api/client.ts';
 import {
   approvalSubmissionAllowed,
@@ -69,7 +75,7 @@ function planView(
   response: ControlPlanCandidatesResponse,
   candidate: CurrentPlanCandidate,
 ): PlanResponse {
-  const readablePlan = candidate.plan as unknown as ReadableCurrentExecutionPlan;
+  const readablePlan = candidate.plan as ReadableExecutionPlan;
   return {
     conversationId: response.conversationId,
     taskId: response.task.id,
@@ -82,8 +88,12 @@ function planView(
       ...(readablePlan.execution_contract_version
         ? { execution_contract_version: readablePlan.execution_contract_version }
         : {}),
+      ...('mode' in readablePlan ? { mode: readablePlan.mode } : {}),
       ...(readablePlan.skill_invocations
         ? { skill_invocations: readablePlan.skill_invocations }
+        : {}),
+      ...('resolved_inputs' in readablePlan
+        ? { resolved_inputs: readablePlan.resolved_inputs }
         : {}),
       ...('capability_demand_graph' in readablePlan
         ? { capability_demand_graph: readablePlan.capability_demand_graph }
@@ -139,10 +149,12 @@ export function useTaskFlow() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [stateVersion, setStateVersion] = useState<number | null>(null);
   const [originalInput, setOriginalInput] = useState('');
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationModeV1 | null>(null);
   const [exec, setExec] = useState<ControlExecutionResult | null>(null);
   const [executionSteps, setExecutionSteps] = useState<ExecLogRow[]>([]);
   const [executionPlanSteps, setExecutionPlanSteps] = useState<ExecutionPlanStepView[]>([]);
-  const [deliverable, setDeliverable] = useState<ControlDeliverableResponse | null>(null);
+  const [finalReport, setFinalReport] = useState<NativeFinalReport | null>(null);
+  const [skillResults, setSkillResults] = useState<NativeSkillResult[]>([]);
   const [reportState, setReportState] = useState<ReportState>('idle');
   const [deliverableError, setDeliverableError] = useState('');
   const [error, setError] = useState('');
@@ -167,8 +179,12 @@ export function useTaskFlow() {
     setReportState('loading');
     setDeliverableError('');
     try {
-      const response = await api.controlDeliverable(taskId);
-      setDeliverable(response);
+      const [loadedFinalReport, loadedSkillResults] = await Promise.all([
+        api.controlFinalReport(taskId),
+        api.controlSkillResults(taskId),
+      ]);
+      setFinalReport(loadedFinalReport);
+      setSkillResults(loadedSkillResults.results);
       setReportState('ready');
     } catch (cause) {
       setDeliverableError(message(cause, '报告加载失败'));
@@ -186,6 +202,12 @@ export function useTaskFlow() {
     const restoredSteps = executionStepsToExecLog(current.executionSteps);
     const selected = hydrated.selectedCandidate;
     setOriginalInput(hydrated.originalInput);
+    setOrchestrationMode(
+      current.task.orchestrationMode
+      ?? (selected && 'capability_demand_graph' in selected.plan
+        ? 'multi_skill'
+        : 'single_skill'),
+    );
     setStateVersion(hydrated.stateVersion);
     setClarification(hydrated.clarification as ClarificationRequiredResponse | null);
     setCandidatesResp(hydrated.candidatesResp);
@@ -193,7 +215,8 @@ export function useTaskFlow() {
     setPlan(selected && hydrated.candidatesResp ? planView(hydrated.candidatesResp, selected) : null);
     setExecutionSteps(restoredSteps);
     setExecutionPlanSteps(executionPlanStepsForTask(current));
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -233,9 +256,13 @@ export function useTaskFlow() {
     if (hydrated.phase !== 'done') return;
     setReportState('loading');
     try {
-      const restoredDeliverable = await api.controlDeliverable(current.task.id);
+      const [restoredFinalReport, restoredSkillResults] = await Promise.all([
+        api.controlFinalReport(current.task.id),
+        api.controlSkillResults(current.task.id),
+      ]);
       if (generation !== restoreGeneration.current) return;
-      setDeliverable(restoredDeliverable);
+      setFinalReport(restoredFinalReport);
+      setSkillResults(restoredSkillResults.results);
       setReportState('ready');
     } catch (cause) {
       if (generation !== restoreGeneration.current) return;
@@ -262,7 +289,7 @@ export function useTaskFlow() {
       return generation === restoreGeneration.current;
     } catch (cause) {
       if (generation !== restoreGeneration.current) return false;
-      setError(message(cause, 'Current 任务恢复失败'));
+      setError(message(cause, '任务恢复失败'));
       if (!options.silent) setPhase('error');
       return false;
     }
@@ -308,10 +335,12 @@ export function useTaskFlow() {
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput('');
+    setOrchestrationMode(null);
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -322,7 +351,10 @@ export function useTaskFlow() {
     setCancelSubmitting(false);
   }
 
-  async function submitInput(text: string) {
+  async function submitInput(
+    text: string,
+    orchestrationMode: OrchestrationModeV1 = 'single_skill',
+  ) {
     restoreGeneration.current += 1;
     clarificationSubmission.current = createClarificationSubmissionState();
     setClarificationSubmitting(false);
@@ -335,11 +367,13 @@ export function useTaskFlow() {
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput(text);
+    setOrchestrationMode(orchestrationMode);
     setCancelSubmitting(false);
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
-    setDeliverable(null);
+    setFinalReport(null);
+    setSkillResults([]);
     setReportState('idle');
     setDeliverableError('');
     setError('');
@@ -348,7 +382,7 @@ export function useTaskFlow() {
     setPlanRecovery(null);
     try {
       const response = await api.planControlStream(
-        { originalInput: text },
+        { originalInput: text, orchestrationMode },
         {
           onProgress: (event) => {
             setProgress((previous) => upsertPlanningProgress(previous, event));
@@ -505,7 +539,10 @@ export function useTaskFlow() {
   async function confirmPlan(
     userAnswers: Record<string, unknown>,
     pendingValues: Record<string, unknown> = {},
-    uploads: Upload[] = [],
+    visualUploads: VisualUpload[] = [],
+    datasetUploads: DatasetUpload[] = [],
+    documentUploads: DocumentUpload[] = [],
+    waivedInputKeys: string[] = [],
   ) {
     if (!candidatesResp || !selectedCandidate || stateVersion == null) return;
     if (planRecovery) {
@@ -522,28 +559,54 @@ export function useTaskFlow() {
           : [],
         userAnswers,
       );
-      const uploadsByRole = new Map<string, Array<{ dataUrl: string }>>();
-      for (const upload of uploads) {
-        const value = { dataUrl: upload.dataUrl };
-        const values = uploadsByRole.get(upload.role);
-        if (values) values.push(value);
-        else uploadsByRole.set(upload.role, [value]);
-      }
       const inputValues: Record<string, unknown> = Object.create(null);
       for (const [role, value] of Object.entries(pendingValues)) {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
         if (pendingInput?.kind === 'value') inputValues[role] = value;
       }
-      for (const [role, values] of uploadsByRole) {
-        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
+      for (const upload of visualUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
         if (pendingInput?.kind !== 'visual') continue;
-        inputValues[role] = pendingInput.multiple ? values : values[0];
+        const uploaded = await api.uploadControlVisuals(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.files,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.visualInputId;
+      }
+      for (const upload of datasetUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
+        if (pendingInput?.kind !== 'dataset') continue;
+        const uploaded = await api.uploadControlDataset(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.file,
+          upload.metadata,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.datasetInputId;
+      }
+      for (const upload of documentUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
+        if (pendingInput?.kind !== 'document') continue;
+        const uploaded = await api.uploadControlDocuments(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.files,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.documentInputId;
       }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,
         planVersionId: selectedCandidate.planVersionId,
         confirmationAnswers: answers,
         inputValues,
+        waivedInputKeys,
         idempotencyKey: createRequestId(),
       });
       setStateVersion(confirmed.stateVersion);
@@ -671,10 +734,12 @@ export function useTaskFlow() {
     stateVersion,
     planVersionId: selectedCandidate?.planVersionId ?? null,
     originalInput,
+    orchestrationMode,
     exec,
     executionSteps,
     executionPlanSteps,
-    deliverable,
+    finalReport,
+    skillResults,
     reportState,
     deliverableError,
     error,

@@ -27,7 +27,7 @@ after(async () => {
 
 test('直呼命中 active skill → distinct depth/speed、activatedNodes 空、无 execution_log', async () => {
   const orch = buildOrchestrator();
-  // competitive-analysis 是 registry 中 active 的 KB 派生 skill(orchestrator/skill-registry.yaml)。
+  // competitive-analysis 由 InstalledSkillCatalog 自动发现并通过平台 binding 激活。
   const r = await orch.planPhase({
     originalInput: '$competitive-analysis 对比拼多多直播',
     conversationId: convId, ownerUserId: userId,

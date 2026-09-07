@@ -7,12 +7,14 @@ import {
   type ControlPlanCandidatesResponse,
   type CurrentPlanCandidate,
   type ControlRequirementVersion,
+  type OrchestrationModeV1,
 } from '../packages/api-contract/control-workflow.ts';
-import type {
-  CurrentExecutionPlan,
-  PendingInput,
-  ReadableCurrentExecutionPlan,
-} from '../packages/api-contract/research-deliverable.ts';
+import {
+  isNativeSkillExecutionPlanV1,
+  parseNativeSkillExecutionPlanV1,
+  type ReadableExecutionPlan,
+} from '../packages/api-contract/native-skill-orchestration.ts';
+import type { PendingInput } from '../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
   type CandidateProfile,
@@ -453,13 +455,17 @@ function currentPlanCandidateFromRow(
   }
   candidateActivatedNodes(plan);
   candidateRecommended(plan);
+  const executionPlan = plan as unknown as ReadableExecutionPlan;
   return {
     planVersionId: asString(row.id, 'id'),
     candidateId,
     ...candidateMetadata(plan),
     planHash,
-    plan: plan as unknown as CurrentExecutionPlan,
+    plan: executionPlan,
     pendingInputs: row.pending_inputs as PendingInput[],
+    ...(isNativeSkillExecutionPlanV1(executionPlan)
+      ? { resolvedInputs: parseNativeSkillExecutionPlanV1(executionPlan).resolved_inputs }
+      : {}),
   };
 }
 
@@ -614,7 +620,15 @@ function zeroPublicationFromRow(row: Record<string, unknown>): ControlZeroPublic
   };
 }
 
-export interface ControlTaskDetail extends ControlTask { conversationId: string; originalInput: string; ownerUserId: string; conversationOwnerUserId: string; structuredTask: unknown; activeRequirementVersionId: string | null; }
+export interface ControlTaskDetail extends ControlTask {
+  conversationId: string;
+  originalInput: string;
+  ownerUserId: string;
+  conversationOwnerUserId: string;
+  structuredTask: unknown;
+  activeRequirementVersionId: string | null;
+  orchestrationMode?: OrchestrationModeV1 | null;
+}
 export interface ControlTaskSummary {
   id: string;
   originalInput: string;
@@ -657,6 +671,9 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
     activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
     currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
     activeRequirementVersionId: typeof row.active_requirement_version_id === 'string' ? row.active_requirement_version_id : null,
+    orchestrationMode: row.orchestration_mode === 'single_skill' || row.orchestration_mode === 'multi_skill'
+      ? row.orchestration_mode
+      : null,
   };
 }
 
@@ -682,7 +699,7 @@ export type ControlCandidateId = CandidateProfile;
 export interface ControlCandidatePlanVersionDetail
   extends Omit<ControlPlanVersionDetail, 'candidateId' | 'plan' | 'pendingInputs'> {
   candidateId: ControlCandidateId;
-  plan: ReadableCurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   pendingInputs: PendingInput[];
 }
 
@@ -720,6 +737,7 @@ export interface PersistClarificationCandidatesInput {
   expectedStateVersion: number;
   taskType: string;
   structuredTask: ResearchTaskV2;
+  orchestrationMode: OrchestrationModeV1;
   activatedNodes: string[];
   clarificationRecovery?: {
     mode: 'latest_finalized_requirement';
@@ -730,7 +748,7 @@ export interface PersistClarificationCandidatesInput {
     title: string;
     rationale: string;
     tradeoffs: string;
-    plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+    plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
     pendingInputs: PendingInput[];
   }>;
   command: {
@@ -882,12 +900,13 @@ export class ControlPlaneRepository {
     state: ControlTaskState;
     sensitivity?: string;
     piiDetected?: boolean;
+    orchestrationMode?: OrchestrationModeV1;
   }): Promise<ControlTask> {
     return this.transaction(async (connection) => {
       const result = await connection.query(
         `INSERT INTO control_tasks
-           (conversation_id, owner_user_id, original_input, task_type, structured_task, state, sensitivity, pii_detected)
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'internal'), COALESCE($8, false))
+           (conversation_id, owner_user_id, original_input, task_type, structured_task, state, sensitivity, pii_detected, orchestration_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'internal'), COALESCE($8, false), $9)
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
         [
           input.conversationId,
@@ -898,6 +917,7 @@ export class ControlPlaneRepository {
           input.state,
           input.sensitivity ?? null,
           input.piiDetected ?? null,
+          input.orchestrationMode ?? null,
         ],
       );
       const row = result.rows[0] ?? {};
@@ -960,7 +980,7 @@ export class ControlPlaneRepository {
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
-                task.active_requirement_version_id
+                task.active_requirement_version_id, task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1
@@ -1010,7 +1030,7 @@ export class ControlPlaneRepository {
                    (SELECT owner_user_id FROM conversations WHERE id = control_tasks.conversation_id)
                      AS conversation_owner_user_id,
                    structured_task, state, state_version, active_plan_version_id,
-                   current_attempt_id, active_requirement_version_id`,
+                   current_attempt_id, active_requirement_version_id, orchestration_mode`,
         [input.taskId, versionRow.id, JSON.stringify(input.structuredTask), input.expectedVersion],
       );
       const row = updated.rows[0];
@@ -1053,7 +1073,7 @@ export class ControlPlaneRepository {
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
-                task.active_requirement_version_id
+                task.active_requirement_version_id, task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1
@@ -1100,7 +1120,7 @@ export class ControlPlaneRepository {
                      AS conversation_owner_user_id,
                    structured_task, state, state_version,
                    active_plan_version_id, current_attempt_id,
-                   active_requirement_version_id`,
+                   active_requirement_version_id, orchestration_mode`,
         [input.taskId, input.requirementVersionId, input.expectedVersion],
       );
       const row = updated.rows[0];
@@ -1115,9 +1135,10 @@ export class ControlPlaneRepository {
     originalInput: string;
     taskType: string | null;
     structuredTask: unknown;
+    orchestrationMode?: OrchestrationModeV1;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1135,8 +1156,8 @@ export class ControlPlaneRepository {
       const taskId = randomUUID();
       const taskResult = await connection.query(
         `INSERT INTO control_tasks
-           (id, conversation_id, owner_user_id, original_input, task_type, structured_task, state)
-         VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_selection')
+           (id, conversation_id, owner_user_id, original_input, task_type, structured_task, state, orchestration_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_selection', $7)
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
         [
           taskId,
@@ -1145,6 +1166,7 @@ export class ControlPlaneRepository {
           input.originalInput,
           input.taskType,
           JSON.stringify(input.structuredTask),
+          input.orchestrationMode ?? null,
         ],
       );
       const taskRow = taskResult.rows[0] ?? {};
@@ -1192,7 +1214,7 @@ export class ControlPlaneRepository {
           taskId: asString(planRow.task_id, 'task_id'),
           version: asNumber(planRow.version, 'version'),
           candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
-          plan: planRow.plan_json as CurrentExecutionPlan,
+          plan: planRow.plan_json as ReadableExecutionPlan,
           planHash: asString(planRow.plan_hash, 'plan_hash'),
           pendingInputs: planRow.pending_inputs as PendingInput[],
         });
@@ -1210,7 +1232,7 @@ export class ControlPlaneRepository {
     structuredTask: unknown;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1293,7 +1315,7 @@ export class ControlPlaneRepository {
           taskId: asString(planRow.task_id, 'task_id'),
           version: asNumber(planRow.version, 'version'),
           candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
-          plan: planRow.plan_json as CurrentExecutionPlan,
+          plan: planRow.plan_json as ReadableExecutionPlan,
           planHash: asString(planRow.plan_hash, 'plan_hash'),
           pendingInputs: planRow.pending_inputs as PendingInput[],
         });
@@ -1478,7 +1500,7 @@ export class ControlPlaneRepository {
             taskId: asString(row.task_id, 'task_id'),
             version: asNumber(row.version, 'version'),
             candidateId: asString(row.candidate_id, 'candidate_id') as ControlCandidateId,
-            plan: row.plan_json as CurrentExecutionPlan,
+            plan: row.plan_json as ReadableExecutionPlan,
             planHash: asString(row.plan_hash, 'plan_hash'),
             pendingInputs: row.pending_inputs as PendingInput[],
           },
@@ -1511,6 +1533,7 @@ export class ControlPlaneRepository {
           currentAttemptId: typeof updatedRow.current_attempt_id === 'string'
             ? updatedRow.current_attempt_id
             : null,
+          ...(input.orchestrationMode ? { orchestrationMode: input.orchestrationMode } : {}),
         },
         structuredTask: input.structuredTask,
         activatedNodes: input.activatedNodes,
@@ -1521,7 +1544,7 @@ export class ControlPlaneRepository {
           rationale: candidate.rationale,
           tradeoffs: candidate.tradeoffs,
           planHash: stored.planHash,
-          plan: stored.plan as CurrentExecutionPlan,
+          plan: stored.plan as ReadableExecutionPlan,
           pendingInputs: stored.pendingInputs,
         })),
       };
@@ -2419,6 +2442,9 @@ export class ControlPlaneRepository {
              'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
              'cross_skill_review', 'contribution_ledger', 'contribution_summary',
              'research_contribution_bundle',
+             'final_report', 'final_report_primary', 'final_report_attachment',
+             'final_report_html', 'report_sources',
+             'skill_result', 'skill_result_primary', 'skill_result_attachment',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,
@@ -2608,7 +2634,8 @@ export class ControlPlaneRepository {
       const result = await connection.query(
         `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version, task.active_plan_version_id,
-                task.current_attempt_id, task.active_requirement_version_id
+                task.current_attempt_id, task.active_requirement_version_id,
+                task.orchestration_mode
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1`,
@@ -2913,6 +2940,134 @@ export class ControlPlaneRepository {
     });
   }
 
+  async reserveDatasetUploadCommand(input: {
+    taskId: string;
+    planVersionId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    actorUserId: string;
+    commandType: string;
+  }): Promise<ControlCommandReservation> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.state_version, task.active_plan_version_id,
+                task.owner_user_id,
+                (SELECT owner_user_id FROM conversations
+                 WHERE id = task.conversation_id) AS conversation_owner_user_id
+         FROM control_tasks AS task
+         WHERE task.id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (
+        task.owner_user_id !== input.actorUserId
+        || task.conversation_owner_user_id !== input.actorUserId
+      ) throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+
+      const existingResult = await connection.query(
+        `SELECT request_hash, command_status, response_json, reservation_expires_at
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+         FOR UPDATE`,
+        [input.taskId, input.commandType, input.idempotencyKey],
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        if (existing.request_hash !== input.requestHash) return { status: 'conflict' };
+        if (existing.command_status === 'completed') {
+          return { status: 'replay', response: existing.response_json };
+        }
+        const expiresAt = asDate(existing.reservation_expires_at, 'reservation_expires_at');
+        if (expiresAt.getTime() > Date.now()) return { status: 'pending' };
+      }
+
+      if (
+        task.state !== 'awaiting_confirmation'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== input.planVersionId
+      ) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} is not awaiting_confirmation at version ${input.expectedVersion}`,
+        );
+      }
+      const reservationToken = randomUUID();
+      const reservationExpiresAt = new Date(Date.now() + 5 * 60_000);
+      if (existing) {
+        await connection.query(
+          `UPDATE control_commands
+           SET expected_version = $4,
+               state_before = 'awaiting_confirmation',
+               state_after = 'awaiting_confirmation',
+               actor_user_id = $5,
+               reservation_token = $6,
+               reservation_expires_at = $7
+           WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+             AND command_status = 'pending'`,
+          [
+            input.taskId, input.commandType, input.idempotencyKey, input.expectedVersion,
+            input.actorUserId, reservationToken, reservationExpiresAt,
+          ],
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO control_commands
+             (task_id, command_type, idempotency_key, request_hash, expected_version,
+              state_before, state_after, response_json, actor_user_id, command_status,
+              reservation_token, reservation_expires_at)
+           VALUES ($1, $2, $3, $4, $5, 'awaiting_confirmation',
+                   'awaiting_confirmation', NULL, $6, 'pending', $7, $8)`,
+          [
+            input.taskId, input.commandType, input.idempotencyKey, input.requestHash,
+            input.expectedVersion, input.actorUserId, reservationToken, reservationExpiresAt,
+          ],
+        );
+      }
+      return { status: 'reserved', reservationToken };
+    });
+  }
+
+  async completeDatasetUploadCommand(input: {
+    taskId: string;
+    planVersionId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    response: unknown;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      const task = (await connection.query(
+        `SELECT state, state_version, active_plan_version_id
+         FROM control_tasks WHERE id = $1 FOR UPDATE`,
+        [input.taskId],
+      )).rows[0];
+      if (
+        !task
+        || task.state !== 'awaiting_confirmation'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== input.planVersionId
+      ) throw new ControlPlaneConflictError('dataset upload lost the active Plan binding');
+      const completed = await connection.query(
+        `UPDATE control_commands
+         SET response_json = $7, command_status = 'completed',
+             reservation_token = NULL, reservation_expires_at = NULL
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+           AND request_hash = $4 AND expected_version = $5
+           AND command_status = 'pending' AND reservation_token = $6
+         RETURNING id`,
+        [
+          input.taskId, input.commandType, input.idempotencyKey, input.requestHash,
+          input.expectedVersion, input.reservationToken, JSON.stringify(input.response),
+        ],
+      );
+      if (!completed.rows[0]) throw new ControlPlaneConflictError('dataset upload reservation fence was lost');
+    });
+  }
+
   async reserveConfirmationCommand(input: {
     taskId: string;
     planVersionId: string;
@@ -3130,6 +3285,7 @@ export class ControlPlaneRepository {
       decision: string;
       value?: unknown;
       evidenceRef?: string | null;
+      evidenceKind?: 'visual' | 'dataset' | 'document';
       idempotencyKey: string;
     }>;
   }): Promise<ControlTask> {
@@ -3146,11 +3302,14 @@ export class ControlPlaneRepository {
     const evidenceRefs = gates
       .map((gate) => gate.evidenceRef)
       .filter((reference): reference is string => typeof reference === 'string');
+    const visualEvidenceRefs = gates
+      .filter((gate) => gate.evidenceRef && (gate.evidenceKind ?? 'visual') === 'visual')
+      .map((gate) => gate.evidenceRef as string);
     if (new Set(evidenceRefs).size !== evidenceRefs.length) {
       throw new ControlPlaneConflictError('confirmation evidence references must be unique');
     }
-    if ((evidenceRefs.length > 0) !== (input.publicationId !== undefined)) {
-      throw new ControlPlaneConflictError('confirmation visual evidence requires exactly one publication');
+    if (input.publicationId !== undefined && visualEvidenceRefs.length === 0) {
+      throw new ControlPlaneConflictError('confirmation visual publication has no visual evidence');
     }
 
     return this.transaction(async (connection) => {
@@ -3242,7 +3401,7 @@ export class ControlPlaneRepository {
           .filter((artifact) => artifact.kind === 'visual_input_gate')
           .map((artifact) => asString(artifact.id, 'id'))
           .sort();
-        const sortedEvidenceRefs = [...evidenceRefs].sort();
+        const sortedEvidenceRefs = [...visualEvidenceRefs].sort();
         if (
           gateArtifactIds.length !== sortedEvidenceRefs.length
           || gateArtifactIds.some((artifactId, index) => artifactId !== sortedEvidenceRefs[index])
@@ -3263,12 +3422,32 @@ export class ControlPlaneRepository {
 
       for (const gate of gates) {
         if (gate.evidenceRef) {
+          const evidenceKind = gate.evidenceKind ?? 'visual';
+          const expectedKind = evidenceKind === 'dataset'
+            ? 'dataset_input_profile'
+            : evidenceKind === 'document'
+              ? 'document_input_manifest'
+              : 'visual_input_gate';
+          const expectedSchema = evidenceKind === 'dataset'
+            ? 'dataset-input-profile-v1'
+            : evidenceKind === 'document'
+              ? 'document-input-manifest-v1'
+              : 'visual-input-gate-v1';
           const artifact = await connection.query(
             `SELECT 1 FROM control_artifacts
              WHERE id = $1 AND task_id = $2 AND plan_version_id = $3
                AND attempt_id IS NULL AND state = 'SEALED'
-               AND kind = 'visual_input_gate' AND schema_version = 'visual-input-gate-v1'`,
-            [gate.evidenceRef, input.taskId, input.planVersionId],
+               AND kind = $4 AND schema_version = $5
+               AND ($6::text NOT IN ('dataset', 'document') OR metadata_json->>'role' = $7)`,
+            [
+              gate.evidenceRef,
+              input.taskId,
+              input.planVersionId,
+              expectedKind,
+              expectedSchema,
+              evidenceKind,
+              gate.gateKey,
+            ],
           );
           if (!artifact.rows[0]) {
             throw new ControlPlaneConflictError(`gate ${gate.gateKey} evidence reference is not sealed and plan-bound`);
@@ -4620,6 +4799,7 @@ export class ControlPlaneRepository {
     options: {
       status: 'completed' | 'completed_with_gaps';
       reportPackageArtifactId?: string;
+      finalReportArtifactId?: string;
     } = { status: 'completed' },
   ): Promise<ControlTask> {
     const outcome = await this.transaction(async (connection): Promise<ControlTask | null> => {
@@ -4634,6 +4814,9 @@ export class ControlPlaneRepository {
       );
       if (!lockedTask.rows[0]) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);
+      }
+      if (options.reportPackageArtifactId && options.finalReportArtifactId) {
+        throw new ControlPlaneConflictError('execution cannot complete with two terminal report roots');
       }
       if (options.reportPackageArtifactId) {
         const selectedPackage = await connection.query(
@@ -4682,6 +4865,56 @@ export class ControlPlaneRepository {
         ) {
           throw new ControlPlaneConflictError(
             `execution ${input.attemptId} does not have one unique sealed Report Package root`,
+          );
+        }
+      }
+      if (options.finalReportArtifactId) {
+        const selectedReport = await connection.query(
+          `SELECT id, storage_uri
+           FROM control_artifacts
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND attempt_id = $4
+             AND kind = 'final_report'
+             AND schema_version = 'native-final-report-v1'
+             AND state = 'SEALED'
+             AND content_sha256 IS NOT NULL
+             AND byte_size IS NOT NULL
+           FOR SHARE`,
+          [
+            options.finalReportArtifactId,
+            input.taskId,
+            input.planVersionId,
+            input.attemptId,
+          ],
+        );
+        const selectedRow = selectedReport.rows[0];
+        const storageUri = selectedRow ? asString(selectedRow.storage_uri, 'storage_uri') : '';
+        if (!selectedRow || !/(?:^|\/)reports\/final-report\.json$/u.test(storageUri)) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} NativeFinalReport root is not a sealed fixed-path Artifact`,
+          );
+        }
+        const reportRoots = await connection.query(
+          `SELECT id
+           FROM control_artifacts
+           WHERE task_id = $1
+             AND plan_version_id = $2
+             AND attempt_id = $3
+             AND kind = 'final_report'
+             AND storage_uri = $4
+             AND state = 'SEALED'
+           ORDER BY id
+           FOR SHARE`,
+          [input.taskId, input.planVersionId, input.attemptId, storageUri],
+        );
+        if (
+          reportRoots.rows.length !== 1
+          || asString(reportRoots.rows[0]?.id, 'id') !== options.finalReportArtifactId
+        ) {
+          throw new ControlPlaneConflictError(
+            `execution ${input.attemptId} does not have one unique sealed NativeFinalReport root`,
           );
         }
       }

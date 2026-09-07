@@ -30,7 +30,6 @@ import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import {
   EvidenceService,
   type EvidenceArtifactResolver,
-  type EvidenceKind,
   type EvidenceManifest,
   type ResolvedEvidenceArtifact,
 } from '../evidence/evidence-service.ts';
@@ -132,12 +131,16 @@ function assertArtifactBinding(
   }
 }
 
-function evidenceArtifactKind(kind: EvidenceKind): string {
-  switch (kind) {
+function evidenceArtifactKind(entry: Record<string, unknown>): string {
+  switch (entry.kind) {
     case 'tool_output': return 'tool_output';
-    case 'knowledge_excerpt': return 'knowledge_output';
+    case 'knowledge_excerpt': return entry.toolId === 'joyspace-read'
+      ? 'knowledge_snapshot'
+      : 'knowledge_output';
     case 'screenshot': return 'visual_asset_manifest';
     case 'user_constraint': return 'chart_data';
+    case 'dataset': return 'dataset_input_profile';
+    default: throw new Error('Evidence kind is unsupported');
   }
 }
 
@@ -213,9 +216,6 @@ function assertVerifiedVisualReference(
     throw new Error('Visual Asset Manifest does not match its ReportDocument reference');
   }
   assertJsonIdentity(asset.manifest as unknown as Record<string, unknown>, binding, 'Visual Asset Manifest');
-  if (asset.manifest.exportPolicy === 'block') {
-    throw new Error(`Visual Asset ${reference.assetId} is blocked by its export policy`);
-  }
   return asset.manifest;
 }
 
@@ -380,6 +380,7 @@ export class CurrentReportPackageReader {
       if (
         verifiedReview.artifact.schemaVersion !== 'report-review-v1'
         && verifiedReview.artifact.schemaVersion !== 'report-review-v2'
+        && verifiedReview.artifact.schemaVersion !== 'report-review-v3'
       ) {
         throw new Error('Review Artifact schema version is invalid');
       }
@@ -432,7 +433,9 @@ export class CurrentReportPackageReader {
     if (review) {
       const expectedReviewVersion = deliverable.deliverableType === 'research_strategy_report'
         ? 'report-review-v2'
-        : 'report-review-v1';
+        : deliverable.deliverableType === 'industry_market_analysis_report'
+          ? 'report-review-v3'
+          : 'report-review-v1';
       if (review.version !== expectedReviewVersion) {
         throw new Error(`deliverable ${String(deliverable.deliverableType)} requires ${expectedReviewVersion}`);
       }
@@ -473,6 +476,7 @@ export class CurrentReportPackageReader {
           && entry.kind !== 'knowledge_excerpt'
           && entry.kind !== 'screenshot'
           && entry.kind !== 'user_constraint'
+          && entry.kind !== 'dataset'
         )
       ) {
         throw new Error('Evidence Manifest entry is invalid');
@@ -483,7 +487,7 @@ export class CurrentReportPackageReader {
       assertArtifactBinding(
         verifiedEvidence.artifact,
         entry.artifactId,
-        evidenceArtifactKind(entry.kind),
+        evidenceArtifactKind(entry),
         binding,
         'referenced Evidence',
       );

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import type { SkillCapability } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { runEvaluationBatch } from '../evaluations/skills/run.ts';
 import type { SkillEvaluationRecord, SkillScorecard } from '../evaluations/skills/types.ts';
 import type {
@@ -16,7 +16,7 @@ import type {
   SkillKnowledgeMapping,
 } from '../evaluations/skills/kb/types.ts';
 
-const skill: SkillRegistryEntry = {
+const skill: SkillCapability = {
   id: 'competitive-analysis',
   name: 'Competitive analysis',
   path: 'knowledge-base/skills/competitive-analysis',

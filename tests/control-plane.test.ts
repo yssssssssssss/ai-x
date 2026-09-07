@@ -20,7 +20,11 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
-import type { ControlPlanCandidatesResponse, CurrentPlanCandidate } from '../packages/api-contract/control-workflow.ts';
+import type {
+  ControlPlanCandidatesResponse,
+  CurrentPlanCandidate,
+  OrchestrationModeV1,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   runMigrations,
@@ -35,6 +39,7 @@ type CandidatePersistenceRepository = ControlPlaneRepository & {
     originalInput: string;
     taskType: string | null;
     structuredTask: unknown;
+    orchestrationMode?: OrchestrationModeV1;
     candidates: Array<{
       candidateId: string;
       plan: unknown;
@@ -76,6 +81,7 @@ interface AtomicClarificationInput {
   expectedStateVersion: number;
   taskType: string;
   structuredTask: ResearchTaskV2;
+  orchestrationMode?: OrchestrationModeV1;
   activatedNodes: string[];
   candidates: Array<{
     candidateId: 'depth' | 'speed';
@@ -554,6 +560,7 @@ test('persists a Current task and its depth/speed candidates without activating 
     originalInput: 'Current planning persistence',
     taskType: 'competitive_research',
     structuredTask: { research_goal: 'persist server candidates' },
+    orchestrationMode: 'single_skill',
     candidates: [
       {
         candidateId: 'depth',
@@ -570,6 +577,7 @@ test('persists a Current task and its depth/speed candidates without activating 
 
   assert.equal(created.task.state, 'awaiting_selection');
   assert.equal(created.task.activePlanVersionId, null);
+  assert.equal((await repository.getTaskDetail(created.task.id))?.orchestrationMode, 'single_skill');
   assert.deepEqual(
     created.candidates.map((candidate) => ({
       taskId: candidate.taskId,
@@ -1488,6 +1496,81 @@ test('rejects terminal evidence on nonterminal steps and adopts it only on succe
     latencyMs: 42,
     finishedAt: succeededAt.toISOString(),
   });
+});
+
+test('dataset upload command is owner-bound, replayable, and fenced to the active confirmation Plan', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'dataset upload idempotency',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证 Dataset 上传命令' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:dataset-upload-plan',
+    pendingInputs: [],
+  });
+  const idempotencyKey = randomUUID();
+  const commandType = 'dataset_upload:user_research_dataset';
+  const requestHash = 'sha256:dataset-upload-request';
+  const reservation = await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  });
+  assert.equal(reservation.status, 'reserved');
+  if (reservation.status !== 'reserved') throw new Error('expected a reservation');
+
+  const pendingReplay = await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  });
+  assert.deepEqual(pendingReplay, { status: 'pending' });
+
+  const response = { datasetInputId: randomUUID(), rowCount: 2 };
+  await repository.completeDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    reservationToken: reservation.reservationToken,
+    response,
+  });
+  assert.deepEqual(await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash,
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  }), { status: 'replay', response });
+  assert.deepEqual(await repository.reserveDatasetUploadCommand({
+    taskId: task.id,
+    planVersionId: plan.id,
+    commandType,
+    idempotencyKey,
+    requestHash: 'sha256:different',
+    expectedVersion: task.stateVersion,
+    actorUserId: ownerId,
+  }), { status: 'conflict' });
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'awaiting_confirmation');
 });
 
 test('round-trips the explicit pending-input value through gate records', async () => {

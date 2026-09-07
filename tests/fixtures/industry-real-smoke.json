@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "name": "industry-real-smoke",
+  "profiles": [
+    "industry_market_analysis"
+  ],
+  "scenarios": [
+    {
+      "id": "industry-pet-food-public",
+      "profile": "industry_market_analysis",
+      "taskType": "industry_market_analysis",
+      "businessDomain": "pet_food",
+      "input": "请以 single_skill 模式为京东宠物食品频道产出 industry_market_analysis_report。品类为宠物食品，子类为猫用冻干主粮、冻干零食和冻干拌粮/辅食，排除犬用冻干与线下渠道；地域为中国大陆，资料时间窗口为近24个月，策略窗口为下一季度；分析档位为 medium；主聚焦为频道体验与策略，次聚焦为行业、用户、供给、竞品、京东现状、机会、设计语言、品类差异资产、衡量与策略纵深链；决策读者为频道产品与设计团队，决策目标为确定下一季度改版优先级。五类资料当前均不可提供：jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset。请只使用公开可追溯资料，缺失部分必须标记待补或推断，不能写成已验证事实。",
+      "researchGoal": "基于公开证据形成京东猫用冻干品类的行业、体验与可验证策略判断",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "industry_market_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "industry_market_analysis",
+      "expectedDeliverableIds": [
+        "industry_market_analysis_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ],
+      "requireJoyspace": true
+    },
+    {
+      "id": "industry-pet-food-multi-skill-public",
+      "profile": "industry_market_analysis",
+      "taskType": "industry_market_analysis",
+      "businessDomain": "pet_food",
+      "input": "请以 multi_skill 模式为京东宠物食品频道产出 industry_market_analysis_report。品类为宠物食品，子类为猫用冻干主粮、冻干零食和冻干拌粮/辅食，排除犬用冻干与线下渠道；地域为中国大陆，资料时间窗口为近24个月，策略窗口为下一季度；分析档位为 medium；主聚焦为频道体验与策略，次聚焦为行业、用户、供给、竞品、京东现状、机会、设计语言、品类差异资产、衡量与策略纵深链；决策读者为频道产品与设计团队，决策目标为确定下一季度改版优先级。五类资料当前均不可提供：jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset。请通过多个独立 Skill 贡献和唯一 industry-market-analysis Synthesizer 完成；不得生成无真实 Dataset 支撑的 Persona；缺失部分必须标记待补或推断。",
+      "researchGoal": "通过多 Skill 贡献形成京东猫用冻干品类的行业、体验与可验证策略判断",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "industry_market_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "industry_market_analysis",
+      "expectedDeliverableIds": [
+        "industry_market_analysis_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ],
+      "requireMultiSkill": true,
+      "expectedContributorSkillIds": [
+        "competitive-web-research",
+        "build-experience-metrics"
+      ],
+      "requiredToolIds": [
+        "tavily-web-search"
+      ]
+    },
+    {
+      "id": "industry-books-public",
+      "profile": "industry_market_analysis",
+      "taskType": "industry_market_analysis",
+      "businessDomain": "books",
+      "input": "请以 single_skill 模式为京东图书频道产出 industry_market_analysis_report。品类为图书，子类为童书，排除线下书店与非图书文创；地域为中国大陆，资料时间窗口为近24个月，策略窗口为下一季度；分析档位为 medium；主聚焦为行业与频道策略，次聚焦为行业、用户、供给、竞品、京东现状、机会、设计语言、品类差异资产、衡量与策略纵深链；决策读者为频道产品与设计团队，决策目标为确定下一季度改版优先级。五类资料当前均不可提供：jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset。请只使用公开可追溯资料，所有缺失结论必须标记待补或推断。",
+      "researchGoal": "基于公开证据形成京东童书品类的行业、体验与可验证策略判断",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "industry_market_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "industry_market_analysis",
+      "expectedDeliverableIds": [
+        "industry_market_analysis_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ],
+      "requireJoyspace": true
+    }
+  ]
+}

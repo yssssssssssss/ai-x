@@ -10,7 +10,7 @@ import {
   goldPinsHash,
   type GoldPins,
 } from './gold/gold-batch-service.ts';
-import { ReportPackageArtifactService } from './report/report-package-artifact.ts';
+import { parseNativeFinalReport } from '../../../packages/api-contract/native-skill-orchestration.ts';
 import { assertTrustedGoldEnabled } from './audit/gold-policy.ts';
 import { isInfraFailure } from './audit/failure-classify.ts';
 import { hashFile } from './runtime/config-loader.ts';
@@ -24,6 +24,7 @@ import {
   runCurrentRealSmoke,
   type SemanticGoldFixture,
   type SemanticGoldScenario,
+  type NativeSmokeReceipt,
   type SmokeReceipt,
 } from '../../../scripts/current-real-smoke.ts';
 
@@ -69,7 +70,13 @@ export function parseGoldCommand(args: string[]): GoldCommand {
   return { kind: 'collect', batchId: command };
 }
 
-export function assertGoldSmokeReceipt(receipt: SmokeReceipt, expectedScenarioId: string): void {
+export function assertGoldSmokeReceipt(
+  receipt: SmokeReceipt,
+  expectedScenarioId: string,
+): asserts receipt is NativeSmokeReceipt {
+  if (receipt.contract !== 'native') {
+    throw new Error('Gold collection requires a NativeFinalReport smoke receipt');
+  }
   if (
     receipt.scenarioId !== expectedScenarioId
     || receipt.profile !== GOLD_PROFILE
@@ -84,15 +91,14 @@ export function assertGoldSmokeReceipt(receipt: SmokeReceipt, expectedScenarioId
     || receipt.toolReceipt.implementationId.trim() === ''
     || !receipt.requestedModel.trim()
     || !receipt.actualModel.trim()
-    || receipt.packageSealed !== true
+    || receipt.reportSealed !== true
     || !receipt.attemptId.trim()
-    || !receipt.reportPackageId.trim()
+    || !receipt.finalReportArtifactId.trim()
+    || receipt.skillResultArtifactIds.length === 0
     || receipt.toolArtifactIds.length === 0
     || receipt.visualAssetCount !== receipt.visualAssetIds.length
     || receipt.visualAssetCount !== receipt.visualAssetManifestIds.length
     || receipt.historyRereadVerified !== true
-    || receipt.review.automated !== true
-    || receipt.review.verdict !== 'pass'
   ) {
     throw new Error('Gold collection received a non-qualifying Current real-smoke receipt');
   }
@@ -116,7 +122,7 @@ export function buildGoldPins(input: {
     expectedActualModel: nonBlank(input.expectedActualModel, 'LLM_EXPECTED_ACTUAL_MODEL'),
     coreTool: 'tavily-web-search',
     buildHash: sha256(nonBlank(input.buildId, 'buildId')),
-    registryHash: hashFile('orchestrator/skill-registry.yaml'),
+    registryHash: hashFile('orchestrator/skill-bindings.yaml'),
     schemaHash: hashFile('schemas/deliverables/competitive-analysis-report.schema.json'),
     reviewPolicyHash: hashFile('orchestrator/report-rubrics/competitive-analysis-report.yaml'),
   };
@@ -135,7 +141,16 @@ function goldService(authenticatedReviewerId?: string): {
   const reviewerAuthority = new PostgresGoldReviewerAuthority(database);
   const service = new GoldBatchService(store, {
     reportPackages: {
-      verify: (input) => new ReportPackageArtifactService(buildControlRuntime().artifacts).verify(input),
+      verify: async (input) => {
+        const stored = await buildControlRuntime().artifacts.readVerifiedJson<unknown>(input.artifactId);
+        const value = parseNativeFinalReport(stored.value);
+        if (
+          stored.artifact.kind !== 'final_report'
+          || stored.artifact.state !== 'SEALED'
+          || value.attemptId !== input.attemptId
+        ) throw new Error('NativeFinalReport binding is invalid');
+        return { value };
+      },
     },
     reviewers: {
       verifyReviewer: async (input) => {
@@ -224,14 +239,13 @@ async function collect(command: Extract<GoldCommand, { kind: 'collect' }>): Prom
           batchId,
           slotNo: slot.slotNo as 1 | 2 | 3,
           attemptId: receipt.attemptId,
-          result: { kind: 'success', fullReal: true, reportPackageId: receipt.reportPackageId },
+          result: { kind: 'success', fullReal: true, reportPackageId: receipt.finalReportArtifactId },
         });
         console.log(JSON.stringify({
           batchId,
           slotNo: slot.slotNo,
           attemptId: receipt.attemptId,
-          reportPackageId: receipt.reportPackageId,
-          machineReviewArtifactId: receipt.review.artifactId,
+          finalReportArtifactId: receipt.finalReportArtifactId,
         }));
         break;
       } catch (error) {

@@ -631,6 +631,7 @@ const LOCALIZED_DELIVERABLES: Record<ResearchTaskV2['task_type'], string> = {
   voc_diagnosis: '用户之声诊断报告',
   design_audit: '设计走查报告',
   a11y_audit: '无障碍审计报告',
+  industry_market_analysis: '行业市场分析报告',
 };
 
 function routedPlanningResult() {

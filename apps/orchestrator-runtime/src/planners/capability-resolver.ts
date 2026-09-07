@@ -10,11 +10,11 @@ import type {
 } from '../../../../packages/api-contract/plan.ts';
 import type { ToolManifest, ToolRegistryEntry } from '../runtime/config-loader.ts';
 import { resolveSkillComposition } from '../runtime/config-loader.ts';
-import type { CapabilitySkillRegistryEntry as LoadedCapabilitySkillRegistryEntry } from '../runtime/skill-loader.ts';
+import type { CapabilitySkill as LoadedCapabilitySkill } from '../runtime/skill-loader.ts';
 
-export type CapabilitySkillRegistryEntry = LoadedCapabilitySkillRegistryEntry;
-export type ActiveCapabilitySkillRegistryEntry = Extract<
-  CapabilitySkillRegistryEntry,
+export type CapabilitySkill = LoadedCapabilitySkill;
+export type ActiveCapabilitySkill = Extract<
+  CapabilitySkill,
   { status: 'active' }
 >;
 export type CapabilityApprovalAuthority = CurrentCapabilityApproval['authority'];
@@ -53,7 +53,7 @@ export interface CapabilityDecisionReason {
 }
 
 export interface CapabilityDecision {
-  skill: CapabilitySkillRegistryEntry;
+  skill: CapabilitySkill;
   required_approvals: CapabilityApproval[];
   reasons: CapabilityDecisionReason[];
   pending_inputs: CapabilityPendingInput[];
@@ -68,13 +68,13 @@ export interface CapabilityPortfolioContext {
 }
 
 export interface EligibleCapabilityDecision extends CapabilityDecision {
-  skill: ActiveCapabilitySkillRegistryEntry;
+  skill: ActiveCapabilitySkill;
 }
 
 export interface CapabilityResolveInput {
   task: ResearchTaskV2;
   available_input_roles: readonly string[];
-  skills: readonly CapabilitySkillRegistryEntry[];
+  skills: readonly CapabilitySkill[];
   tools: readonly ToolRegistryEntry[];
   tool_states: readonly CapabilityToolState[];
   tool_manifests: readonly ToolManifest[];
@@ -192,7 +192,7 @@ function requiredToolRejections(
 }
 
 function optionalToolDecisions(
-  skill: CapabilitySkillRegistryEntry,
+  skill: CapabilitySkill,
   toolsById: ReadonlyMap<string, ToolRegistryEntry>,
   statesById: ReadonlyMap<string, CapabilityToolState>,
 ): CurrentOptionalToolDecision[] {
@@ -232,7 +232,7 @@ function optionalToolDecisions(
 }
 
 function compositionRejections(
-  skill: ActiveCapabilitySkillRegistryEntry,
+  skill: ActiveCapabilitySkill,
   input: CapabilityResolveInput,
 ): CapabilityDecisionReason[] {
   const context = input.portfolio_context;
@@ -349,16 +349,33 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       }
     }
 
+    const composition = input.portfolio_context ? resolveSkillComposition(skill) : resolveSkillComposition(skill);
     const requiredInputRoles = input.portfolio_context
-      ? resolveSkillComposition(skill).required_input_roles
+      ? composition.required_input_roles
       : [];
-    const pendingInputs = [...new Set([...skill.inputs, ...requiredInputRoles])]
+    const declaredPendingMaterialRoles = input.task.task_type === 'industry_market_analysis'
+      ? (input.task.available_material_roles ?? []).filter((role) => (
+          composition.optional_input_roles.includes(role)
+        ))
+      : [];
+    const pendingInputs = [...new Set([
+      ...skill.inputs,
+      ...requiredInputRoles,
+      ...declaredPendingMaterialRoles,
+    ])]
       .filter((role) => !availableInputs.has(role))
       .map((role): CapabilityPendingInput => ({
-        kind: skill.visual_inputs?.includes(role) === true ? 'visual' : 'value',
+        kind: skill.dataset_inputs?.includes(role) === true
+          ? 'dataset'
+          : skill.document_inputs?.includes(role) === true
+            ? 'document'
+            : skill.visual_inputs?.includes(role) === true
+              ? 'visual'
+              : 'value',
         role,
         label: role,
-        multiple: skill.multiple_visual_inputs?.includes(role) === true,
+        multiple: skill.document_inputs?.includes(role) === true
+          || skill.multiple_visual_inputs?.includes(role) === true,
         capability_id: skill.id,
       }));
     if (reasons.length > 0) {

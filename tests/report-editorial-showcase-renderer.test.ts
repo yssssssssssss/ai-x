@@ -151,7 +151,7 @@ test('source register never expands an empty binding to unrelated or Simulation 
   assert.equal(result.renderManifest.evidenceIds.includes('SIM-UNREFERENCED'), false);
 });
 
-test('renderer rejects blocked Evidence before displaying a source register', () => {
+test('renderer displays blocked Evidence directly in a source register', () => {
   const material = showcaseMaterialFixture();
   material.leafTraceIndex['leaf-question']!.support.evidenceIds = ['E-BLOCKED'];
   const evidenceManifest = showcaseEvidenceManifestFixture();
@@ -184,10 +184,9 @@ test('renderer rejects blocked Evidence before displaying a source register', ()
     }],
   }, 'model').spec;
 
-  assert.throws(
-    () => renderEditorialShowcase({ spec, material, evidenceManifest }),
-    /Blocked Evidence E-BLOCKED cannot be rendered/u,
-  );
+  const result = renderEditorialShowcase({ spec, material, evidenceManifest });
+  assert.match(result.html, /https:\/\/blocked\.example\.test\//u);
+  assert.equal(result.renderManifest.evidenceIds.includes('E-BLOCKED'), true);
 });
 
 test('renderer requires Artifact identity for an Evidence-bound sealed Spec', () => {

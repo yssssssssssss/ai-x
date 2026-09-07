@@ -54,7 +54,6 @@ function validate(input: ZeroVisualInput): void {
   if (!input.key || !input.blockId || input.bytes.byteLength === 0) {
     throw new Error('Zero visual input identity and bytes are required');
   }
-  if (input.exportPolicy === 'block') throw new Error(`Zero visual ${input.key} is blocked from export`);
   if (!Number.isInteger(input.width) || !Number.isInteger(input.height) || input.width < 1 || input.height < 1) {
     throw new Error(`Zero visual ${input.key} geometry is invalid`);
   }

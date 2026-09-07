@@ -125,6 +125,27 @@ test('generic current-text packages retain the owner Contribution view decision'
   assert.equal(hasCompleteContributionSidecars({ contributionSummary: {} }), false);
 });
 
+test('native Stage4 exposes final report and Skill result views with original and HTML downloads', async () => {
+  const reportSource = await readFile(
+    join(process.cwd(), 'apps/web/src/components/stages/NativeStage4Report.tsx'),
+    'utf8',
+  );
+  assert.match(reportSource, /export function NativeStage4Report/u);
+  assert.match(reportSource, />最终报告</u);
+  assert.match(reportSource, />分析明细</u);
+  assert.match(reportSource, /controlFinalReportHtml/u);
+  assert.match(reportSource, /controlVisualAsset/u);
+  assert.match(reportSource, /controlFinalReportZip/u);
+  assert.match(reportSource, /下载离线报告/u);
+  assert.match(reportSource, /下载原始报告/u);
+  assert.match(reportSource, /下载 HTML/u);
+  assert.match(reportSource, /selectedResult\.primary\.content/u);
+  assert.match(reportSource, /selectedResult\.sources/u);
+  assert.match(reportSource, /selectedResult\.gaps/u);
+  assert.match(reportSource, /sandbox=""/u);
+  assert.doesNotMatch(reportSource, /attachShadow|dangerouslySetInnerHTML/u);
+});
+
 test('Contribution view stays owner-only/non-canonical and report view mounts it only for complete sidecars', async () => {
   const contributionSource = await readFile(
     join(process.cwd(), 'apps/web/src/components/SkillContributionView.tsx'),

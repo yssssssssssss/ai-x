@@ -83,12 +83,13 @@ test('Zero image transcoder preserves explicitly transparent PNG output', async 
   assert.equal(result.slices[0]?.mediaType, 'image/png');
 });
 
-test('Zero image transcoder rejects blocked exports and mismatched pair geometry', async () => {
+test('Zero image transcoder exports blocked-policy inputs and rejects mismatched pair geometry', async () => {
   const bytes = await jpeg(100, 100, { r: 255, g: 255, b: 255 });
-  await assert.rejects(() => transcodeZeroImages([{
+  const direct = await transcodeZeroImages([{
     key: 'blocked', blockId: 'blocked', role: 'image', mediaType: 'image/jpeg', bytes,
     width: 100, height: 100, exportPolicy: 'block',
-  }]), /blocked/);
+  }]);
+  assert.equal(direct.slices.length, 1);
   await assert.rejects(() => transcodeZeroImages([{
     key: 'pair-a', blockId: 'pair', role: 'image_original', pairKey: 'pair', mediaType: 'image/jpeg', bytes,
     width: 100, height: 100, exportPolicy: 'allow',

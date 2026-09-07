@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type {
+  CurrentCompiledSkillInvocationV2,
   CurrentCompiledSkillInvocationV3,
   CurrentExecutionPlanV3,
   CurrentLegacySkillInvocationV3,
@@ -11,6 +12,7 @@ import type {
   PlanContributionRequirement,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { CapabilityResolution } from '../planners/capability-resolver.ts';
 import {
   portfolioActorValidationIssues,
   type SkillPortfolioDecision,
@@ -34,6 +36,7 @@ export interface PortfolioSkillCompilationInput {
   steps: readonly CurrentPlanStep[];
   task: ResearchTaskV2;
   portfolio: SkillPortfolioDecision;
+  capabilityResolution?: CapabilityResolution;
   skillLoader?: SkillLoader;
 }
 
@@ -48,7 +51,7 @@ interface SourceSkillBinding {
   invocationId: string;
   stepNos: number[];
   outputStepNo: number;
-  compiledInvocation?: CurrentSkillInvocation;
+  compiledInvocation?: CurrentCompiledSkillInvocationV2;
 }
 
 function uniqueSorted(values: readonly number[]): number[] {
@@ -147,18 +150,23 @@ function deduplicateSharedSourceSteps(
 function normalizePortfolioOwnedWiring(
   sourceSteps: readonly CurrentPlanStep[],
   allowedPrerequisites: ReadonlySet<string>,
+  discardablePrerequisites: ReadonlySet<string>,
 ): CurrentPlanStep[] {
   for (const step of sourceSteps) {
     if (step.actor_type === 'skill') continue;
+    const actorKey = `${step.actor_type}:${step.actor_id}`;
     if (
       (step.actor_type === 'tool' || step.actor_type === 'knowledge')
-      && allowedPrerequisites.has(`${step.actor_type}:${step.actor_id}`)
+      && (allowedPrerequisites.has(actorKey) || discardablePrerequisites.has(actorKey))
     ) continue;
     throw new Error(
       `Portfolio candidate contains unauthorized actor ${step.actor_type}:${step.actor_id}`,
     );
   }
-  const retained = sourceSteps;
+  const retained = sourceSteps.filter((step) => (
+    step.actor_type === 'skill'
+    || allowedPrerequisites.has(`${step.actor_type}:${step.actor_id}`)
+  ));
   const newStepNoByOld = new Map(retained.map((step, index) => [step.step_no, index + 1]));
   const skillStepNos = new Set(retained
     .filter(({ actor_type }) => actor_type === 'skill')
@@ -245,9 +253,15 @@ function sourceBindings(
       step.actor_type === 'skill' && step.actor_id === invocation.skillId
     ));
     if (!sourceStep) throw new Error(`Portfolio Skill ${invocation.skillId} has no source step`);
-    const compiledInvocation = compiledInvocations.find(({ skill_id, invocation_id }) => (
+    const sourceInvocation = compiledInvocations.find(({ skill_id, invocation_id }) => (
       skill_id === invocation.skillId && invocation_id.endsWith(`:${sourceStep.step_no}`)
     ));
+    if (!sourceInvocation) {
+      throw new Error(`Portfolio Skill ${invocation.skillId} has no source invocation`);
+    }
+    const compiledInvocation = sourceInvocation.execution_mode === 'compiled'
+      ? sourceInvocation
+      : undefined;
     if (compiledInvocation) {
       const outputStep = compiledSteps.find((step) => (
         step.actor_type === 'skill'
@@ -267,7 +281,7 @@ function sourceBindings(
     const outputStep = compiledSteps.find((step) => (
       step.actor_type === 'skill'
       && step.actor_id === invocation.skillId
-      && step.skill_invocation_id === undefined
+      && step.skill_invocation_id === sourceInvocation.invocation_id
     ));
     if (!outputStep) throw new Error(`Legacy Skill ${invocation.skillId} has no output step`);
     result.set(invocation.skillId, {
@@ -381,6 +395,33 @@ function wireRequiredToolDependencies(
       for (const root of roots) {
         root.depends_on = uniqueSorted([...root.depends_on, tool.step_no]);
       }
+    }
+  }
+}
+
+function wireOptionalToolDependencies(
+  steps: CurrentPlanStepV3[],
+  portfolio: SkillPortfolioDecision,
+  bindings: ReadonlyMap<string, SourceSkillBinding>,
+  capabilityResolution?: CapabilityResolution,
+): void {
+  if (!capabilityResolution) return;
+  for (const invocation of portfolio.invocations) {
+    const decision = capabilityResolution.eligible.find(({ skill }) => skill.id === invocation.skillId);
+    const output = steps[bindings.get(invocation.skillId)!.outputStepNo - 1]!;
+    for (const optional of decision?.optional_tool_decisions ?? []) {
+      if (optional.status !== 'available') continue;
+      const matches = steps.filter((step) => (
+        step.actor_type === 'tool'
+        && step.actor_id === optional.tool_id
+        && step.skill_invocation_id === undefined
+      ));
+      if (matches.length !== 1) {
+        throw new Error(
+          `Optional Tool ${optional.tool_id} for ${invocation.skillId} requires exactly one source step`,
+        );
+      }
+      output.depends_on = uniqueSorted([...output.depends_on, matches[0]!.step_no]);
     }
   }
 }
@@ -773,15 +814,26 @@ export function compilePortfolioSkillSteps(
     }
   }
   const allowedPrerequisites = new Set<string>();
+  const discardablePrerequisites = new Set<string>();
   for (const invocation of input.portfolio.invocations) {
     const skill = skillLoader.getSkill(invocation.skillId);
     for (const toolId of skill?.required_tools ?? []) allowedPrerequisites.add(`tool:${toolId}`);
+    for (const toolId of skill?.optional_tools ?? []) discardablePrerequisites.add(`tool:${toolId}`);
+    const decision = input.capabilityResolution?.eligible.find(({ skill: candidate }) => (
+      candidate.id === invocation.skillId
+    ));
+    for (const optional of decision?.optional_tool_decisions ?? []) {
+      if (optional.status === 'available') {
+        allowedPrerequisites.add(`tool:${optional.tool_id}`);
+        discardablePrerequisites.delete(`tool:${optional.tool_id}`);
+      }
+    }
   }
   for (const prerequisite of input.portfolio.sharedPrerequisites) {
     allowedPrerequisites.add(`${prerequisite.capabilityType}:${prerequisite.capabilityId}`);
   }
   const normalizedSourceSteps = canonicalizeSharedSourceInputs(
-    normalizePortfolioOwnedWiring(input.steps, allowedPrerequisites),
+    normalizePortfolioOwnedWiring(input.steps, allowedPrerequisites, discardablePrerequisites),
     input.portfolio,
     skillLoader,
   );
@@ -809,6 +861,7 @@ export function compilePortfolioSkillSteps(
   const dependencies = portfolioDependencies(input.portfolio);
   markSharedPrerequisites(steps, sourceSteps, input.portfolio, bindings);
   wireRequiredToolDependencies(steps, input.portfolio, bindings, skillLoader);
+  wireOptionalToolDependencies(steps, input.portfolio, bindings, input.capabilityResolution);
   wireExternalDependencies(steps, bindings, dependencies);
   wireContributionBundle(steps, input.portfolio, bindings);
   topologicallyRenumberPortfolioSteps(steps, bindings);

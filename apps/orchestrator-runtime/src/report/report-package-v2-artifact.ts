@@ -270,7 +270,7 @@ export class ReportPackageV2ArtifactVerifier {
       artifactId: value.reportReviewArtifactId,
       kind: 'report_review',
       binding,
-      schemaVersions: ['report-review-v1', 'report-review-v2'],
+      schemaVersions: ['report-review-v1', 'report-review-v2', 'report-review-v3'],
     });
     const reviewValue = record(review.value, 'Report Review');
     assertValidReportReviewArtifact(review.value, COMPONENT_VALIDATOR);

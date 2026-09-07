@@ -6,6 +6,7 @@ import type {
   ControlTaskResponse,
   PlanControlTaskRequest,
 } from '../packages/api-contract/control-workflow.ts';
+import type { NativeSkillExecutionPlanV1 } from '../packages/api-contract/native-skill-orchestration.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
@@ -211,25 +212,45 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
     title: id === 'depth' ? '深度研究' : '快速研究',
     rationale: id === 'depth' ? '优先覆盖来源与交叉验证' : '优先产出可执行框架',
     tradeoffs: id === 'depth' ? '耗时更长' : '来源覆盖较窄',
-    steps: [{
-      step_no: 99,
-      step_name: id === 'depth' ? '公开来源深度检索' : '公开来源快速检索',
-      actor_type: 'tool' as const,
-      actor_id: 'tavily-search',
-      question_ids: ['q-public-source'],
-      depends_on: [],
-      input: {
-        query: originalInput,
-        filters: id === 'depth'
-          ? { language: 'zh-CN', freshness: 'year' }
-          : { language: 'zh-CN' },
+    steps: [
+      {
+        step_no: 99,
+        step_name: id === 'depth' ? '公开来源深度检索' : '公开来源快速检索',
+        actor_type: 'tool' as const,
+        actor_id: 'tavily-search',
+        question_ids: ['q-public-source'],
+        depends_on: [],
+        input: {
+          query: originalInput,
+          filters: id === 'depth'
+            ? { language: 'zh-CN', freshness: 'year' }
+            : { language: 'zh-CN' },
+        },
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
+        acceptance_criteria: ['至少返回一个公开来源'],
+        requires_approval: false,
+        fallback_actor_ids: [],
       },
-      input_bindings: [],
-      expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
-      acceptance_criteria: ['至少返回一个公开来源'],
-      requires_approval: false,
-      fallback_actor_ids: [],
-    }],
+      {
+        step_no: 99,
+        step_name: '形成研究计划',
+        actor_type: 'skill' as const,
+        actor_id: 'competitive-web-research',
+        question_ids: ['q-public-source'],
+        depends_on: [1],
+        input: { research_goal: originalInput, sources: null },
+        input_bindings: [{
+          target_pointer: '/sources',
+          source_step_no: 1,
+          source_pointer: '/results',
+        }],
+        expected_outputs: [{ pointer: '/payload', description: '证据约束研究结果' }],
+        acceptance_criteria: ['结论保持公开来源边界'],
+        requires_approval: false,
+        fallback_actor_ids: [],
+      },
+    ],
     assumptions: [],
     activated_nodes: ['D5_competitive', 'D6_evidence'],
   });
@@ -417,6 +438,7 @@ test('announces a newly created conversation before planning begins', async () =
       {
         originalInput: '先返回新 conversation，再启动 planning',
         ownerUserId: '00000000-0000-0000-0000-000000000105',
+        orchestrationMode: 'single_skill',
       },
       undefined,
       (createdConversationId) => events.push(`conversation:${createdConversationId}`),
@@ -493,14 +515,14 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   };
   const service = new ControlPlanningService(dependencies);
 
-  const response = await service.plan({ originalInput, ownerUserId });
+  const response = await service.plan({ originalInput, ownerUserId, orchestrationMode: 'single_skill' });
 
   assert.deepEqual(createdConversations, [{
     ownerUserId,
     title: originalInput.slice(0, 40),
   }]);
   assert.deepEqual(requiredConversations, []);
-  assert.deepEqual(planningInputs, [{ originalInput }]);
+  assert.deepEqual(planningInputs, [{ originalInput, orchestrationMode: 'single_skill' }]);
   assert.equal(repositoryInputs.length, 1);
   const persisted = repositoryInputs[0];
   assert.equal(persisted.conversationId, conversationId);
@@ -514,24 +536,30 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   ));
 
   for (const [index, candidate] of persisted.candidates.entries()) {
+    const plan = candidate.plan as unknown as NativeSkillExecutionPlanV1;
     assert.deepEqual(Object.keys(candidate).sort(), ['candidateId', 'pendingInputs', 'plan']);
-    assert.equal(candidate.plan.deliverable_type, 'research_plan');
-    assert.deepEqual(candidate.plan.evidence_requirements, evidencePolicy);
-    assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps.map((step, stepIndex) => ({
-      ...step,
-      step_no: stepIndex + 1,
-    })));
-    assert.deepEqual(candidate.plan.problem_graph, planningResult.problemGraph);
-    assert.deepEqual(candidate.plan.capability_decisions, planningResult.capabilityResolution);
-    assert.deepEqual(candidate.plan.candidate_metadata, {
+    assert.equal(plan.deliverable_type, 'research_plan');
+    assert.deepEqual(plan.evidence_requirements, evidencePolicy);
+    assert.deepEqual(plan.steps.map(({ step_no }) => step_no), [1, 2]);
+    assert.equal(plan.execution_contract_version, 'native-skill-execution-plan-v1');
+    assert.equal(plan.mode, 'single_skill');
+    assert.equal(plan.skill_invocations.length, 1);
+    assert.equal(plan.skill_invocations[0]?.invocation_id, 'competitive-web-research:2');
+    assert.equal(plan.skill_invocations[0]?.skill_id, 'competitive-web-research');
+    assert.match(plan.skill_invocations[0]?.run_spec.body_hash ?? '', /^sha256:/u);
+    assert.deepEqual(plan.resolved_inputs.resolved.map(({ key }) => key), ['research_goal']);
+    assert.deepEqual(plan.resolved_inputs.pending.map(({ requirement }) => requirement.key), ['public_evidence']);
+    assert.deepEqual(plan.problem_graph, planningResult.problemGraph);
+    assert.deepEqual(plan.capability_decisions.eligible.map(({ skill }) => skill.id), ['competitive-web-research']);
+    assert.deepEqual(plan.candidate_metadata, {
       title: planningResult.candidates[index]?.title,
       rationale: planningResult.candidates[index]?.rationale,
       tradeoffs: planningResult.candidates[index]?.tradeoffs,
       recommended: planningResult.candidates[index]?.recommended,
     });
-    assert.deepEqual(candidate.plan.planning_provenance, planningResult.planningProvenance);
-    assert.deepEqual(candidate.plan.activated_nodes, planningResult.activatedNodes);
-    assert.deepEqual(candidate.pendingInputs, []);
+    assert.deepEqual(plan.planning_provenance, planningResult.planningProvenance);
+    assert.deepEqual(plan.activated_nodes, planningResult.activatedNodes);
+    assert.deepEqual(candidate.pendingInputs.map(({ role }) => role), ['public_evidence']);
   }
 
   assert.equal(response.kind, 'current');
@@ -542,6 +570,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     stateVersion: 0,
     activePlanVersionId: null,
     currentAttemptId: null,
+    orchestrationMode: 'single_skill',
   });
   assert.deepEqual(response.structuredTask, planningResult.structuredTask);
   assert.deepEqual(response.activatedNodes, planningResult.activatedNodes);
@@ -564,7 +593,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
       tradeoffs: candidate.tradeoffs,
       planHash: repositoryPlanHashes[candidate.id],
       plan: repositoryCandidates[index]?.plan,
-      pendingInputs: [],
+      pendingInputs: repositoryCandidates[index]?.pendingInputs,
     })),
   );
 });
@@ -625,6 +654,7 @@ test('persists a three-profile compatibility fixture with one recommendation in 
   const response = await service.plan({
     originalInput: '三方案兼容 fixture',
     ownerUserId: '00000000-0000-0000-0000-000000000131',
+    orchestrationMode: 'single_skill',
   });
 
   assert.deepEqual(
@@ -664,6 +694,7 @@ test('rejects duplicate controlled candidate IDs even when their display content
     () => service.plan({
       originalInput: '重复 Profile',
       ownerUserId: '00000000-0000-0000-0000-000000000132',
+      orchestrationMode: 'single_skill',
     }),
     /2-4 unique controlled candidates/,
   );
@@ -698,6 +729,7 @@ test('rejects generated Current step drift before repository persistence', async
     () => service.plan({
       originalInput,
       ownerUserId: '00000000-0000-0000-0000-000000000103',
+      orchestrationMode: 'single_skill',
     }),
     /candidate_schema_invalid.*purpose.*schema_escape/,
   );
@@ -763,6 +795,7 @@ test('rejects empty steps and unknown actor types before calling the repository'
     await assert.rejects(() => service.plan({
       originalInput: invalid.label,
       ownerUserId: '00000000-0000-0000-0000-000000000104',
+      orchestrationMode: 'single_skill',
     }));
     assert.equal(repositoryCalls, 0, invalid.label);
   }
@@ -808,6 +841,7 @@ test('rejects a foreign conversation before planning or candidate persistence', 
       originalInput,
       ownerUserId,
       conversationId: foreignConversationId,
+      orchestrationMode: 'single_skill',
     }),
     /conversation not found for owner/,
   );

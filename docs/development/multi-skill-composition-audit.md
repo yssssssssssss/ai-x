@@ -1,7 +1,7 @@
 # Multi-Skill Composition Audit
 
 > 日期：2026-08-25
-> Registry：`orchestrator/skill-registry.yaml`
+> Registry：`orchestrator/skill-bindings.yaml`
 > 标准 Contribution：`schemas/research-contribution-v1.schema.json`
 
 本表记录所有 active Skill 的组合分类。`contributor` 表示 Registry 合同允许其覆盖对应 Capability Demand；并不表示 Adapter 已完成。首批 Adapter/原生输出迁移仍由 Phase 4 验收，在此之前 Multi-Skill writer 保持 inactive。

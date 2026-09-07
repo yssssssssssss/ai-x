@@ -1,6 +1,7 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import {
   ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+  INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
   REPORT_REVIEW_DIMENSION_IDS,
   REPORT_REVIEW_V2_DIMENSION_IDS,
   type ReportReviewArtifact,
@@ -15,7 +16,7 @@ export type {
   ReportReviewVerdict,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ArtifactWriteInput } from '../control/artifact-store.ts';
-import { redactSensitiveValue } from '../runtime/redaction.ts';
+import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
@@ -130,18 +131,28 @@ function activeDeliverableContract(deliverable: unknown): DeliverableContractRes
   return contract;
 }
 
-const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set(
-  REPORT_REVIEW_V2_DIMENSION_IDS,
-);
+const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set([
+  ...REPORT_REVIEW_V2_DIMENSION_IDS,
+  ...INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
+]);
 const MODEL_SEMANTIC_ANSWER_DIMENSION_IDS: ReadonlySet<ReportReviewDimensionId> = new Set([
   'reasoning_quality',
   'recommendation_quality',
   'answer_evidence_strength',
   'decision_usefulness',
   'hypothesis_conclusion_clarity',
+  'market_claim_strength',
+  'persona_evidence_boundary',
+  'competitor_sample_integrity',
+  'jd_diagnosis_quality',
+  'category_specificity',
+  'strategy_chain_actionability',
+  'category_asset_provenance',
+  'measurement_quality',
 ]);
 
 function reviewDimensionIds(version: ReportReviewArtifact['version']): readonly ReportReviewDimensionId[] {
+  if (version === 'report-review-v3') return INDUSTRY_REPORT_REVIEW_DIMENSION_IDS;
   return version === 'report-review-v2' ? REPORT_REVIEW_V2_DIMENSION_IDS : REPORT_REVIEW_DIMENSION_IDS;
 }
 
@@ -167,7 +178,7 @@ export function assertReportReviewInvariant(
       revisionIssueIds.add(issue.id);
     }
     if (
-      review.version === 'report-review-v2'
+      review.version !== 'report-review-v1'
       && review.verdict !== 'pass'
       && !dimension.passed
       && MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(dimension.id)
@@ -203,6 +214,28 @@ function normalizedText(value: string): string {
 function reviewRevisionTargetIds(deliverable: unknown): string[] {
   const report = record(deliverable);
   const payload = record(report?.payload);
+  if (payload?.schemaVersion === 'industry-market-analysis-v1') {
+    const collections = [
+      'validatedFindings',
+      'gapMatrix',
+      'opportunities',
+      'strategyChains',
+      'categoryAssets',
+      'measurementPlan',
+      'dataGaps',
+    ];
+    return [...new Set([
+      'root',
+      ...collections.flatMap((field) => (
+        Array.isArray(payload[field])
+          ? (payload[field] as unknown[]).flatMap((candidate) => {
+              const id = record(candidate)?.id;
+              return typeof id === 'string' && id.trim() ? [id] : [];
+            })
+          : []
+      )),
+    ])];
+  }
   if (payload?.schemaVersion !== 'research-strategy-content-v2') return [];
   const answers = Array.isArray(payload.directAnswers) ? payload.directAnswers.map(record).filter(Boolean) as Record<string, unknown>[] : [];
   const findings = Array.isArray(payload.evidenceFindings) ? payload.evidenceFindings.map(record).filter(Boolean) as Record<string, unknown>[] : [];
@@ -345,7 +378,10 @@ function deterministicDimensions(
   dimensionIds: readonly ReportReviewDimensionId[],
 ): ReportReviewDimension[] {
   const issues = Object.fromEntries(
-    REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => [id, [] as string[]]),
+    [...new Set([
+      ...REPORT_REVIEW_V2_DIMENSION_IDS,
+      ...INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
+    ])].map((id) => [id, [] as string[]]),
   ) as Record<ReportReviewDimensionId, string[]>;
   const report = record(deliverable);
   if (!report) {
@@ -407,6 +443,41 @@ function deterministicDimensions(
     for (const summaryId of roots) if (typeof summaryId !== 'string' || !summaryIds.has(summaryId)) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} references unknown summary`);
   }
   if (dimensionIds.includes('direct_answer_coverage')) answerQualityDimensionIssues(input, report, issues);
+  if (dimensionIds.includes('ten_dimension_coverage')) {
+    const payload = record(report.payload);
+    const coverage = Array.isArray(payload?.coverageLedger)
+      ? payload.coverageLedger.map(record).filter(Boolean) as Record<string, unknown>[]
+      : [];
+    const dimensions = coverage.map(({ dimension }) => dimension);
+    const expected = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+    if (
+      dimensions.length !== expected.length
+      || new Set(dimensions).size !== expected.length
+      || expected.some((dimension) => !dimensions.includes(dimension))
+    ) issues.ten_dimension_coverage.push('Industry coverage ledger must contain A-J exactly once');
+
+    const opportunities = Array.isArray(payload?.opportunities)
+      ? payload.opportunities.map(record).filter(Boolean) as Record<string, unknown>[]
+      : [];
+    const opportunityIds = new Set(opportunities.flatMap(({ id }) => typeof id === 'string' ? [id] : []));
+    const chains = Array.isArray(payload?.strategyChains)
+      ? payload.strategyChains.map(record).filter(Boolean) as Record<string, unknown>[]
+      : [];
+    for (const chain of chains) {
+      const id = String(chain.id ?? '');
+      if (
+        !nonEmptyString(chain.title)
+        || !nonEmptyString(chain.goal)
+        || !nonEmptyString(chain.currentProblem)
+        || !nonEmptyString(chain.designAction)
+        || !nonEmptyString(chain.ownerType)
+        || !nonEmptyString(chain.measurement)
+        || !nonEmptyString(chain.validationMethod)
+        || !nonEmptyString(chain.opportunityId)
+        || !opportunityIds.has(chain.opportunityId)
+      ) issues.strategy_chain_actionability.push(`strategy chain ${id} is incomplete`);
+    }
+  }
   return dimensionIds.map((id) => issueDimension(id, issues[id]));
 }
 
@@ -418,6 +489,7 @@ function deterministicFailure(dimensions: readonly ReportReviewDimension[]): boo
     'reasoning_quality',
     'recommendation_quality',
     ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+    ...INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
   ]);
   return dimensions.some((dimension) => blocking.has(dimension.id) && !dimension.passed);
 }
@@ -448,9 +520,11 @@ export class ReportReviewService {
     const contract = activeDeliverableContract(input.deliverable);
     const reviewVersion: ReportReviewArtifact['version'] = contract.entry.id === 'research_strategy_report'
       ? 'report-review-v2'
-      : 'report-review-v1';
+      : contract.entry.id === 'industry_market_analysis_report'
+        ? 'report-review-v3'
+        : 'report-review-v1';
     const requiredDimensionIds = reviewDimensionIds(reviewVersion);
-    if (reviewVersion === 'report-review-v2') assertRubricDimensionContract(contract, requiredDimensionIds);
+    if (reviewVersion !== 'report-review-v1') assertRubricDimensionContract(contract, requiredDimensionIds);
     const round = input.revisionRound ?? 0;
     const dimensions = deterministicDimensions(input, input.deliverable, requiredDimensionIds);
     if (this.dependencies.evidence?.validate && !deterministicFailure(dimensions)) await this.dependencies.evidence.validate({
@@ -510,7 +584,9 @@ export class ReportReviewService {
         'A best-available answer may pass with evidence gaps when it is explicitly provisional, states validationNeeded, and discloses the limitation; do not fail it merely for lacking future primary research.',
         'Do not require unrequested visuals, budgets, statistical-power calculations, owners for open questions, or other enhancements absent from the Requirement success criteria.',
         'Report only concrete must-fix contract or decision-safety failures as issues; optional improvements must not fail a dimension.',
-        'When verdict is revise or block, every failed semantic dimension must include revisionIssues. Each revision issue requires a stable id, a message, and its own targetNodeIds selected only from context.revisionTargetIndex.',,
+        'Set verdict to pass when every dimension passes. Use revise only when at least one dimension fails and supplies actionable revisionIssues; never return revise with every dimension passed.',
+        'When context.researchGoal is present, require all user-facing semantic content to use the same primary language. A Chinese research goal requires Simplified Chinese except for proper nouns, standard abbreviations, identifiers, and source quotations.',
+        'When verdict is revise or block, every failed semantic dimension must include revisionIssues. Each revision issue requires a stable id, a message, and its own targetNodeIds selected only from context.revisionTargetIndex.',
         revisionRound === 1 ? 'This is the single bounded final revision. Return revise only when a concrete must-fix violation still remains.' : '',
       ].filter(Boolean).join('\n'),
       // An empty override makes the gateway load the canonical registry schema.
@@ -518,6 +594,7 @@ export class ReportReviewService {
       schemaName: 'report-review',
       context: {
         taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+        ...(input.requirement ? { researchGoal: redactString(input.requirement.research_goal) } : {}),
         deliverable: redactSensitiveValue(input.deliverable), deterministicDimensions: dimensions,
         deliverableContractId: contract.entry.id,
         reviewRubric: contract.reviewRubric,
@@ -536,7 +613,7 @@ export class ReportReviewService {
         ? deterministicById.get(candidate.id as ReportReviewDimensionId)
         : undefined;
       if (
-        reviewVersion === 'report-review-v2'
+        reviewVersion !== 'report-review-v1'
         && baseline?.passed
         && !MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(baseline.id)
       ) {
@@ -588,7 +665,7 @@ export class ReportReviewService {
       && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
     const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
       ? 'revise'
-      : value.verdict === 'revise' && revisionRound === 1 && allDimensionsPass
+      : value.verdict === 'revise' && allDimensionsPass
         ? 'pass'
         : value.verdict;
     const revisionIssueIds = projectedDimensions.flatMap((dimension) => (
@@ -597,7 +674,7 @@ export class ReportReviewService {
     if (new Set(revisionIssueIds).size !== revisionIssueIds.length) {
       throw new Error('semantic review duplicates revision issue ids across dimensions');
     }
-    if (reviewVersion === 'report-review-v2' && normalizedVerdict === 'revise') {
+    if (reviewVersion !== 'report-review-v1' && normalizedVerdict === 'revise') {
       for (const dimension of projectedDimensions) {
         if (
           !dimension.passed

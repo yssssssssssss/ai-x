@@ -202,10 +202,10 @@ test('plan returns clarification_required union and SSE emits conversation befor
   app.use('/api/control-tasks', createControlPlanningRouter(port));
   const { server, baseUrl } = await listen(app);
   try {
-    const response = await post(baseUrl, '/api/control-tasks/plan', ownerToken, { originalInput: 'ambiguous request' });
+    const response = await post(baseUrl, '/api/control-tasks/plan', ownerToken, { originalInput: 'ambiguous request', orchestrationMode: 'single_skill' });
     assert.equal((await response.json() as { status?: unknown }).status, 'clarification_required');
 
-    const stream = await post(baseUrl, '/api/control-tasks/plan/stream', ownerToken, { originalInput: 'ambiguous request' });
+    const stream = await post(baseUrl, '/api/control-tasks/plan/stream', ownerToken, { originalInput: 'ambiguous request', orchestrationMode: 'single_skill' });
     const text = await stream.text();
     assert.ok(text.indexOf('event: conversation') < text.indexOf('event: result'));
     assert.match(text, /clarification_required/);

@@ -63,19 +63,28 @@ export interface LLMProviderIdentity {
   eligibleAsReal: boolean;
 }
 
+export interface LLMImageInput {
+  dataUrl: string;
+  label?: string;
+}
+
 export interface StructuredLLMCallOptions {
   prompt: string;
   schema: object;
   schemaName: string;
   context?: object;
+  images?: readonly LLMImageInput[];
   signal?: AbortSignal;
   receipt: LLMReceiptContext;
 }
 
 export interface TextLLMCallOptions {
   prompt: string;
+  systemPrompt?: string;
   context?: object;
+  images?: readonly LLMImageInput[];
   signal?: AbortSignal;
+  maxOutputTokens?: number;
   receipt: LLMReceiptContext;
 }
 
@@ -117,11 +126,21 @@ export interface LLMClient {
 
 // 确定性 hash:同输入同输出,便于测试与复盘对齐。
 // schemaId 纳入 hash:同一段 prompt 用于不同 schema 时溯源不冲撞(issue #5)。
-export function hashPrompt(prompt: string, context?: object, schemaId?: string): string {
+export function hashPrompt(
+  prompt: string,
+  context?: object,
+  schemaId?: string,
+  images?: readonly LLMImageInput[],
+): string {
   const h = createHash('sha256');
   h.update(prompt);
   if (context) h.update(JSON.stringify(context));
   if (schemaId) h.update(schemaId);
+  for (const image of images ?? []) {
+    h.update('\0image\0');
+    h.update(image.label ?? '');
+    h.update(image.dataUrl);
+  }
   return 'sha256:' + h.digest('hex').slice(0, 16);
 }
 
@@ -198,9 +217,141 @@ function fixtureValue(schema: FixtureSchema): unknown {
 }
 
 // Skill mock follows the effective runtime schema, including an inlined domain payload contract.
-function skillFixtureFor(schemaName: string, schema: object): unknown | undefined {
+function skillFixtureFor(schemaName: string, schema: object, prompt: string): unknown | undefined {
   if (!schemaName.startsWith('skill:')) return undefined;
-  return fixtureValue(schema as FixtureSchema);
+  const root = schema as FixtureSchema;
+  const properties = root.properties ?? {};
+  if (!Object.hasOwn(properties, 'reportDocument')) return fixtureValue(root);
+  const common = {
+    title: fixtureValue(properties.title ?? { type: 'string' }),
+    status: fixtureValue(properties.status ?? { enum: ['completed'] }),
+    attachments: fixtureValue(properties.attachments ?? { type: 'array' }),
+    gaps: fixtureValue(properties.gaps ?? { type: 'array' }),
+  };
+  if (prompt.includes('必须填写 reportDocument')) {
+    if (schemaName === 'skill:industry-market-analysis') {
+      return {
+        ...common,
+        reportDocument: {
+          version: 'native-report-document-v1',
+          title: '行业市场分析报告',
+          subtitle: '基于当前材料生成',
+          summary: {
+            conclusion: '已完成当前证据范围内的行业分析。',
+            findings: ['报告结论以当前输入和已验证来源为准。'],
+            actions: ['优先处理证据充分且影响明确的问题。'],
+          },
+          tabs: ['行业洞察', '品类差异资产', '竞品分析', '体验诊断', '设计策略'].map((title, index) => ({
+            id: `tab-${index + 1}`,
+            title,
+            sections: [{
+              id: `section-${index + 1}`,
+              title,
+              blocks: [{ type: 'markdown', content: `${title}内容待真实材料补充。`, sourceIds: [] }],
+            }],
+          })),
+          assetIds: [],
+        },
+      };
+    }
+    return { ...common, reportDocument: fixtureValue(properties.reportDocument ?? {}) };
+  }
+  return { ...common, primary: fixtureValue(properties.primary ?? {}) };
+}
+
+function nativeReportDocumentFixtureFor(schemaName: string, schema: object): unknown | undefined {
+  return schemaName === 'native-final-report-document'
+    ? fixtureValue(schema as FixtureSchema)
+    : undefined;
+}
+
+function problemGraphFixtureFor(schemaName: string, context: object | undefined): unknown | undefined {
+  if (schemaName !== 'problem-graph' || !context) return undefined;
+  const graphContext = context as {
+    task?: { success_criteria?: Array<{ id?: unknown; statement?: unknown }> };
+    evidencePolicy?: unknown[];
+  };
+  const criteria = graphContext.task?.success_criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0 || !Array.isArray(graphContext.evidencePolicy)) {
+    return undefined;
+  }
+  return {
+    version: 'problem-graph-v1',
+    questions: criteria.map((criterion, index) => ({
+      id: `question-${index + 1}`,
+      statement: typeof criterion.statement === 'string' ? criterion.statement : `研究问题 ${index + 1}`,
+      rationale: '覆盖已确认的成功标准',
+      priority: 'required',
+      success_criterion_ids: [String(criterion.id)],
+      evidence_requirements: structuredClone(graphContext.evidencePolicy),
+      acceptance_criteria: [typeof criterion.statement === 'string' ? criterion.statement : '形成可验证结论'],
+      depends_on: [],
+    })),
+  };
+}
+
+function currentPlanCandidatesFixtureFor(
+  schemaName: string,
+  context: object | undefined,
+): unknown | undefined {
+  if (schemaName !== 'current-plan-candidates' || !context) return undefined;
+  const candidateContext = context as {
+    planning_input?: unknown;
+    requirement?: { research_goal?: unknown };
+    problem_graph?: {
+      questions?: Array<{ id?: unknown; acceptance_criteria?: unknown[] }>;
+    };
+    profile_specs?: Array<{
+      id?: unknown;
+      display_name?: unknown;
+      dimensions?: unknown;
+    }>;
+    skills?: Array<{ id?: unknown }>;
+  };
+  const profiles = candidateContext.profile_specs;
+  const skillId = candidateContext.skills?.[0]?.id;
+  const questions = candidateContext.problem_graph?.questions;
+  if (!Array.isArray(profiles) || profiles.length === 0 || typeof skillId !== 'string'
+    || !Array.isArray(questions) || questions.length === 0) return undefined;
+  const questionIds = questions.map(({ id }) => String(id));
+  const acceptanceCriteria = questions.flatMap(({ acceptance_criteria }) => (
+    Array.isArray(acceptance_criteria) ? acceptance_criteria.map(String) : []
+  ));
+  const researchGoal = typeof candidateContext.requirement?.research_goal === 'string'
+    ? candidateContext.requirement.research_goal
+    : String(candidateContext.planning_input ?? '完成研究目标');
+  return {
+    candidates: profiles.map((profile) => {
+      const id = String(profile.id);
+      const displayName = typeof profile.display_name === 'string' ? profile.display_name : id;
+      return {
+        id,
+        title: displayName,
+        rationale: `按 ${displayName} 侧重点完成全部研究问题`,
+        tradeoffs: id === 'speed' ? '优先最短路径，分析深度有限' : '覆盖更完整，但执行时间更长',
+        assumptions: [],
+        steps: [{
+          step_no: 1,
+          step_name: `${displayName}竞品分析`,
+          actor_type: 'skill',
+          actor_id: skillId,
+          question_ids: questionIds,
+          depends_on: [],
+          input: {
+            research_goal: researchGoal,
+            profile_contract: structuredClone(profile.dimensions ?? {}),
+          },
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/payload', description: `${displayName} Skill 输出` }],
+          acceptance_criteria: acceptanceCriteria.length > 0
+            ? acceptanceCriteria
+            : ['完成全部研究问题'],
+          requires_approval: false,
+          fallback_actor_ids: [],
+        }],
+      };
+    }),
+  };
 }
 
 export type FixtureMap = Record<string, unknown>;
@@ -222,7 +373,17 @@ export class MockLLMClient implements LLMClient {
   }
 
   async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
-    const data = this.fixtures[opts.schemaName] ?? skillFixtureFor(opts.schemaName, opts.schema);
+    const nativeSkillFixture = opts.schemaName.startsWith('skill:')
+      ? skillFixtureFor(opts.schemaName, opts.schema, opts.prompt)
+      : undefined;
+    const data = (this.fixtures === defaultFixtures
+      ? currentPlanCandidatesFixtureFor(opts.schemaName, opts.context)
+      : undefined)
+      ?? nativeSkillFixture
+      ?? nativeReportDocumentFixtureFor(opts.schemaName, opts.schema)
+      ?? this.fixtures[opts.schemaName]
+      ?? problemGraphFixtureFor(opts.schemaName, opts.context)
+      ?? skillFixtureFor(opts.schemaName, opts.schema, opts.prompt);
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
     }
@@ -232,7 +393,7 @@ export class MockLLMClient implements LLMClient {
     out = injectToolResultFinding(opts.schemaName, opts.context, out);
     return {
       data: out,
-      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.images),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, opts.schemaName),
@@ -243,7 +404,12 @@ export class MockLLMClient implements LLMClient {
   async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
     return {
       text: (this.fixtures['__text__'] as string) ?? '（mock 文本输出）',
-      promptHash: hashPrompt(opts.prompt, opts.context),
+      promptHash: hashPrompt(
+        opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt,
+        opts.context,
+        undefined,
+        opts.images,
+      ),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, 'text'),
@@ -269,6 +435,29 @@ export const defaultFixtures: FixtureMap = {
     ],
     blocking_issues: [],
     sensitivity: 'internal',
+    pii_detected: false,
+  },
+  'research-task-v2': {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    outcome_mode: 'answer',
+    requested_artifacts: ['research_report', 'design_principles', 'prioritized_actions'],
+    business_domain: '京东众筹',
+    research_goal: '基于公开资料分析项目发现、信任建立和支持转化，并提炼 UI 与页面设计思路',
+    comparison_dimensions: ['项目发现', '信任建立', '支持转化', 'UI 与页面设计'],
+    target_audience: ['产品与设计团队'],
+    scope: ['公开资料', '京东众筹及可比众筹平台'],
+    constraints: [{ id: 'public-evidence-only', statement: '仅使用公开可验证资料', source: 'user' }],
+    success_criteria: [
+      { id: 'traceable-findings', statement: '关键结论可追溯到公开来源' },
+      { id: 'actionable-design', statement: '形成可用于 UI 和页面设计的建议' },
+    ],
+    expected_deliverables: ['competitive_analysis_report'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
     pii_detected: false,
   },
   // 段2:对激活节点的判定(数组,逐条过 decision-state.schema)

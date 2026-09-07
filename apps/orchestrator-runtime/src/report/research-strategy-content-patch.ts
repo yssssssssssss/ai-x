@@ -78,21 +78,30 @@ function normalizedSupport(input: {
   knownQuestionIds: readonly string[];
   evidenceClassById: ReadonlyMap<string, EvidenceClass>;
 }): ResearchStrategySupportBindingV2 {
-  if (input.previousStatus === 'provisional' && input.support.status === 'supported') {
-    fail('structural repair cannot promote provisional support to supported');
-  }
-  if (input.previousConfidence !== undefined && input.support.confidence > input.previousConfidence) {
-    fail('structural repair cannot increase confidence');
-  }
+  const evidenceIds = validateEvidenceIds(input.support.evidenceIds, input.evidenceClassById);
   const support = {
     ...input.support,
     questionIds: normalizeQuestionIds(input.support.questionIds, input.knownQuestionIds),
-    evidenceIds: validateEvidenceIds(input.support.evidenceIds, input.evidenceClassById),
+    evidenceIds,
   };
   if (
     support.status === 'supported'
-    && !support.evidenceIds.some((evidenceId) => isFactualEvidenceId(evidenceId, input.evidenceClassById))
+    && !evidenceIds.some((evidenceId) => isFactualEvidenceId(evidenceId, input.evidenceClassById))
   ) {
+    support.status = 'provisional';
+    if (!support.validationNeeded.trim() || support.validationNeeded === 'not_applicable') {
+      support.validationNeeded = 'This method-grounded statement requires factual validation.';
+    }
+  }
+  if (input.previousStatus === 'provisional' && support.status === 'supported') {
+    fail('structural repair cannot promote provisional support to supported');
+  }
+  if (input.previousConfidence !== undefined && support.confidence > input.previousConfidence) {
+    fail('structural repair cannot increase confidence');
+  }
+  if (support.status === 'supported' && !evidenceIds.some((evidenceId) => (
+    isFactualEvidenceId(evidenceId, input.evidenceClassById)
+  ))) {
     fail('supported content requires factual Evidence');
   }
   if (support.status === 'provisional' && !support.validationNeeded.trim()) {

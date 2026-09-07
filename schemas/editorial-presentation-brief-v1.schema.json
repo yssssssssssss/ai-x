@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "editorial-presentation-brief-v1",
+  "title": "Editorial Presentation Brief v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "objective", "readingOrder", "preferredPresentations", "constraints"],
+  "properties": {
+    "version": { "const": "editorial-presentation-brief-v1" },
+    "id": { "const": "rich-editorial-v1" },
+    "objective": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["structure_clear", "content_detailed", "hierarchy_explicit", "presentation_varied", "reading_efficient"]
+      }
+    },
+    "readingOrder": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["decision", "evidence", "analysis", "strategy", "actions", "validation", "risks", "audit"]
+      }
+    },
+    "preferredPresentations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 13,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/presentationKind" }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxMainSections", "maxConsecutiveNarrativeBlocks", "requireRiskSectionWhenEligible", "requireAuditAppendix", "decorativeNumbering", "interactiveForms"],
+      "properties": {
+        "maxMainSections": { "type": "integer", "minimum": 1, "maximum": 24 },
+        "maxConsecutiveNarrativeBlocks": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "requireRiskSectionWhenEligible": { "type": "boolean" },
+        "requireAuditAppendix": { "type": "boolean" },
+        "decorativeNumbering": { "const": "css_counter_only" },
+        "interactiveForms": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "presentationKind": {
+      "type": "string",
+      "enum": ["decision-cover", "metric-cards", "truth-triad", "card-grid", "journey-flow", "strategy-matrix", "mind-model", "roadmap", "validation-gates", "risk-register", "visual-gallery", "narrative", "audit-appendix"]
+    }
+  }
+}

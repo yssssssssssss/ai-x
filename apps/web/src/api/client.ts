@@ -33,14 +33,34 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
   return data as T;
 }
 
+async function reqForm<T>(path: string, form: FormData, idempotencyKey: string): Promise<T> {
+  const headers: Record<string, string> = { 'Idempotency-Key': idempotencyKey };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      data?.error ?? `HTTP ${res.status}`,
+      typeof data?.code === 'string' ? data.code : undefined,
+    );
+  }
+  return data as T;
+}
+
 async function reqBlob(path: string): Promise<Response> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`/api${path}`, { headers });
   if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string };
-    throw new ApiError(response.status, data.error ?? `HTTP ${response.status}`);
+    const data = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new ApiError(
+      response.status,
+      data.error ?? `HTTP ${response.status}`,
+      typeof data.code === 'string' ? data.code : undefined,
+    );
   }
   return response;
 }
@@ -53,6 +73,22 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+export interface DatasetUpload {
+  role: string;
+  file: File;
+  metadata: DatasetUploadMetadata;
+}
+
+export interface DocumentUpload {
+  role: string;
+  files: File[];
+}
+
+export interface VisualUpload {
+  role: string;
+  files: File[];
 }
 
 // ---- 类型 ----
@@ -72,7 +108,10 @@ export type {
 } from '../../../../packages/api-contract/plan.ts';
 export type {
   User,
-  Upload,
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
+  DocumentUploadResponse,
+  VisualUploadResponse,
   Finding,
   Report,
   ExecLogRow,
@@ -89,6 +128,12 @@ export type {
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 
+import type {
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
+  DocumentUploadResponse,
+  VisualUploadResponse,
+} from '../../../../packages/api-contract/http.ts';
 import type {
   CurrentPlanningResponse,
 } from '../../../agent-api/src/routes/control-planning.ts';
@@ -108,6 +153,7 @@ export type {
   CurrentTaskReadResponse,
   CurrentPlanCandidate,
   ExecutionControlPlanRequest,
+  OrchestrationModeV1,
   PlanControlTaskRequest,
   ResumeControlPlanRequest,
   ReviseControlPlanRequest,
@@ -123,6 +169,10 @@ export type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+export type {
+  NativeFinalReport,
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 export type {
   SystemCapabilitiesResponse,
@@ -150,6 +200,10 @@ import type {
   SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  NativeFinalReport,
+  NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
@@ -341,6 +395,53 @@ export const api = {
     req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  uploadControlDataset: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    file: File,
+    metadata: DatasetUploadMetadata,
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('metadata', JSON.stringify(metadata));
+    return reqForm<DatasetUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/dataset`,
+      form,
+      idempotencyKey,
+    );
+  },
+  uploadControlDocuments: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    files: readonly File[],
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    for (const file of files) form.append('file', file);
+    return reqForm<DocumentUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/document`,
+      form,
+      idempotencyKey,
+    );
+  },
+  uploadControlVisuals: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    files: readonly File[],
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    for (const file of files) form.append('file', file);
+    return reqForm<VisualUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/visual`,
+      form,
+      idempotencyKey,
+    );
+  },
   approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>
@@ -379,17 +480,37 @@ export const api = {
     }
     return { blob: await response.blob() };
   },
-  controlEditorialShowcase: async (
+  controlEditorialSummary: async (
     taskId: string,
     attemptId: string,
   ): Promise<ControlHtmlBundleResponse> => {
     const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-showcase.html`,
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-summary.html`,
     );
     const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (mediaType !== 'text/html') {
-      throw new ApiError(502, 'Editorial Showcase 媒体类型无效');
+      throw new ApiError(502, '编辑摘要媒体类型无效');
     }
+    return { blob: await response.blob() };
+  },
+  controlFinalReport: (taskId: string) =>
+    req<NativeFinalReport>(`/control-tasks/${encodeURIComponent(taskId)}/final-report`),
+  controlSkillResults: (taskId: string) =>
+    req<{ results: NativeSkillResult[] }>(`/control-tasks/${encodeURIComponent(taskId)}/skill-results`),
+  controlFinalReportHtml: async (taskId: string): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/final-report.html`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'text/html') throw new ApiError(502, '最终 HTML 报告媒体类型无效');
+    return { blob: await response.blob() };
+  },
+  controlFinalReportZip: async (taskId: string): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/final-report.zip`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/zip') throw new ApiError(502, '离线报告媒体类型无效');
     return { blob: await response.blob() };
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(

@@ -21,7 +21,7 @@ export function SkillContributionView({
   review: CrossSkillReviewV1;
 }) {
   return (
-    <section className="stage-card skill-contribution-view" aria-label="Skill 独立贡献">
+    <section className="stage-card skill-contribution-view" aria-label="分析能力独立结论">
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}>
         <div>
           <strong>贡献与最终映射</strong>
@@ -75,7 +75,7 @@ export function SkillContributionView({
       </div>
       {review.issues.length > 0 ? (
         <details style={{ marginTop: 12 }}>
-          <summary>跨 Skill 审校问题（{review.issues.length}）</summary>
+          <summary>跨能力审校问题（{review.issues.length}）</summary>
           <ul style={{ paddingLeft: 18, fontSize: 12 }}>
             {review.issues.map((issue) => (
               <li key={issue.id}>

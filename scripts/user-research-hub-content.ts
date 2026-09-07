@@ -516,7 +516,7 @@ function mergeDraft(entity: Entity, sourceBody: string, comparison: StructuralCo
   const lines = [
     `# Merge draft: ${entity.key}`,
     '',
-    '> Review artifact only. The existing canonical entry remains authoritative; this draft is not loaded by Runtime or the Skill Registry.',
+    '> Review artifact only. The existing canonical entry remains authoritative; this draft is not loaded by Runtime or the Skill catalog.',
     '',
     '## Structural comparison',
     '',

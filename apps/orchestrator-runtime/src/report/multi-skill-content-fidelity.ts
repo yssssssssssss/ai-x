@@ -4,6 +4,7 @@ import type {
   CrossSkillReviewIssue,
   CrossSkillReviewV1,
   FindingGraph,
+  IndustryMarketAnalysisPayloadV1,
   PlanContributionRequirement,
   ResearchContributionBundleV1,
   ResearchContributionUnit,
@@ -151,23 +152,83 @@ function collectCanonicalNodes(payload: ResearchStrategyReportPayloadV2): Canoni
   return nodes;
 }
 
+function collectIndustryMappedNodes(payload: IndustryMarketAnalysisPayloadV1): CanonicalMappedNode[] {
+  const nodes: CanonicalMappedNode[] = [];
+  const visit = (value: unknown, path: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${path}/${index}`));
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const support = record.support;
+    if (support && typeof support === 'object' && !Array.isArray(support)) {
+      const binding = support as Record<string, unknown>;
+      const sourceUnitIds = Array.isArray(binding.sourceContributionUnitIds)
+        ? binding.sourceContributionUnitIds.filter((id): id is string => typeof id === 'string')
+        : [];
+      if (sourceUnitIds.length > 0) {
+        const statement = [record.statement, record.designAction, record.definition, record.rationale, record.goal]
+          .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0);
+        const questionIds = Array.isArray(binding.questionIds)
+          ? binding.questionIds.filter((id): id is string => typeof id === 'string')
+          : [];
+        const supportStatus = binding.status === 'supported' || binding.status === 'provisional'
+          ? binding.status
+          : undefined;
+        if (statement) {
+          nodes.push({
+            id: typeof record.id === 'string' && record.id.trim() ? record.id : path,
+            statement,
+            ...(supportStatus ? { supportStatus } : {}),
+            questionIds,
+            sourceUnitIds,
+          });
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(record)) {
+      if (key !== 'support') visit(child, `${path}/${key}`);
+    }
+  };
+  visit(payload, '/payload');
+  return nodes;
+}
+
 export function buildGenericReviewedContributionLedger(input: {
   bundle: ResearchContributionBundleV1;
   deliverable: {
     coverage: { questionBindings: Array<{ questionId: string; summaryIds: string[] }> };
     findingGraph: FindingGraph;
     risksAndOpenIssues?: string[];
+    payload?: unknown;
   };
   contributionRequirements: readonly PlanContributionRequirement[];
   synthesisArtifactId: string;
+  nonAttributableSourceUnitIds?: ReadonlySet<string>;
 }): { review: CrossSkillReviewV1; ledger: ContributionLedgerV1 } {
   const issues: CrossSkillReviewIssue[] = [];
   const entries: ContributionLedgerV1['entries'] = [];
   const sources = sourceUnits(input.bundle);
+  const nonAttributableSourceUnitIds = new Set(input.nonAttributableSourceUnitIds ?? []);
   const conflicts = conflictGroups(sources);
   const summaries = new Map(input.deliverable.findingGraph.subQuestionSummaries.map((node) => [node.id, node]));
   const analyses = new Map(input.deliverable.findingGraph.analyses.map((node) => [node.id, node]));
   const findings = new Map(input.deliverable.findingGraph.findings.map((node) => [node.id, node]));
+  const explicitNodes = input.deliverable.payload
+    && typeof input.deliverable.payload === 'object'
+    && !Array.isArray(input.deliverable.payload)
+    && (input.deliverable.payload as { schemaVersion?: unknown }).schemaVersion === 'industry-market-analysis-v1'
+    ? collectIndustryMappedNodes(input.deliverable.payload as IndustryMarketAnalysisPayloadV1)
+    : [];
+  const explicitBySource = new Map<string, CanonicalMappedNode[]>();
+  for (const node of explicitNodes) {
+    for (const sourceUnitId of node.sourceUnitIds) {
+      const targets = explicitBySource.get(sourceUnitId) ?? [];
+      targets.push(node);
+      explicitBySource.set(sourceUnitId, targets);
+    }
+  }
   const normalize = (value: string): string => value.replace(/\s+/gu, ' ').trim();
   for (const source of sources) {
     const reachableIds = new Set<string>();
@@ -187,24 +248,75 @@ export function buildGenericReviewedContributionLedger(input: {
       }
     }
     const sourceText = normalize(source.unit.statement);
-    const canonicalNodeIds = [...reachableIds].filter((nodeId) => {
-      const node = summaries.get(nodeId) ?? analyses.get(nodeId) ?? findings.get(nodeId);
-      if (!node) return false;
-      const text = normalize('summary' in node ? node.summary : node.statement);
-      return sourceText.length > 0 && text.includes(sourceText);
-    });
+    const explicitTargets = explicitBySource.get(source.id) ?? [];
+    const scopeMismatchTargets: CanonicalMappedNode[] = [];
+    const rewrittenTargets: CanonicalMappedNode[] = [];
+    const sourceReviewIssueIds: string[] = [];
+    for (const target of explicitTargets) {
+      if (
+        source.unit.support.status === 'provisional'
+        && target.supportStatus === 'supported'
+      ) throw new MultiSkillContentFidelityError('provisional_promoted', [source.id, target.id]);
+      if (!normalize(target.statement).includes(sourceText)) {
+        rewrittenTargets.push(target);
+      }
+      if (!target.questionIds.some((questionId) => source.unit.support.questionIds.includes(questionId))) {
+        scopeMismatchTargets.push(target);
+      }
+    }
+    const canonicalNodeIds = [...new Set([
+      ...explicitTargets.map(({ id }) => id),
+      ...[...reachableIds].filter((nodeId) => {
+        const node = summaries.get(nodeId) ?? analyses.get(nodeId) ?? findings.get(nodeId);
+        if (!node) return false;
+        const text = normalize('summary' in node ? node.summary : node.statement);
+        return sourceText.length > 0 && text.includes(sourceText);
+      }),
+    ])];
     const requirement = contributionRequirementForSource(source, input.contributionRequirements);
     const omitted = canonicalNodeIds.length === 0;
+    const contextOnlyOmission = omitted && nonAttributableSourceUnitIds.has(source.id);
     const requiredProvisionalOmission = omitted
+      && !contextOnlyOmission
       && requirement?.required === true
       && source.unit.support.status === 'provisional';
-    if (omitted && requirement?.required && !requiredProvisionalOmission) {
+    if (omitted && requirement?.required && !requiredProvisionalOmission && !contextOnlyOmission) {
       throw new MultiSkillContentFidelityError('required_owner_omitted', [source.id, requirement.id]);
     }
     if (requiredProvisionalOmission) {
       appendRequiredProvisionalOmissionDisclosure(input.deliverable.risksAndOpenIssues, requirement.id);
     }
     const conflictingSourceIds = conflicts.get(source.id);
+    if (scopeMismatchTargets.length > 0) {
+      const scopeIssueId = `cross-review:scope-mismatch:${source.id}`;
+      issues.push({
+        id: scopeIssueId,
+        type: 'scope_mismatch',
+        sourceUnitIds: [source.id],
+        targetNodeIds: scopeMismatchTargets.map(({ id }) => id),
+        message: [
+          `Contribution unit "${source.unit.key}" is referenced outside its Question scope by`,
+          `${scopeMismatchTargets.map(({ id }) => id).join(', ')}; review this cross-question reuse before external publication.`,
+        ].join(' '),
+        disposition: 'merged',
+      });
+      sourceReviewIssueIds.push(scopeIssueId);
+    }
+    if (rewrittenTargets.length > 0) {
+      const rewriteIssueId = `cross-review:unauthorized-source-rewrite:${source.id}`;
+      issues.push({
+        id: rewriteIssueId,
+        type: 'unauthorized_source_rewrite',
+        sourceUnitIds: [source.id],
+        targetNodeIds: rewrittenTargets.map(({ id }) => id),
+        message: [
+          `Contribution unit "${source.unit.key}" was transformed by`,
+          `${rewrittenTargets.map(({ id }) => id).join(', ')}; verify the synthesis against the original Unit before external publication.`,
+        ].join(' '),
+        disposition: 'merged',
+      });
+      sourceReviewIssueIds.push(rewriteIssueId);
+    }
     const issueId = `cross-review:${conflictingSourceIds ? 'conflict' : 'omitted'}:${source.id}`;
     if (conflictingSourceIds) {
       const message = `Conflicting Contribution units require resolution: ${conflictingSourceIds.join(', ')}.`;
@@ -216,6 +328,7 @@ export function buildGenericReviewedContributionLedger(input: {
         message,
         disposition: 'conflicted',
       });
+      sourceReviewIssueIds.push(issueId);
       if (input.deliverable.risksAndOpenIssues && !input.deliverable.risksAndOpenIssues.includes(message)) {
         input.deliverable.risksAndOpenIssues.push(message);
       }
@@ -225,11 +338,14 @@ export function buildGenericReviewedContributionLedger(input: {
         type: 'coverage',
         sourceUnitIds: [source.id],
         targetNodeIds: [],
-        message: requiredProvisionalOmission
-          ? 'Required provisional Contribution unit was not included verbatim in the Canonical deliverable.'
-          : 'Optional Contribution unit was not included verbatim in the Canonical deliverable.',
+        message: contextOnlyOmission
+          ? 'Structured source payload was retained as non-attributable context rather than a Canonical claim.'
+          : requiredProvisionalOmission
+            ? 'Required provisional Contribution unit was not included verbatim in the Canonical deliverable.'
+            : 'Optional Contribution unit was not included verbatim in the Canonical deliverable.',
         disposition: 'omitted',
       });
+      sourceReviewIssueIds.push(issueId);
     }
     entries.push({
       contributionArtifactId: source.artifactId,
@@ -241,11 +357,13 @@ export function buildGenericReviewedContributionLedger(input: {
       ...(conflictingSourceIds
         ? { reason: 'Conflicting Contributor claims require explicit follow-up.' }
         : omitted ? {
-            reason: requiredProvisionalOmission
-              ? 'Required provisional Contribution unit was not selected and remains an explicit validation gap.'
-              : 'Optional Contribution unit was not selected for the final deliverable.',
+            reason: contextOnlyOmission
+              ? 'Structured source payload is context-only and is not attributable as a Canonical claim.'
+              : requiredProvisionalOmission
+                ? 'Required provisional Contribution unit was not selected and remains an explicit validation gap.'
+                : 'Optional Contribution unit was not selected for the final deliverable.',
           } : {}),
-      reviewIssueIds: conflictingSourceIds || omitted ? [issueId] : [],
+      reviewIssueIds: sourceReviewIssueIds,
     });
   }
   return {

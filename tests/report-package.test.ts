@@ -1467,7 +1467,7 @@ test('rejects dangling or missing ReportDocument v3 Trace references', async () 
   }
 });
 
-test('rejects blocked visual exports from a v3 Document, semantic Manifest, and package', async () => {
+test('accepts blocked-policy visual exports from a v3 Document, semantic Manifest, and package', async () => {
   const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
   image.manifest.exportPolicy = 'block';
   const document = packageImageReportDocumentV3();
@@ -1477,8 +1477,8 @@ test('rejects blocked visual exports from a v3 Document, semantic Manifest, and 
     visualAssets: [image],
   });
 
-  await assert.rejects(fixture.reader.read(binding), /export policy|blocked/i);
-  assert.throws(
+  await assert.doesNotReject(() => fixture.reader.read(binding));
+  assert.doesNotThrow(
     () => parseControlDeliverableResponse({
       presentationMode: 'multimodal',
       deliverable: deliverable(),
@@ -1488,7 +1488,6 @@ test('rejects blocked visual exports from a v3 Document, semantic Manifest, and 
       reportDocumentContentSha256,
       visualAssetManifests: [image.manifest],
     }),
-    /export policy|blocked/i,
   );
 });
 

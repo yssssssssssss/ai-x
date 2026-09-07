@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { ReportPackageArtifactValue } from '../report/report-package-artifact.ts';
 
 export type GoldMachineState = 'COLLECTING' | 'READY_FOR_REVIEW' | 'PASSED' | 'QUALITY_FAILED' | 'INVALIDATED' | 'BLOCKED_INFRA';
 export type GoldDecision = 'PASSED' | 'QUALITY_FAILED' | 'INVALIDATED' | 'BLOCKED_INFRA' | 'READY_FOR_REVIEW';
@@ -56,7 +55,7 @@ export interface GoldReviewerAuthority {
 export interface GoldBatchDependencies {
   reportPackages: {
     verify(input: { artifactId: string; attemptId: string }): Promise<{
-      value: ReportPackageArtifactValue;
+      value: { attemptId: string };
     }>;
   };
   reviewers: GoldReviewerAuthority;
@@ -143,7 +142,7 @@ export class GoldBatchService {
       if (!reportPackageId) {
         throw new GoldBatchPolicyError('Gold success requires a non-empty sealed Report Package');
       }
-      let reportPackage: { value: ReportPackageArtifactValue };
+      let reportPackage: { value: { attemptId: string } };
       try {
         reportPackage = await this.dependencies.reportPackages.verify({
           artifactId: reportPackageId,

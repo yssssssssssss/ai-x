@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { FsSafeError, type FsSafeErrorCode } from '@openclaw/fs-safe';
-import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import type { SkillCapability } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { AgentRuntime } from '../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { CheckpointStore } from '../apps/orchestrator-runtime/src/runtime/checkpoint-store.ts';
 import { MockLLMClient } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
@@ -42,7 +42,7 @@ import type {
   SkillKnowledgeMapping,
 } from '../evaluations/skills/kb/types.ts';
 
-function activeSkill(id: string): SkillRegistryEntry {
+function activeSkill(id: string): SkillCapability {
   return {
     id,
     name: id.toUpperCase(),

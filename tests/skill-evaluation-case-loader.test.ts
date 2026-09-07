@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import type { SkillCapability } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { loadEvaluationCases } from '../evaluations/skills/case-loader.ts';
 import type { SkillEvaluationCase } from '../evaluations/skills/types.ts';
@@ -12,7 +12,7 @@ import type { SkillEvaluationCase } from '../evaluations/skills/types.ts';
 const active = [
   { id: 'alpha', status: 'active' },
   { id: 'beta', status: 'active' },
-] as SkillRegistryEntry[];
+] as SkillCapability[];
 
 function validCase(skillId: string): SkillEvaluationCase {
   return {
@@ -203,7 +203,7 @@ test('real evaluation corpus covers every active Skill in registry order', () =>
   const activeSkills = new SkillLoader().listActiveSkills();
   const cases = loadEvaluationCases(activeSkills);
 
-  assert.equal(activeSkills.length, 24);
+  assert.equal(activeSkills.length, 25);
   assert.equal(cases.size, activeSkills.length);
   assert.deepEqual(
     [...cases.keys()],

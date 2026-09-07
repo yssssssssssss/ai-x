@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import {
   getConfigRoot,
-  type SkillRegistryEntry,
+  type SkillCapability,
 } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type { LoadedEvaluationCase, SkillEvaluationCase } from './types.ts';
 
@@ -60,7 +60,7 @@ function validateCase(value: unknown, filename: string): SkillEvaluationCase {
 }
 
 export function loadEvaluationCases(
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: SkillCapability[],
   casesDir = join(getConfigRoot(), 'evaluations', 'skills', 'cases'),
 ): Map<string, LoadedEvaluationCase> {
   let filenames: string[];

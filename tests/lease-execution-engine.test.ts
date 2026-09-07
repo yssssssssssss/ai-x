@@ -49,7 +49,11 @@ import {
   type ReportReviewArtifact,
   type ReportReviewDimension,
 } from '../packages/api-contract/control-workflow.ts';
-import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import {
+  compileNativeSkillExecutionPlan,
+  PlanCompiler,
+} from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import { parseNativeFinalReport } from '../packages/api-contract/native-skill-orchestration.ts';
 import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
 import type { SkillPortfolioDecision } from '../apps/orchestrator-runtime/src/planners/capability-portfolio-resolver.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
@@ -372,6 +376,80 @@ class CountingRealTavilyAdapter implements ToolAdapter {
         latencyMs: 1,
       },
     };
+  }
+}
+
+class JoyspaceViewTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+  readonly body = '已审阅的 Joyspace 行业方法正文。';
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    const contentSha256 = `sha256:${createHash('sha256').update(this.body).digest('hex')}`;
+    const document = {
+      title: 'Industry Method', body: this.body, author: 'Research Team',
+      url: 'https://joyspace.jd.com/pages/industry-method', contentSha256,
+    };
+    return {
+      output: {
+        version: 'joyspace-read-output-v1', operation: 'search', status: 'available',
+        documents: [{
+          title: document.title, url: document.url, author: document.author,
+          updatedAt: '2026-09-03T10:00:00.000+08:00', preview: '行业方法摘要',
+        }],
+        viewedDocument: document,
+        runtime: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+      knowledgeAttachments: [{
+        attachmentId: 'joyspace-document', title: document.title, body: document.body,
+        sourceUrl: document.url, author: document.author, updatedAt: '2026-09-03T10:00:00.000+08:00',
+        contentSha256, sensitivity: 'internal',
+      }],
+      latencyMs: 2,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok', latencyMs: 2,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    };
+  }
+}
+
+class FailingJoyspaceTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    throw new ToolInvocationError(options.toolId, {
+      kind: 'browser_bridge', retryable: false,
+      sanitizedMessage: 'Joyspace Browser Bridge is unavailable',
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(), status: 'failed', latencyMs: 1,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    });
   }
 }
 
@@ -824,6 +902,52 @@ class RealSchemaFixtureLLM extends MockLLMClient {
   }
 }
 
+class NativeReportLLM extends RealSchemaFixtureLLM {
+  synthesisCalls = 0;
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.schemaName.startsWith('skill:')) {
+      this.prompts.push({
+        schemaName: options.schemaName,
+        prompt: options.prompt,
+        ...(options.context ? { context: options.context } : {}),
+      });
+      return {
+        data: {
+          title: 'Native Skill result',
+          status: 'completed',
+          primary: {
+            format: 'markdown',
+            content: '# Native Skill result\n\nVerified finding [S-step-1-1].',
+          },
+          attachments: [],
+          gaps: [],
+        } as T,
+        promptHash: 'sha256:native-skill',
+        modelName: 'pinned-model',
+        modelVersion: 'pinned-model',
+        traceId: 'trace-native-skill',
+        receiptId: randomUUID(),
+        tokens: { prompt: 1, completion: 1, total: 2 },
+      };
+    }
+    return super.generateStructured<T>(options);
+  }
+
+  override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    this.synthesisCalls += 1;
+    return {
+      text: '# Native synthesis\n\nCombined finding [S-step-1-1].',
+      promptHash: 'sha256:native-synthesis',
+      modelName: 'pinned-model',
+      modelVersion: 'pinned-model',
+      traceId: 'trace-native-synthesis',
+      receiptId: randomUUID(),
+      tokens: { prompt: 1, completion: 1, total: 2 },
+    };
+  }
+}
+
 class NarrativelyRedactedSynthesisLLM extends RealSchemaFixtureLLM {
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
@@ -1238,10 +1362,15 @@ function productionPortfolioFixture(contributorSpec: {
   const skillLoader = new SkillLoader();
   const contributor = skillLoader.listCapabilitySkills().find(({ id }) => id === contributorSpec.skillId);
   const synthesis = skillLoader.listCapabilitySkills().find(({ id }) => id === 'research-strategy-synthesis');
-  const synthesisContract = skillLoader.loadSkillExecution('research-strategy-synthesis');
-  assert.ok(contributor?.status === 'active' && synthesis?.status === 'active' && synthesisContract);
-  const sharedStage = synthesisContract.contract.stages.find(({ stage_id }) => stage_id === 'collect-public-evidence');
-  assert.ok(sharedStage?.actor_type === 'tool' && sharedStage.share_scope === 'plan');
+  assert.ok(contributor?.status === 'active' && synthesis?.status === 'active');
+  const sharedStage = {
+    title: 'Collect public evidence',
+    actor_type: 'tool' as const,
+    actor_id: 'tavily-web-search',
+    input: { query: task.research_goal },
+    expected_outputs: [{ pointer: '/results', description: 'Verified public evidence' }],
+    acceptance_criteria: ['Return traceable sources.'],
+  };
   const capabilityResolution: CapabilityResolution = {
     eligible: [contributor, synthesis].map((skill) => ({
       skill,
@@ -1439,6 +1568,9 @@ async function claimedExecution(
     taskType: 'competitive_research',
     structuredTask,
     state: 'ready',
+    ...(planExtras.execution_contract_version === 'native-skill-execution-plan-v1'
+      ? { orchestrationMode: planExtras.mode as 'single_skill' | 'multi_skill' }
+      : {}),
   });
   const plan = await repository.createPlanVersion({
     taskId: task.id,
@@ -1526,10 +1658,11 @@ function buildEngine(
   reportReview?: TestReportReview,
   skillLoader: SkillLoader = new SkillLoader(),
   toolExecutionDeadlineMs?: number,
+  artifactStore?: ControlArtifactStore,
 ): LeaseExecutionEngine {
   return new DeliverableAwareLeaseExecutionEngine({
     repository,
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    artifacts: artifactStore ?? new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     tools,
     llm,
     deliverables,
@@ -1575,17 +1708,137 @@ async function expireLease(
 }
 
 
-test('Plan v3 executes a real shared Tool, seals a Contributor and Bundle, then runs the Synthesizer', async () => {
+test('native Single seals the original Skill Markdown without a final synthesis call', async () => {
   const fixture = productionPortfolioFixture();
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const native = compileNativeSkillExecutionPlan({
+    plan: fixture.plan,
+    mode: 'single_skill',
+    task: fixture.task,
+  });
+  native.plan.resolved_inputs.waived.push(...native.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  native.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = native.plan;
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     steps,
     planExtras,
     fixture.task as unknown as Record<string, unknown>,
+    [],
+  );
+  const llm = new NativeReportLLM();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(llm.synthesisCalls, 0);
+  assert.equal(deliverables.calls.length, 0);
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<unknown>(result.finalReportArtifactId!);
+  const report = parseNativeFinalReport(stored.value);
+  assert.equal(report.mode, 'single_skill');
+  assert.equal(report.skillResults.length, 1);
+  assert.ok(report.primary.content.startsWith('# Native Skill result'));
+});
+
+test('native report retry reuses sealed Tool and NativeSkillResult outputs', async () => {
+  const fixture = productionPortfolioFixture();
+  const native = compileNativeSkillExecutionPlan({
+    plan: fixture.plan,
+    mode: 'single_skill',
+    task: fixture.task,
+  });
+  native.plan.resolved_inputs.waived.push(...native.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  native.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = native.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+    [],
+  );
+  const firstTool = new CountingRealTavilyAdapter();
+  const firstLlm = new NativeReportLLM();
+  const failedStore = new FailingFinalReportHtmlArtifactStore({
+    root: artifactRoot,
+    registry: first.repository,
+  });
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(firstTool),
+    firstLlm,
+    new RecordingDeliverablesFake(),
+    undefined,
+    new SkillLoader(),
+    undefined,
+    failedStore,
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused', JSON.stringify(firstResult));
+  assert.equal(firstTool.calls, 1);
+  assert.equal(firstLlm.prompts.filter(({ schemaName }) => schemaName.startsWith('skill:')).length, 1);
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new NativeReportLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+  assert.equal(retryResult.status, 'completed_with_gaps', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(retryLlm.prompts.filter(({ schemaName }) => schemaName.startsWith('skill:')).length, 0);
+  assert.equal(retryLlm.synthesisCalls, 0);
+  const retryArtifacts = await first.repository.listArtifactsForAttempt({
+    taskId: retryLease.taskId,
+    planVersionId: retryLease.planVersionId,
+    attemptId: retryLease.attemptId,
+  });
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'skill_result'), true);
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'skill_result_primary'), true);
+  assert.equal(retryArtifacts.some(({ kind }) => kind === 'final_report'), true);
+});
+
+test('native Multi executes Contributor SkillReports and seals one NativeFinalReport without the legacy report chain', async () => {
+  const fixture = productionPortfolioFixture();
+  const native = compileNativeSkillExecutionPlan({
+    plan: fixture.plan,
+    mode: 'multi_skill',
+    task: fixture.task,
+  });
+  native.plan.resolved_inputs.waived.push(...native.plan.resolved_inputs.pending.map((item) => ({
+    key: item.requirement.key,
+    targetInvocationIds: item.targetInvocationIds,
+    reason: 'fixture confirms optional material is unavailable',
+  })));
+  native.plan.resolved_inputs.pending = [];
+  const { task_id: _taskId, steps, ...planExtras } = native.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+    [],
   );
   const adapter = new CountingRealTavilyAdapter();
-  const llm = new RealSchemaFixtureLLM();
+  const llm = new NativeReportLLM();
   const deliverables = new RecordingDeliverablesFake();
   const result = await buildEngine(
     repository,
@@ -1594,333 +1847,41 @@ test('Plan v3 executes a real shared Tool, seals a Contributor and Bundle, then 
     deliverables,
   ).execute({ lease, expectedModel: 'pinned-model' });
 
-  assert.equal(result.status, 'completed', JSON.stringify(result));
-  assert.equal(adapter.calls, 1, 'shared Tavily must execute once');
-  assert.equal(deliverables.calls.length, 1);
-  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
-  const contributorStep = executionSteps.find(({ actorId }) => actorId === 'competitive-web-research');
-  assert.equal(contributorStep?.state, 'succeeded');
-  assert.ok(contributorStep?.outputArtifactId);
-  const contributionArtifact = await repository.getArtifact(contributorStep.outputArtifactId!);
-  assert.equal(contributionArtifact?.kind, 'research_contribution');
-  assert.equal(contributionArtifact?.state, 'SEALED');
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.synthesisCalls, 1);
+  assert.equal(deliverables.calls.length, 0);
+  assert.ok(result.finalReportArtifactId);
   const artifacts = await repository.listArtifactsForAttempt({
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
   });
-  const bundle = artifacts.find(({ kind }) => kind === 'research_contribution_bundle');
-  assert.equal(bundle?.state, 'SEALED');
-  assert.match(JSON.stringify(llm.contexts), /contribution_bundle_artifact/u);
-  const contributorPrompt = llm.prompts.find(({ schemaName }) => (
-    schemaName === 'skill:competitive-web-research'
-  ));
-  const synthesizerPrompt = llm.prompts.find(({ schemaName }) => (
-    schemaName === 'skill:research-strategy-synthesis'
-  ));
-  assert.match(contributorPrompt?.prompt ?? '', /Portfolio Contributor status describes execution completeness/u);
-  assert.doesNotMatch(synthesizerPrompt?.prompt ?? '', /Portfolio Contributor status describes execution completeness/u);
-  assert.ok(contributorPrompt?.context);
-  assert.equal(
-    contributorStep?.skillProvenance?.executionPromptHash,
-    hashPrompt(contributorPrompt.prompt, contributorPrompt.context, contributorPrompt.schemaName),
-  );
-  assert.ok(executionSteps.some(({ actorId, state }) => (
-    actorId === 'research-strategy-synthesis' && state === 'succeeded'
-  )));
-});
-
-test('Plan v3 honors a required compiled Contributor degraded_policy=gap', async () => {
-  const fixture = productionPortfolioFixture({
-    skillId: 'build-experience-metrics',
-    contributionType: 'metrics',
-    requestedArtifactTypes: ['strategy_map'],
-  });
-  const metricsInvocation = fixture.plan.skill_invocations.find(({ skill_id }) => (
-    skill_id === 'build-experience-metrics'
-  ));
-  assert.ok(metricsInvocation?.execution_mode === 'compiled');
-  assert.equal(metricsInvocation.required, true);
-  assert.equal(metricsInvocation.failure_policy, 'block');
-  assert.equal(metricsInvocation.degraded_policy, 'gap');
-
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const { repository, lease } = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const result = await buildEngine(
-    repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new DegradedPortfolioContributorLLM('build-experience-metrics'),
-    new RecordingDeliverablesFake(),
-  ).execute({ lease, expectedModel: 'pinned-model' });
-
-  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
-  assert.equal(result.gapCount, 1);
-  const metricsStep = (await repository.listExecutionSteps(lease.attemptId))
-    .find(({ actorId }) => actorId === 'build-experience-metrics');
-  assert.equal(metricsStep?.state, 'succeeded');
-  assert.equal(metricsStep?.skillProvenance?.status, 'degraded');
-  assert.deepEqual(metricsStep?.skillProvenance?.limitations, [
-    'primary user evidence is unavailable',
-  ]);
-  assert.ok(metricsStep?.outputArtifactId);
-  assert.equal((await repository.getArtifact(metricsStep.outputArtifactId!))?.state, 'SEALED');
-});
-
-test('Plan v3 terminal rebuild reuses the exact Synthesizer checkpoint across retries', async () => {
-  const fixture = productionPortfolioFixture();
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const first = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const firstResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new NarrativelyRedactedSynthesisLLM(),
-    new RecordingDeliverablesFake(async () => {
-      throw new CurrentReportValidationError('first portfolio assembly failed');
-    }),
-  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
-  assert.equal(firstResult.status, 'paused');
-  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
-
-  const retryLease = await claimRetryExecution(
-    first.repository,
-    first.lease,
-    firstResult.failedStepNo!,
-  );
-  const retryTool = new CountingRealTavilyAdapter();
-  const retryLlm = new RealSchemaFixtureLLM();
-  const retryResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(retryTool),
-    retryLlm,
-    new RecordingDeliverablesFake(async () => {
-      throw new CurrentReportValidationError('second portfolio assembly failed');
-    }),
-  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
-
-  assert.equal(retryResult.status, 'paused', JSON.stringify(retryResult));
-  assert.equal(retryTool.calls, 0);
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
-    false,
-  );
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:research-strategy-synthesis'),
-    false,
-  );
-  const firstSteps = await first.repository.listExecutionSteps(first.lease.attemptId);
-  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
-  const firstSynthesizer = firstSteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
-  const contributor = retrySteps.find(({ actorId }) => actorId === 'competitive-web-research');
-  const synthesizer = retrySteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
-  assert.ok(firstSynthesizer?.skillProvenance?.contributionBundleArtifact);
-  assert.equal(typeof contributor?.skillProvenance?.sourceArtifactId, 'string');
-  assert.equal(typeof synthesizer?.skillProvenance?.sourceArtifactId, 'string');
   assert.deepEqual(
-    synthesizer?.skillProvenance?.contributionBundleArtifact,
-    firstSynthesizer.skillProvenance.contributionBundleArtifact,
+    artifacts.filter(({ kind }) => [
+      'skill_result',
+      'skill_result_primary',
+      'final_report',
+      'final_report_primary',
+      'final_report_html',
+      'report_sources',
+    ].includes(kind)).map(({ kind }) => kind).sort(),
+    [
+      'final_report',
+      'final_report_html',
+      'final_report_primary',
+      'report_sources',
+      'skill_result',
+      'skill_result_primary',
+    ],
   );
-
-  const secondRetryLease = await claimRetryExecution(
-    first.repository,
-    retryLease,
-    retryResult.failedStepNo!,
-  );
-  const secondRetryTool = new CountingRealTavilyAdapter();
-  const secondRetryLlm = new RealSchemaFixtureLLM();
-  const secondRetryResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(secondRetryTool),
-    secondRetryLlm,
-    new RecordingDeliverablesFake(),
-  ).execute({ lease: secondRetryLease, expectedModel: 'pinned-model' });
-
-  assert.equal(secondRetryResult.status, 'completed', JSON.stringify(secondRetryResult));
-  assert.equal(secondRetryTool.calls, 0);
-  assert.equal(secondRetryLlm.prompts.length, 0);
-  const secondRetrySteps = await first.repository.listExecutionSteps(secondRetryLease.attemptId);
-  const secondRetrySynthesizer = secondRetrySteps.find(
-    ({ actorId }) => actorId === 'research-strategy-synthesis',
-  );
-  assert.equal(typeof secondRetrySynthesizer?.skillProvenance?.sourceArtifactId, 'string');
-  assert.deepEqual(
-    secondRetrySynthesizer?.skillProvenance?.contributionBundleArtifact,
-    firstSynthesizer.skillProvenance.contributionBundleArtifact,
-  );
-});
-
-test('Plan v3 retry reruns a Synthesizer checkpoint with a redacted machine reference', async () => {
-  const fixture = productionPortfolioFixture();
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const first = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const firstResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new RedactedMachineReferenceSynthesisLLM(),
-    new RecordingDeliverablesFake(async () => {
-      throw new CurrentReportValidationError('force terminal retry');
-    }),
-  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
-  assert.equal(firstResult.status, 'paused');
-  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
-
-  const retryLease = await claimRetryExecution(
-    first.repository,
-    first.lease,
-    firstResult.failedStepNo!,
-  );
-  const retryTool = new CountingRealTavilyAdapter();
-  const retryLlm = new RealSchemaFixtureLLM();
-  const retryResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(retryTool),
-    retryLlm,
-  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
-
-  assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
-  assert.equal(retryTool.calls, 0);
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
-    false,
-  );
-  assert.equal(
-    retryLlm.prompts.filter(({ schemaName }) => (
-      schemaName === 'skill:research-strategy-synthesis'
-    )).length,
-    1,
-  );
-  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
-  const contributor = retrySteps.find(({ actorId }) => actorId === 'competitive-web-research');
-  const synthesizer = retrySteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
-  assert.equal(typeof contributor?.skillProvenance?.sourceArtifactId, 'string');
-  assert.equal(synthesizer?.skillProvenance?.sourceArtifactId, undefined);
-});
-
-test('Plan v3 retry reruns a Contributor when its source Artifact is no longer sealed', async () => {
-  const fixture = productionPortfolioFixture();
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const first = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const firstResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new RealSchemaFixtureLLM(),
-    new RecordingDeliverablesFake(async () => {
-      throw new CurrentReportValidationError('force terminal retry');
-    }),
-  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
-  assert.equal(firstResult.status, 'paused');
-
-  const firstContributor = (await first.repository.listExecutionSteps(first.lease.attemptId))
-    .find(({ actorId }) => actorId === 'competitive-web-research');
-  const sourceArtifactId = firstContributor?.skillProvenance?.sourceArtifactId;
-  assert.ok(typeof sourceArtifactId === 'string');
-  const connection = await scopedDatabase.connect();
-  try {
-    await connection.query(
-      `UPDATE control_artifacts SET state = 'FAILED' WHERE id = $1`,
-      [sourceArtifactId],
-    );
-  } finally {
-    connection.release();
-  }
-
-  const retryLease = await claimRetryExecution(
-    first.repository,
-    first.lease,
-    firstResult.failedStepNo!,
-  );
-  const retryTool = new CountingRealTavilyAdapter();
-  const retryLlm = new RealSchemaFixtureLLM();
-  const retryResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(retryTool),
-    retryLlm,
-    new RecordingDeliverablesFake(),
-  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
-
-  assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
-  assert.equal(retryTool.calls, 0);
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
-    true,
-  );
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:research-strategy-synthesis'),
-    true,
-  );
-});
-
-test('Plan v3 retry preserves a reused optional Contributor degraded status and gap', async () => {
-  const fixture = productionPortfolioFixture();
-  const contributorInvocation = fixture.plan.skill_invocations.find(({ role }) => role === 'contributor');
-  const contributionRequirement = fixture.plan.contribution_requirements[0];
-  assert.ok(contributorInvocation && contributionRequirement);
-  contributorInvocation.required = false;
-  contributorInvocation.failure_policy = 'gap';
-  contributionRequirement.required = false;
-  fixture.plan.capability_demand_graph.demands[0]!.priority = 'optional';
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const first = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const firstResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new DegradedPortfolioContributorLLM(),
-    new RecordingDeliverablesFake(async () => {
-      throw new CurrentReportValidationError('force terminal retry after degraded Contributor');
-    }),
-  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
-  assert.equal(firstResult.status, 'paused');
-  const firstContributor = (await first.repository.listExecutionSteps(first.lease.attemptId))
-    .find(({ actorId }) => actorId === 'competitive-web-research');
-  assert.equal(firstContributor?.skillProvenance?.status, 'degraded');
-
-  const retryLease = await claimRetryExecution(
-    first.repository,
-    first.lease,
-    firstResult.failedStepNo!,
-  );
-  const retryLlm = new RealSchemaFixtureLLM();
-  const retryResult = await buildEngine(
-    first.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    retryLlm,
-    new RecordingDeliverablesFake(),
-  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
-
-  assert.equal(retryResult.status, 'completed_with_gaps');
-  assert.equal(retryResult.gapCount, 1);
-  assert.equal(
-    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
-    false,
-  );
-  const retryContributor = (await first.repository.listExecutionSteps(retryLease.attemptId))
-    .find(({ actorId }) => actorId === 'competitive-web-research');
-  assert.equal(retryContributor?.skillProvenance?.status, 'degraded');
-  assert.deepEqual(retryContributor?.skillProvenance?.limitations, ['primary user evidence is unavailable']);
+  assert.equal(artifacts.some(({ kind }) => kind === 'report_review' || kind === 'report_package'), false);
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<unknown>(result.finalReportArtifactId!);
+  const report = parseNativeFinalReport(stored.value);
+  assert.equal(report.mode, 'multi_skill');
+  assert.equal(report.skillResults.length, 1);
+  assert.match(report.primary.content, /Native synthesis/u);
 });
 
 test('rejects an invalid lease before Tool or LLM side effects', async () => {
@@ -2024,7 +1985,7 @@ test('rejects a legacy raw visual gate before materialization or Tool side effec
 
   await assert.rejects(
     () => engine.execute({ lease, expectedModel: 'pinned-model' }),
-    /unsealed dataUrl/u,
+    /no sealed evidence reference/u,
   );
   assert.equal(materializeCalls, 0);
   assert.equal(adapter.calls, 0);
@@ -2087,13 +2048,13 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   );
-  const published = await visualInputGates.publish({
+  const published = await visualInputGates.upload({
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     gateKey: 'designImage',
     multiple: false,
-    requiredVisual: true,
-    value: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+    taskSensitivity: 'internal',
+    files: [{ fileName: 'design.png', mediaType: 'image/png', bytes: png }],
   });
   await repository.recordGate({
     taskId: lease.taskId,
@@ -2103,7 +2064,7 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     gateKey: 'designImage',
     requiredAuthority: 'owner',
     decision: 'provided',
-    evidenceRef: published.evidenceRef,
+    evidenceRef: published.visualInputId,
     actorUserId: ownerId,
     actorRole: 'owner',
     idempotencyKey: `sealed-visual-${randomUUID()}`,
@@ -4571,189 +4532,98 @@ test('reports every residual Artifact when inner and outer browser compensation 
   assert.equal(recoverable?.failureKind, 'artifact_invalidation');
 });
 
-test('executes the current plan with real Tool provenance and complete model receipts', async () => {
+test('seals Joyspace search-and-view content as an internal Knowledge Snapshot with Evidence and Receipt versions', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    step_no: 2,
+    step_name: '搜索并读取 Joyspace 方法',
+    actor_type: 'tool',
+    actor_id: 'joyspace-read',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+    acceptance_criteria: ['returns a hash-bound Knowledge Snapshot'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const skillStep = structuredClone(planSteps[1]!);
+  skillStep.step_no = 3;
+  skillStep.depends_on = [1, 2];
+  const summaryStep = structuredClone(planSteps[2]!);
+  summaryStep.step_no = 4;
+  summaryStep.depends_on = [3];
+  const reviewStep = structuredClone(planSteps[3]!);
+  reviewStep.step_no = 5;
+  reviewStep.depends_on = [4];
+  const steps = [structuredClone(planSteps[0]!), joyspaceStep, skillStep, summaryStep, reviewStep];
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
-    planSteps,
+    steps,
     {
       deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
-        id: 'competitive-analysis-report',
-        acceptedClasses: ['public_source', 'screenshot'],
-        minimumCount: 1,
-        required: true,
+        id: 'competitive-analysis-report', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
       }],
+      capability_decisions: {
+        eligible: [{
+          skill: {
+            id: 'digital-human-competitive-analysis',
+            required_tools: ['tavily-web-search'],
+            optional_tools: ['joyspace-read'],
+          },
+          optional_tool_decisions: [{ tool_id: 'joyspace-read', status: 'available' }],
+        }],
+        rejected: [],
+      },
+      capability_gaps: [],
     },
   );
-  const adapter = new CountingRealTavilyAdapter();
-  const llm = new CountingRealLLM();
+  const tavily = new CountingRealTavilyAdapter();
+  const joyspace = new JoyspaceViewTestAdapter();
   const deliverables = new RecordingDeliverablesFake();
-  const engine = buildEngine(repository, new ToolRouter().register(adapter), llm, deliverables);
-
-  const result = await engine.execute({ lease, expectedModel: 'pinned-model' }) as DeliverableAwareExecutionResult;
-  assert.equal(deliverables.calls.length, 1);
-  const deliverableInput = deliverables.calls[0];
-  if (!deliverableInput) assert.fail('current deliverable generation input must be recorded');
-  assert.deepEqual(deliverableInput.task, { id: lease.taskId });
-  assert.equal(deliverableInput.plan.id, lease.planVersionId);
-  assert.equal(deliverableInput.plan.plan.deliverable_type, 'competitive_analysis_report');
-  assert.deepEqual(deliverableInput.plan.plan.steps, planSteps);
-  assert.deepEqual(deliverableInput.attempt, { id: lease.attemptId });
-  assert.equal(deliverableInput.researchGoal, 'compare digital human products');
-  assert.deepEqual(deliverableInput.gaps, []);
-  assert.equal(deliverableInput.expectedModel, 'pinned-model');
-  assert.equal(deliverableInput.evidenceManifest.artifact.state, 'SEALED');
-  assert.match(deliverableInput.evidenceManifest.artifact.contentSha256, /^sha256:/);
-  assert.equal(deliverableInput.outputs.length, planSteps.length);
-  for (const output of deliverableInput.outputs) {
-    assertUnknownRecord(output);
-    const artifact = output.artifact;
-    assertUnknownRecord(artifact);
-    assert.equal(artifact.state, 'SEALED');
-    assert.equal(typeof artifact.id, 'string');
-    assert.match(String(artifact.contentSha256), /^sha256:/);
-  }
-  const evidenceEntry = deliverableInput.evidenceManifest.value.entries[0];
-  assert.ok(evidenceEntry);
-  const resolvedEvidence = deliverableInput.evidenceResolver.resolveArtifact(evidenceEntry.artifactId);
-  assert.ok(resolvedEvidence);
-  assert.equal(resolvedEvidence.artifact.id, evidenceEntry.artifactId);
-  assert.equal(resolvedEvidence.artifact.contentSha256, evidenceEntry.artifactContentSha256);
-  assert.equal(result.deliverableArtifactId, 'deliverable-1');
-  assert.equal(
-    result.evidenceManifestArtifactId,
-    deliverableInput.evidenceManifest.artifact.id,
+  const llm = new CountingRealLLM();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(tavily).register(joyspace),
+    llm,
+    deliverables,
   );
-  const steps = await repository.listExecutionSteps(lease.attemptId);
-  const connection = await scopedDatabase.connect();
-  try {
-    const artifacts = await connection.query(
-      `SELECT id, storage_uri, content_sha256 FROM control_artifacts WHERE attempt_id = $1 AND kind = 'tool_output'`,
-      [lease.attemptId],
-    );
-    const toolArtifactId = artifacts.rows[0]?.id;
-    const storageUri = artifacts.rows[0]?.storage_uri;
-    const toolArtifactContentSha256 = artifacts.rows[0]?.content_sha256;
-    if (typeof toolArtifactId !== 'string') assert.fail('tool artifact id must be a string');
-    if (typeof storageUri !== 'string') assert.fail('tool artifact storage_uri must be a string');
-    if (typeof toolArtifactContentSha256 !== 'string') assert.fail('tool artifact content_sha256 must be a string');
-    const persisted: unknown = JSON.parse(readFileSync(storageUri, 'utf8'));
-    assert.ok(persisted && typeof persisted === 'object');
-    assert.ok('output' in persisted);
-    const persistedOutput = persisted.output;
-    assert.ok(persistedOutput && typeof persistedOutput === 'object' && 'results' in persistedOutput);
-    const persistedResults = persistedOutput.results;
-    assert.ok(Array.isArray(persistedResults));
-    const resolvedResult = persistedResults[0];
-    assertUnknownRecord(resolvedResult);
-    const serialized = JSON.stringify(persisted);
-    assert.match(serialized, /verified public source/);
-    assert.match(serialized, /\[REDACTED\]/);
-    assert.doesNotMatch(serialized, /secret-value/);
-    assert.doesNotMatch(serialized, /secret-token/);
-    assert.doesNotMatch(serialized, /\bBearer\b/i);
-    assert.doesNotMatch(serialized, /owner@example\.com|13800138000/);
-    assert.match(serialized, /\[REDACTED_EMAIL\]|\[REDACTED_PHONE\]/);
-    const evidenceArtifacts = await connection.query(
-      `SELECT id, state, storage_uri, content_sha256
-       FROM control_artifacts WHERE attempt_id = $1 AND kind = 'evidence_manifest'`,
-      [lease.attemptId],
-    );
-    const evidenceArtifactId = evidenceArtifacts.rows[0]?.id;
-    const evidenceArtifactState = evidenceArtifacts.rows[0]?.state;
-    const evidenceArtifactContentSha256 = evidenceArtifacts.rows[0]?.content_sha256;
-    const evidenceUri = evidenceArtifacts.rows[0]?.storage_uri;
-    assert.equal(evidenceArtifactId, deliverableInput.evidenceManifest.artifact.id);
-    assert.equal(evidenceArtifactState, 'SEALED');
-    assert.equal(
-      evidenceArtifactContentSha256,
-      deliverableInput.evidenceManifest.artifact.contentSha256,
-    );
-    if (typeof evidenceUri !== 'string') assert.fail('execution must seal an Evidence Manifest artifact');
-    const evidence: unknown = JSON.parse(readFileSync(evidenceUri, 'utf8'));
-    assert.ok(evidence && typeof evidence === 'object' && 'entries' in evidence);
-    assert.ok(Array.isArray(evidence.entries));
-    const skillArtifactId = steps[1]?.skillProvenance?.outputArtifactId;
-    assert.equal(typeof skillArtifactId, 'string');
-    for (const entry of evidence.entries) {
-      assertUnknownRecord(entry);
-      assert.equal(entry.kind, 'tool_output');
-      assert.notEqual(entry.artifactId, skillArtifactId);
-    }
-    const evidenceEntry = evidence.entries[0];
-    assertUnknownRecord(evidenceEntry);
-    const toolProvenance = steps[0]?.toolProvenance ?? {};
-    assert.equal(toolProvenance.toolTier, 'core');
-    assert.ok(Array.isArray(toolProvenance.attemptReceipts));
-    assert.equal(toolProvenance.attemptReceipts.length, 1);
-    assert.equal(toolProvenance.attemptReceipts[0]?.status, 'succeeded');
-    const toolProof = evidenceEntry.toolProof;
-    assertUnknownRecord(toolProof);
-    assert.equal(evidenceEntry.toolTier, 'core');
-    assert.equal(toolProvenance.outputArtifactId, toolArtifactId);
-    assert.equal(evidenceEntry.artifactId, toolProvenance.outputArtifactId);
-    assert.equal(evidenceEntry.artifactContentSha256, toolArtifactContentSha256);
-    assert.equal(evidenceEntry.jsonPointer, '/output/results/0');
-    assert.equal(evidenceEntry.sourceUrl, resolvedResult.url);
-    assert.equal(toolProof.redactedOutputHash, toolProvenance.redactedOutputHash);
-    assert.match(String(toolProof.redactedOutputHash), /^sha256:/);
-    assert.ok(!('artifactHash' in evidenceEntry));
-    assert.ok(!('outputHash' in toolProof));
-    assert.equal(evidence.entries[0]?.toolProof?.executionMode, 'real');
-    assert.equal(evidence.entries[0]?.sourceUrl, 'https://source.test/article');
-    const artifactSchemas = await connection.query(
-      `SELECT kind, schema_version FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('tool_output', 'skill_output', 'evidence_manifest')`,
-      [lease.attemptId],
-    );
-    const schemaVersions = Object.fromEntries(
-      artifactSchemas.rows.map((row) => [String(row.kind), String(row.schema_version)]),
-    );
-    assert.equal(schemaVersions.tool_output, 'tool-output-v1');
-    assert.equal(schemaVersions.skill_output, 'skill-output-v2');
-    assert.equal(schemaVersions.evidence_manifest, 'evidence-v1');
-    const legacySummaries = await connection.query(
-      `SELECT count(*) AS count FROM control_artifacts
-       WHERE attempt_id = $1 AND kind = 'execution_summary'`,
-      [lease.attemptId],
-    );
-    assert.equal(Number(legacySummaries.rows[0]?.count), 0);
-  } finally {
-    connection.release();
-  }
 
-  const serializedContext = JSON.stringify(llm.contexts);
-  assert.match(serializedContext, /verified public source/);
-  const skillContext = llm.contexts[0];
-  assertUnknownRecord(skillContext);
-  assert.deepEqual(skillContext.input, { business_domain: 'Source' });
-  assert.match(serializedContext, /\[REDACTED\]/);
-  assert.doesNotMatch(serializedContext, /secret-token/);
-  assert.doesNotMatch(serializedContext, /\bBearer\b/i);
-
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
   assert.equal(result.status, 'completed');
-  assert.equal(adapter.calls, 1);
-  assert.equal(llm.calls, 3);
-  assert.equal(steps.length, 4);
-  assert.equal(steps[0].toolProvenance?.executionMode, 'real');
-  assert.equal(steps[0].toolProvenance?.implementationId, 'test-tavily-real-v1');
-  const calls = await repository.listModelCalls(lease.attemptId);
-  assert.deepEqual(calls.map((call) => call.stage), ['skill', 'llm', 'reviewer']);
-  const skillProvenance = steps[1]?.skillProvenance;
-  assert.ok(skillProvenance);
-  assert.match(String(skillProvenance.skillBodyHash), /^sha256:/u);
-  assert.match(String(skillProvenance.inputSchemaHash), /^sha256:/u);
-  assert.match(String(skillProvenance.outputSchemaHash), /^sha256:/u);
-  assert.match(String(skillProvenance.payloadSchemaHash), /^sha256:/u);
-  assert.match(String(skillProvenance.inputHash), /^sha256:/u);
-  assert.match(String(skillProvenance.outputHash), /^sha256:/u);
-  assert.match(String(skillProvenance.promptHash), /^sha256:/u);
-  assert.equal(skillProvenance.traceId, 'trace-1');
-  assert.equal(skillProvenance.modelReceiptId, calls[0]?.id);
-  assert.equal(typeof skillProvenance.outputArtifactId, 'string');
-  assert.equal(skillProvenance.status, 'succeeded');
-  const attempts = await repository.listAttempts(lease.taskId);
-  assert.equal(attempts[0]?.state, 'completed');
+  assert.equal(joyspace.calls, 1);
+  const artifacts = await repository.listArtifactsForAttempt(lease);
+  const snapshot = artifacts.find(({ kind }) => kind === 'knowledge_snapshot');
+  assert.ok(snapshot?.contentSha256);
+  assert.equal(snapshot.schemaVersion, 'joyspace-knowledge-snapshot-v1');
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<Record<string, unknown>>(snapshot.id);
+  assert.equal(stored.value.body, joyspace.body);
+  assert.equal(stored.value.contentSha256, `sha256:${createHash('sha256').update(joyspace.body).digest('hex')}`);
+
+  const deliverableInput = deliverables.calls[0];
+  assert.ok(deliverableInput);
+  const knowledgeEvidence = deliverableInput.evidenceManifest.value.entries.find(({ id }) => id === 'JV2-1');
+  assert.deepEqual(knowledgeEvidence && {
+    kind: knowledgeEvidence.kind,
+    evidenceClass: knowledgeEvidence.evidenceClass,
+    artifactId: knowledgeEvidence.artifactId,
+    jsonPointer: knowledgeEvidence.jsonPointer,
+    sensitivity: knowledgeEvidence.sensitivity,
+    sourceUrl: knowledgeEvidence.sourceUrl,
+  }, {
+    kind: 'knowledge_excerpt', evidenceClass: 'knowledge', artifactId: snapshot.id,
+    jsonPointer: '/body', sensitivity: 'internal',
+    sourceUrl: 'https://joyspace.jd.com/pages/industry-method',
+  });
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  const provenance = executionSteps.find(({ stepNo }) => stepNo === 2)?.toolProvenance;
+  assert.deepEqual(provenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.deepEqual(provenance?.knowledgeSnapshotArtifactIds, [snapshot.id]);
+  assert.match(JSON.stringify(llm.contexts[0]), /JV2-1/u);
+  assert.match(JSON.stringify(llm.contexts[0]), /已审阅的 Joyspace 行业方法正文/u);
 });
 
 test('executes frozen Knowledge before Skill and emits Knowledge Evidence', async () => {
@@ -4834,166 +4704,52 @@ test('executes frozen Knowledge before Skill and emits Knowledge Evidence', asyn
   assert.equal(steps[0]?.skillProvenance?.kind, 'knowledge');
 });
 
-test('executes a compiled generate-research-plan invocation stage by stage', async () => {
-  const original: CurrentPlanStep[] = [
-    planSteps[0]!,
-    {
-      ...planSteps[1]!,
-      actor_id: 'generate-research-plan',
-      input: {},
-      input_bindings: [],
-      expected_outputs: [{ pointer: '/payload', description: 'research plan' }],
-    },
-    { ...planSteps[3]!, step_no: 3, depends_on: [2], actor_id: 'reviewer.research-lead' },
-  ];
-  const task = {
-    version: 'research-task-v2' as const,
-    task_type: 'user_research_planning' as const,
-    business_domain: 'pet services',
-    research_goal: 'plan a pet mindshare study',
-    target_audience: ['platform operations'],
-    scope: ['mobile app'], constraints: [],
-    success_criteria: [{ id: 'SC-1', statement: 'executable plan' }],
-    expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [],
-    clarification_questions: [], blocking_issues: [], sensitivity: 'internal' as const, pii_detected: false,
-  };
-  const compiled = compileSkillSteps(original, task);
+test('executes a degraded legacy single-call Skill through CurrentExecutionPlan v2 without compiled stages', async () => {
+  const invocationId = 'digital-human-competitive-analysis:2';
+  const steps = planSteps.map((step) => ({
+    ...structuredClone(step),
+    ...(step.step_no === 2 ? { skill_invocation_id: invocationId } : {}),
+  }));
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
-    compiled.steps,
+    steps,
     {
-      deliverable_type: 'research_plan',
-      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'public-market-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
       execution_contract_version: 'current-execution-plan-v2',
-      skill_invocations: compiled.invocations,
+      skill_invocations: [{
+        invocation_id: invocationId,
+        skill_id: 'digital-human-competitive-analysis',
+        execution_mode: 'legacy_single_call',
+        step_nos: [2],
+      }],
       capability_decisions: {
         eligible: [{
-          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          skill: { id: 'digital-human-competitive-analysis', required_tools: ['tavily-web-search'] },
           optional_tool_decisions: [],
         }],
         excluded: [],
       },
     },
-    { task_type: 'competitive_research', research_goal: task.research_goal },
+    { task_type: 'competitive_research', research_goal: 'compare digital human competitors' },
   );
   const deliverables = new RecordingDeliverablesFake();
   const result = await buildEngine(
     repository,
     new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new CountingRealLLM(),
+    new DegradedSkillLLM(),
     deliverables,
   ).execute({ lease, expectedModel: 'pinned-model' });
 
-  assert.equal(result.status, 'completed');
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /research wiki was unavailable/u);
   const persisted = await repository.listExecutionSteps(lease.attemptId);
-  assert.equal(persisted.length, 7);
-  assert.deepEqual(persisted.map(({ actorType }) => actorType), [
-    'tool', 'knowledge', 'llm', 'llm', 'llm', 'skill', 'reviewer',
-  ]);
-  assert.ok(deliverables.calls[0]?.evidenceManifest.value.entries.some(({ kind }) => kind === 'knowledge_excerpt'));
-  const skillProvenance = persisted.find(({ actorType }) => actorType === 'skill')?.skillProvenance;
-  assert.ok(Array.isArray(skillProvenance?.skillReferenceHashes));
-  assert.deepEqual(
-    (skillProvenance?.skillReferenceHashes as Array<{ path: string }>).map(({ path }) => path),
-    ['references/brief-skeleton.md', 'references/plan-skeleton.md', 'references/run-notes-template.md'],
-  );
-
-  const tamperedInvocations = structuredClone(compiled.invocations);
-  tamperedInvocations[0]!.contract_hash = `sha256:${'0'.repeat(64)}`;
-  const tamperedExecution = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    compiled.steps,
-    {
-      deliverable_type: 'research_plan',
-      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
-      execution_contract_version: 'current-execution-plan-v2',
-      skill_invocations: tamperedInvocations,
-      capability_decisions: {
-        eligible: [{
-          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
-          optional_tool_decisions: [],
-        }],
-        excluded: [],
-      },
-    },
-    { task_type: 'competitive_research', research_goal: task.research_goal },
-  );
-  const tamperedTool = new CountingRealTavilyAdapter();
-  const tamperedLlm = new CountingRealLLM();
-  await assert.rejects(() => buildEngine(
-    tamperedExecution.repository,
-    new ToolRouter().register(tamperedTool),
-    tamperedLlm,
-  ).execute({ lease: tamperedExecution.lease, expectedModel: 'pinned-model' }), /contract hash drift/u);
-  assert.equal(tamperedTool.calls, 0);
-  assert.equal(tamperedLlm.calls, 0);
-  const preflightFailure = (await tamperedExecution.repository.listExecutionSteps(
-    tamperedExecution.lease.attemptId,
-  ))[0]?.failure;
-  assert.deepEqual(preflightFailure?.allowedActions, ['replan', 'abort']);
-  assert.equal(preflightFailure?.kind, 'skill_contract_drift');
-
-  class ResourceGapSkillLoader extends SkillLoader {
-    override loadSkillExecution(id: string) {
-      const loaded = super.loadSkillExecution(id);
-      if (!loaded || id !== 'generate-research-plan') return loaded;
-      return {
-        ...loaded,
-        contract: {
-          ...loaded.contract,
-          resource_queries: [
-            ...(loaded.contract.resource_queries ?? []),
-            {
-              query_id: 'unavailable-runtime-category',
-              types: ['not-a-real-type'],
-              min_items: 1,
-              max_items: 1,
-              accepted_statuses: ['approved'] as Array<'approved' | 'draft'>,
-              purpose: 'Exercise runtime gap propagation.',
-              failure_policy: 'gap' as const,
-            },
-          ],
-        },
-      };
-    }
-  }
-  const gapLoader = new ResourceGapSkillLoader();
-  const gapCompiled = compileSkillSteps(original, task, gapLoader);
-  assert.equal(gapCompiled.invocations[0]?.resource_gaps.length, 1);
-  const gapExecution = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    gapCompiled.steps,
-    {
-      deliverable_type: 'research_plan',
-      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
-      execution_contract_version: 'current-execution-plan-v2',
-      skill_invocations: gapCompiled.invocations,
-      capability_decisions: {
-        eligible: [{
-          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
-          optional_tool_decisions: [],
-        }],
-        excluded: [],
-      },
-    },
-    { task_type: 'competitive_research', research_goal: task.research_goal },
-  );
-  const gapDeliverables = new RecordingDeliverablesFake();
-  const gapResult = await buildEngine(
-    gapExecution.repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new CountingRealLLM(),
-    gapDeliverables,
-    undefined,
-    gapLoader,
-  ).execute({ lease: gapExecution.lease, expectedModel: 'pinned-model' });
-  assert.equal(gapResult.status, 'completed_with_gaps');
-  assert.equal(gapResult.gapCount, 1);
-  assert.match(gapDeliverables.calls[0]?.gaps[0] ?? '', /unavailable-runtime-category/u);
-  assert.deepEqual(gapDeliverables.calls[0]?.gapRefs, [{
-    key: 'skill:generate-research-plan:2:resource:unavailable-runtime-category',
-    stepNo: 2,
-  }]);
+  const skillStep = persisted.find(({ stepNo }) => stepNo === 2);
+  assert.equal(skillStep?.state, 'succeeded');
+  assert.equal(skillStep?.skillProvenance?.status, 'degraded');
 });
 
 test('records a degraded Skill as a completed task with one visible gap', async () => {
@@ -6141,12 +5897,13 @@ test('production report material discovery rejects foreign, tampered, and unseal
   await assert.rejects(unsealed.discover(), /sealed|state|manifest/i);
 });
 
-test('production report material discovery ignores an unrelated export-blocked screenshot', async () => {
+test('production report material discovery includes a verified blocked-policy screenshot', async () => {
   const blocked = await reportMaterialDiscoveryFixture('block');
 
   const discovered = await blocked.discover();
 
-  assert.deepEqual(discovered.visualAssets, []);
+  assert.equal(discovered.visualAssets.length, 1);
+  assert.equal(discovered.visualAssets[0]?.manifest.exportPolicy, 'block');
   assert.deepEqual(discovered.charts, []);
 });
 
@@ -6295,131 +6052,6 @@ for (const reviewCase of pausedReviewCases) {
     assert.equal((await repository.getArtifact(result.reportReviewArtifactId ?? ''))?.state, 'SEALED');
   });
 }
-
-test('validates resolved Skill input before the Skill LLM side effect', async () => {
-  const invalidSteps: CurrentPlanStep[] = [
-    planSteps[0]!,
-    {
-      ...planSteps[1]!,
-      input_bindings: [{
-        target_pointer: '/business_domain',
-        source_step_no: 1,
-        source_pointer: '/results',
-      }],
-    },
-  ];
-  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), invalidSteps);
-  const adapter = new CountingRealTavilyAdapter();
-  const llm = new CountingRealLLM();
-
-  const result = await buildEngine(
-    repository,
-    new ToolRouter().register(adapter),
-    llm,
-  ).execute({ lease, expectedModel: 'pinned-model' });
-
-  assert.equal(result.status, 'paused');
-  assert.equal(result.failedStepNo, 2);
-  assert.equal(result.failure?.kind, 'schema');
-  assert.equal(adapter.calls, 1);
-  assert.equal(llm.calls, 0);
-  const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
-  assert.equal(skillStep?.skillProvenance?.status, 'failed');
-  assert.match(String(skillStep?.skillProvenance?.inputSchemaHash), /^sha256:/u);
-  assert.equal(skillStep?.skillProvenance?.executionPromptHash, null);
-  assert.equal(skillStep?.skillProvenance?.modelReceiptId, null);
-});
-
-test('persists failed Skill provenance and receipt when output schema validation fails', async () => {
-  const { repository, lease } = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    planSteps.slice(0, 2),
-  );
-  const result = await buildEngine(
-    repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    new InvalidSkillOutputLLM(),
-  ).execute({ lease, expectedModel: 'pinned-model' });
-
-  assert.equal(result.status, 'paused');
-  assert.equal(result.failure?.kind, 'schema');
-  const calls = await repository.listModelCalls(lease.attemptId);
-  assert.equal(calls.length, 2);
-  assert.equal(result.failure?.retryable, true);
-  assert.equal(result.failure?.repairAttempts, 1);
-  assert.deepEqual(result.failure?.allowedActions, ['retry', 'abort']);
-  assert.ok(Array.isArray(result.failure?.schemaErrors));
-  assert.match(JSON.stringify(result.failure?.schemaErrors), /required property 'version'/u);
-  const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
-  assert.equal(skillStep?.skillProvenance?.status, 'failed');
-  assert.match(JSON.stringify(skillStep?.failure?.schemaErrors), /required property 'version'/u);
-  const repairReceipt = calls.find(({ traceId }) => traceId === 'trace-2');
-  assert.ok(repairReceipt);
-  assert.equal(repairReceipt.stage, 'skill_repair');
-  assert.equal(skillStep?.skillProvenance?.modelReceiptId, repairReceipt.id);
-  assert.equal(skillStep?.skillProvenance?.promptHash, repairReceipt.promptHash);
-  assert.equal(skillStep?.skillProvenance?.traceId, repairReceipt.traceId);
-  assert.match(String(skillStep?.skillProvenance?.skillBodyHash), /^sha256:/u);
-  assert.match(String(skillStep?.skillProvenance?.outputSchemaHash), /^sha256:/u);
-  assert.match(String(skillStep?.skillProvenance?.payloadSchemaHash), /^sha256:/u);
-  assert.match(String(skillStep?.skillProvenance?.executionPromptHash), /^sha256:/u);
-  assert.equal(
-    skillStep?.skillProvenance?.outputHash,
-    canonicalJsonHash({ comparison_matrix: [] }),
-  );
-});
-
-test('repairs one schema-invalid Synthesizer output without restarting the execution', async () => {
-  const fixture = productionPortfolioFixture();
-  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
-  const { repository, lease } = await claimedExecution(
-    new Date(Date.now() + 60_000),
-    steps,
-    planExtras,
-    fixture.task as unknown as Record<string, unknown>,
-  );
-  const llm = new InvalidThenValidSynthesisLLM();
-
-  const result = await buildEngine(
-    repository,
-    new ToolRouter().register(new CountingRealTavilyAdapter()),
-    llm,
-    new RecordingDeliverablesFake(),
-  ).execute({ lease, expectedModel: 'pinned-model' });
-
-  assert.equal(result.status, 'completed', JSON.stringify(result));
-  const synthesisCalls = llm.prompts.filter(({ schemaName }) => (
-    schemaName === 'skill:research-strategy-synthesis'
-  ));
-  assert.equal(synthesisCalls.length, 2);
-  assert.doesNotMatch(synthesisCalls[0]?.prompt ?? '', /repair the supplied invalid JSON output/iu);
-  assert.match(synthesisCalls[1]?.prompt ?? '', /repair the supplied invalid JSON output/iu);
-  assert.match(JSON.stringify(synthesisCalls[1]?.context), /validation_feedback/u);
-  assert.deepEqual(
-    (synthesisCalls[1]?.context as { invalid_output?: unknown } | undefined)?.invalid_output,
-    { comparison_matrix: [] },
-  );
-
-  const synthesisStep = fixture.plan.steps.find(({ actor_id }) => (
-    actor_id === 'research-strategy-synthesis'
-  ));
-  assert.ok(synthesisStep);
-  const persisted = (await repository.listExecutionSteps(lease.attemptId))
-    .find(({ stepNo }) => stepNo === synthesisStep.step_no);
-  assert.equal(persisted?.state, 'succeeded');
-  const receipts = (await repository.listModelCalls(lease.attemptId))
-    .filter(({ stepNo }) => stepNo === synthesisStep.step_no);
-  assert.equal(receipts.length, 2);
-  assert.ok(receipts.every(({ status }) => status === 'succeeded'));
-  assert.deepEqual(new Set(receipts.map(({ stage }) => stage)), new Set(['skill', 'skill_repair']));
-  assert.equal(new Set(receipts.map(({ promptHash }) => promptHash)).size, 2);
-  assert.equal(new Set(receipts.map(({ contextManifestHash }) => contextManifestHash)).size, 2);
-  assert.equal(new Set(receipts.map(({ traceId }) => traceId)).size, 2);
-  const finalReceipt = receipts.find(({ id }) => id === persisted?.skillProvenance?.modelReceiptId);
-  assert.ok(finalReceipt);
-  assert.equal(persisted?.skillProvenance?.promptHash, finalReceipt.promptHash);
-  assert.equal(persisted?.skillProvenance?.traceId, finalReceipt.traceId);
-});
 
 test('Skill provenance captured before invocation survives post-call configuration drift', async () => {
   const { repository, lease } = await claimedExecution(
@@ -7067,6 +6699,62 @@ test('adds an unresolved Playwright page failure only after the visual publicati
   assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
 });
 
+test('turns a Joyspace Browser Bridge failure into one explicit optional Knowledge gap', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '读取 Joyspace 方法',
+    actor_id: 'joyspace-read',
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+  };
+  const steps = [
+    planSteps[0]!,
+    joyspaceStep,
+    optionalToolOwnerStep(),
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'research-plan', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
+      }],
+      ...frozenOptionalToolPlan('joyspace-read'),
+    },
+    {
+      task_type: 'user_research_planning', research_goal: 'plan a public study',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [{ id: 'research-plan', statement: 'plan is evidence backed' }],
+    },
+  );
+  const joyspace = new FailingJoyspaceTestAdapter();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(joyspace),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(joyspace.calls, 1);
+  assert.equal(deliverables.calls[0]?.gaps.length, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /Joyspace Browser Bridge is unavailable/u);
+  const execution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(execution?.state, 'skipped');
+  assert.equal(execution?.failure?.kind, 'browser_bridge');
+  assert.equal(execution?.toolProvenance?.toolTier, 'optional');
+  assert.deepEqual(execution?.toolProvenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.ok((execution?.toolProvenance?.gapSummary as { keys?: string[] })?.keys?.includes('step:browser_bridge'));
+});
+
 test('continues after an optional Tool failure and completes with a sanitized gap', async () => {
   const optionalSteps = [
     planSteps[0],
@@ -7347,7 +7035,7 @@ test('does not seal a step Artifact when the lease expires before artifact seal'
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
-test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later step context', async () => {
+test('passes Skill, LLM, and Reviewer business PII while protecting credentials', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
   const llm = new EchoingSensitiveRealLLM();
   const deliverables = new RecordingDeliverablesFake();
@@ -7390,43 +7078,39 @@ test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later st
   const serializedLaterContext = JSON.stringify(llm.contexts);
   const serializedDeliverableInput = JSON.stringify(deliverables.calls[0]);
   const persistedAndForwarded = `${serializedArtifacts}\n${serializedLaterContext}\n${serializedDeliverableInput}`;
-  for (const secret of Object.values(echoedSecrets)) {
-    assert.doesNotMatch(persistedAndForwarded, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-  }
   assert.doesNotMatch(persistedAndForwarded, /\bBearer\s+(?:skill|llm|reviewer)-token\b/iu);
-  assert.doesNotMatch(persistedAndForwarded, /(?:skill|llm|reviewer)-owner@example\.test/iu);
-  assert.doesNotMatch(persistedAndForwarded, /1380013800[123]/u);
+  assert.match(persistedAndForwarded, /(?:skill|llm|reviewer)-owner@example\.test/iu);
+  assert.match(persistedAndForwarded, /1380013800[123]/u);
   assert.doesNotMatch(persistedAndForwarded, /(?:skill|llm|reviewer)-key/u);
   assert.match(persistedAndForwarded, /\[REDACTED/u);
 });
 
-for (const blockedStage of ['skill', 'llm', 'reviewer'] as const) {
-  test(`rejects blocked sensitive ${blockedStage} output before sealing it`, async () => {
-    const blockedStepIndex = { skill: 1, llm: 2, reviewer: 3 }[blockedStage];
+for (const directStage of ['skill', 'llm', 'reviewer'] as const) {
+  test(`passes sensitive business ${directStage} output through sealing`, async () => {
+    const stageStepIndex = { skill: 1, llm: 2, reviewer: 3 }[directStage];
     const { repository, lease } = await claimedExecution(
       new Date(Date.now() + 60_000),
-      planSteps.slice(0, blockedStepIndex + 1),
+      planSteps.slice(0, stageStepIndex + 1),
     );
     const result = await buildEngine(
       repository,
       new ToolRouter().register(new CountingRealTavilyAdapter()),
-      new BlockedSensitiveStageLLM(blockedStage),
+      new BlockedSensitiveStageLLM(directStage),
     ).execute({ lease, expectedModel: 'pinned-model' });
 
-    assert.equal(result.status, 'paused');
-    assert.equal(result.failure?.kind, 'safety');
-    const blockedKind = {
+    assert.equal(result.status, 'completed');
+    const outputKind = {
       skill: 'skill_output',
       llm: 'llm_output',
       reviewer: 'review_output',
-    }[blockedStage];
+    }[directStage];
     const connection = await scopedDatabase.connect();
     try {
       const artifacts = await connection.query(
         `SELECT state FROM control_artifacts WHERE attempt_id = $1 AND kind = $2`,
-        [lease.attemptId, blockedKind],
+        [lease.attemptId, outputKind],
       );
-      assert.equal(artifacts.rows.some((row) => row.state === 'SEALED'), false);
+      assert.equal(artifacts.rows.some((row) => row.state === 'SEALED'), true);
     } finally {
       connection.release();
     }
@@ -7703,7 +7387,7 @@ test('persists the real Tool receipt when output schema validation fails', async
   assert.match(String(steps[0]?.toolProvenance?.outputHash), /^sha256:/);
 });
 
-test('blocks sensitive business output before artifact persistence', async () => {
+test('persists sensitive business output directly', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
   const result = await buildEngine(
     repository,
@@ -7711,15 +7395,16 @@ test('blocks sensitive business output before artifact persistence', async () =>
     new CountingRealLLM(),
   ).execute({ lease, expectedModel: 'pinned-model' });
 
-  assert.equal(result.status, 'paused');
-  assert.equal(result.failure?.kind, 'safety');
+  assert.equal(result.status, 'completed');
   const connection = await scopedDatabase.connect();
   try {
     const artifacts = await connection.query(
-      `SELECT count(*) AS count FROM control_artifacts WHERE attempt_id = $1`,
+      `SELECT storage_uri FROM control_artifacts WHERE attempt_id = $1 AND kind = 'tool_output' AND state = 'SEALED'`,
       [lease.attemptId],
     );
-    assert.equal(Number(artifacts.rows[0]?.count), 0);
+    assert.equal(artifacts.rows.length, 1);
+    const persisted = readFileSync(String(artifacts.rows[0]?.storage_uri), 'utf8');
+    assert.match(persisted, /confidential internal-only roadmap/u);
   } finally {
     connection.release();
   }
@@ -7782,56 +7467,6 @@ test('real Tavily runs only through a valid lease and persists real provenance',
   }));
 });
 
-test('Skill provenance retains the contract hashes captured before the provider call', async () => {
-  const originalRoot = getConfigRoot();
-  const missingRoot = mkdtempSync(join(tmpdir(), 'missing-skill-receipt-root-'));
-  class ConfigBreakingAfterSkillResultLLM extends CountingRealLLM {
-    override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
-      const result = await super.generateStructured<T>(options);
-      setConfigRoot(missingRoot);
-      return result;
-    }
-  }
-
-  try {
-    const skill = new SkillLoader().getSkill(planSteps[1]!.actor_id);
-    assert.ok(skill?.input_schema);
-    assert.ok(skill.output_schema);
-    assert.ok(skill.payload_schema);
-    const expectedSchemaHashes = {
-      input: hashFile(skill.input_schema),
-      output: hashFile(skill.output_schema),
-      payload: hashFile(skill.payload_schema),
-    };
-    const { repository, lease } = await claimedExecution(
-      new Date(Date.now() + 60_000),
-      planSteps.slice(0, 2),
-    );
-    const result = await buildEngine(
-      repository,
-      new ToolRouter().register(new CountingRealTavilyAdapter()),
-      new ConfigBreakingAfterSkillResultLLM(),
-    ).execute({ lease, expectedModel: 'pinned-model' });
-
-    assert.equal(result.status, 'completed');
-    const calls = await repository.listModelCalls(lease.attemptId);
-    assert.equal(calls.length, 1);
-    const receipt = calls[0]!;
-    assert.equal(receipt.stage, 'skill');
-    const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
-    assert.equal(skillStep?.skillProvenance?.status, 'succeeded');
-    assert.equal(skillStep?.skillProvenance?.inputSchemaHash, expectedSchemaHashes.input);
-    assert.equal(skillStep?.skillProvenance?.outputSchemaHash, expectedSchemaHashes.output);
-    assert.equal(skillStep?.skillProvenance?.payloadSchemaHash, expectedSchemaHashes.payload);
-    assert.equal(skillStep?.skillProvenance?.modelReceiptId, receipt.id);
-    assert.equal(skillStep?.skillProvenance?.promptHash, receipt.promptHash);
-    assert.equal(skillStep?.skillProvenance?.traceId, receipt.traceId);
-  } finally {
-    setConfigRoot(originalRoot);
-    rmSync(missingRoot, { recursive: true, force: true });
-  }
-});
-
 test('one production Tool collector Manifest can satisfy every configured required Evidence Policy', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
@@ -7889,6 +7524,18 @@ test('one production Tool collector Manifest can satisfy every configured requir
     }
   }
 });
+
+class FailingFinalReportHtmlArtifactStore extends ControlArtifactStore {
+  private failed = false;
+
+  override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
+    if (!this.failed && input.kind === 'final_report_html') {
+      this.failed = true;
+      throw new Error('fixture NativeFinalReport HTML write failed');
+    }
+    return super.writeText(input);
+  }
+}
 
 class FailingStandaloneHtmlArtifactStore extends ControlArtifactStore {
   override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {

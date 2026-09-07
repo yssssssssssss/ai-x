@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "joyspace-knowledge-snapshot-v1.schema.json",
+  "title": "JoyspaceKnowledgeSnapshotV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "title", "body", "author", "sourceUrl", "updatedAt",
+    "contentSha256", "toolArtifactId", "toolArtifactContentSha256"
+  ],
+  "properties": {
+    "version": { "const": "joyspace-knowledge-snapshot-v1" },
+    "title": { "type": "string", "minLength": 1 },
+    "body": { "type": "string", "minLength": 1 },
+    "author": { "type": ["string", "null"] },
+    "sourceUrl": { "type": "string", "pattern": "^https://joyspace\\.jd\\.com/" },
+    "updatedAt": { "type": ["string", "null"] },
+    "contentSha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "toolArtifactId": { "type": "string", "minLength": 1 },
+    "toolArtifactContentSha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

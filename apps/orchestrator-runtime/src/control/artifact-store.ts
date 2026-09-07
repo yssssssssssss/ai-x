@@ -25,6 +25,10 @@ configureFsSafeNative({ mode: 'require' });
 const MAX_BINARY_BYTE_SIZE = 10 * 1024 * 1024;
 const MAX_BINARY_PIXEL_COUNT = 20_000_000;
 const HTML_TEXT_MEDIA_TYPE = 'text/html; charset=utf-8';
+const MARKDOWN_TEXT_MEDIA_TYPE = 'text/markdown; charset=utf-8';
+const PLAIN_TEXT_MEDIA_TYPE = 'text/plain; charset=utf-8';
+const CSV_TEXT_MEDIA_TYPE = 'text/csv; charset=utf-8';
+type TextMediaType = typeof HTML_TEXT_MEDIA_TYPE | typeof MARKDOWN_TEXT_MEDIA_TYPE | typeof PLAIN_TEXT_MEDIA_TYPE;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export class ArtifactIntegrityError extends Error {
@@ -61,6 +65,7 @@ interface ArtifactWriteBase {
   schemaVersion?: string;
   sensitivity?: string;
   redactionPolicyVersion?: string;
+  metadata?: Record<string, unknown>;
   activeLease?: ControlExecutionLease;
 }
 
@@ -75,8 +80,15 @@ export interface BinaryArtifactWriteInput extends ArtifactWriteBase {
 
 export interface TextArtifactWriteInput extends ArtifactWriteBase {
   content: string;
-  mediaType: 'text/html; charset=utf-8';
+  mediaType: TextMediaType;
   maxByteSize: number;
+}
+
+export interface CsvArtifactWriteInput extends ArtifactWriteBase {
+  content: string;
+  mediaType: 'text/csv; charset=utf-8';
+  maxByteSize: number;
+  metadata?: Record<string, unknown>;
 }
 
 export type TrustedBinaryContentType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml';
@@ -690,7 +702,11 @@ export class ControlArtifactStore {
   async writeJson(input: ArtifactWriteInput): Promise<ControlArtifact> {
     const content = JSON.stringify(input.value, null, 2);
     if (content === undefined) throw new TypeError('JSON artifact value is not serializable');
-    return this.writeBytes(input, Buffer.from(content));
+    return this.writeBytes(
+      input,
+      Buffer.from(content),
+      input.metadata ? { mediaType: 'application/json', metadata: structuredClone(input.metadata) } : undefined,
+    );
   }
 
   async writeBinary(input: BinaryArtifactWriteInput): Promise<ControlArtifact> {
@@ -706,8 +722,14 @@ export class ControlArtifactStore {
   }
 
   async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
-    if (input.mediaType !== HTML_TEXT_MEDIA_TYPE) {
-      throw new TextArtifactValidationError(`media type must be ${HTML_TEXT_MEDIA_TYPE}`);
+    if (
+      input.mediaType !== HTML_TEXT_MEDIA_TYPE
+      && input.mediaType !== MARKDOWN_TEXT_MEDIA_TYPE
+      && input.mediaType !== PLAIN_TEXT_MEDIA_TYPE
+    ) {
+      throw new TextArtifactValidationError(
+        `media type must be ${HTML_TEXT_MEDIA_TYPE}, ${MARKDOWN_TEXT_MEDIA_TYPE}, or ${PLAIN_TEXT_MEDIA_TYPE}`,
+      );
     }
     if (!Number.isSafeInteger(input.maxByteSize) || input.maxByteSize <= 0) {
       throw new TextArtifactValidationError('maxByteSize must be a positive safe integer');
@@ -729,6 +751,32 @@ export class ControlArtifactStore {
       throw new TextArtifactValidationError('byte size exceeds 10 MiB');
     }
     return this.writeBytes(input, bytes, { mediaType: input.mediaType });
+  }
+
+  async writeCsv(input: CsvArtifactWriteInput): Promise<ControlArtifact> {
+    if (input.mediaType !== CSV_TEXT_MEDIA_TYPE) {
+      throw new TextArtifactValidationError(`media type must be ${CSV_TEXT_MEDIA_TYPE}`);
+    }
+    if (!Number.isSafeInteger(input.maxByteSize) || input.maxByteSize <= 0) {
+      throw new TextArtifactValidationError('maxByteSize must be a positive safe integer');
+    }
+    if (typeof input.content !== 'string' || input.content.length === 0) {
+      throw new TextArtifactValidationError('CSV content must be a non-empty string');
+    }
+    if (input.content.includes('\0')) {
+      throw new TextArtifactValidationError('NUL characters are not allowed');
+    }
+    const bytes = Buffer.from(input.content, 'utf8');
+    if (decodeRoundTripUtf8(bytes) !== input.content) {
+      throw new TextArtifactValidationError('content does not round-trip as UTF-8');
+    }
+    if (bytes.byteLength > input.maxByteSize || bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
+      throw new TextArtifactValidationError(`CSV byte size exceeds ${Math.min(input.maxByteSize, MAX_BINARY_BYTE_SIZE)}`);
+    }
+    return this.writeBytes(input, bytes, {
+      mediaType: input.mediaType,
+      ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {}),
+    });
   }
 
   async reconcileStaging(): Promise<void> {
@@ -786,9 +834,29 @@ export class ControlArtifactStore {
   }
 
   async readVerifiedBoundText(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, HTML_TEXT_MEDIA_TYPE);
+  }
+
+  async readVerifiedBoundMarkdown(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, MARKDOWN_TEXT_MEDIA_TYPE);
+  }
+
+  async readVerifiedBoundPlainText(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, PLAIN_TEXT_MEDIA_TYPE);
+  }
+
+  async readVerifiedBoundDocument(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    return this.readVerifiedUtf8Text(artifactId, [MARKDOWN_TEXT_MEDIA_TYPE, PLAIN_TEXT_MEDIA_TYPE]);
+  }
+
+  private async readVerifiedUtf8Text(
+    artifactId: string,
+    expectedMediaType: TextMediaType | readonly TextMediaType[],
+  ): Promise<{ artifact: ControlArtifact; content: string }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
-    if (artifact.mediaType !== HTML_TEXT_MEDIA_TYPE) {
-      throw new ArtifactIntegrityError(artifactId, `media type must be ${HTML_TEXT_MEDIA_TYPE}`);
+    const expected = Array.isArray(expectedMediaType) ? expectedMediaType : [expectedMediaType];
+    if (!artifact.mediaType || !expected.includes(artifact.mediaType as TextMediaType)) {
+      throw new ArtifactIntegrityError(artifactId, `media type must be ${expected.join(' or ')}`);
     }
     if (bytes.includes(0)) {
       throw new ArtifactIntegrityError(artifactId, 'contains a NUL byte');
@@ -797,6 +865,17 @@ export class ControlArtifactStore {
     if (content === null) {
       throw new ArtifactIntegrityError(artifactId, 'does not contain round-trip UTF-8');
     }
+    return { artifact, content };
+  }
+
+  async readVerifiedBoundCsv(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true, MAX_BINARY_BYTE_SIZE);
+    if (artifact.mediaType !== CSV_TEXT_MEDIA_TYPE) {
+      throw new ArtifactIntegrityError(artifactId, `media type must be ${CSV_TEXT_MEDIA_TYPE}`);
+    }
+    if (bytes.includes(0)) throw new ArtifactIntegrityError(artifactId, 'contains a NUL byte');
+    const content = decodeRoundTripUtf8(bytes);
+    if (content === null) throw new ArtifactIntegrityError(artifactId, 'does not contain round-trip UTF-8');
     return { artifact, content };
   }
 

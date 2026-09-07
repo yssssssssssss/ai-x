@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, useMemo, type FormEvent, type KeyboardEvent } from 'react';
-import { api, type SkillItem } from '../api/client.ts';
+import { api, type OrchestrationModeV1, type SkillItem } from '../api/client.ts';
 import { LABS, type Lab } from '../pages/Labs.tsx';
 
 // 底部 sticky 输入框。Enter 提交,Shift+Enter 换行。
 // 输入以 $ 开头(尚未输入空格)时,弹出 skill 命令菜单,随输入实时筛选;选中插入 $<id> 。
-export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: (t: string) => void }) {
+export function Composer({ disabled, multiSkillEnabled, onSubmit }: {
+  disabled: boolean;
+  multiSkillEnabled: boolean;
+  onSubmit: (text: string, orchestrationMode: OrchestrationModeV1) => void;
+}) {
   const [text, setText] = useState('');
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationModeV1>('single_skill');
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [sel, setSel] = useState(0);
   const [dismissed, setDismissed] = useState(false); // Esc 关闭,直到下次改动
@@ -36,6 +41,7 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
   useEffect(() => setSel(0), [query]);
 
   function choose(s: SkillItem) {
+    setOrchestrationMode('single_skill');
     setText(`$${s.id} `);
     setDismissed(true);
     taRef.current?.focus();
@@ -45,7 +51,7 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
     e.preventDefault();
     const t = text.trim();
     if (!t || disabled) return;
-    onSubmit(t);
+    onSubmit(t, orchestrationMode);
     setText('');
     setDismissed(false);
   }
@@ -63,6 +69,55 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
   return (
     <form className="composer" onSubmit={submit}>
       <div style={{ maxWidth: 760, margin: '0 auto', position: 'relative' }}>
+        <fieldset
+          aria-label="运行模式"
+          disabled={disabled}
+          style={{
+            border: 0,
+            padding: 0,
+            margin: '0 0 10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          <legend style={{ fontSize: 12, color: 'var(--text-faint)', marginRight: 4 }}>运行模式</legend>
+          {([
+            ['single_skill', '单项分析'],
+            ['multi_skill', '多项能力协作'],
+          ] as const).map(([value, label]) => {
+            const unavailable = value === 'multi_skill' && !multiSkillEnabled;
+            return (
+              <label
+                key={value}
+                title={unavailable ? '当前环境尚未开放多项能力协作' : undefined}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '5px 10px',
+                  border: `1px solid ${orchestrationMode === value ? 'var(--skill-fg)' : 'var(--border-soft)'}`,
+                  borderRadius: 999,
+                  color: unavailable ? 'var(--text-faint)' : 'var(--text-dim)',
+                  cursor: disabled || unavailable ? 'not-allowed' : 'pointer',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="orchestration-mode"
+                  value={value}
+                  checked={orchestrationMode === value}
+                  disabled={disabled || unavailable}
+                  onChange={() => {
+                    setOrchestrationMode(value);
+                    if (value === 'multi_skill' && /^\$\S+/u.test(text)) setText('');
+                  }}
+                />
+                <span>{label}</span>
+              </label>
+            );
+          })}
+        </fieldset>
         {menuOpen && (
           <div
             role="listbox"

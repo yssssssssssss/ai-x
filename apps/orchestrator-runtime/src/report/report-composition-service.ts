@@ -376,8 +376,7 @@ export class ReportCompositionService implements ReportCompositionPort {
     }
 
     const lineageVisualAssets = verifiedAssets.filter(({ manifest }) => manifest.derivation?.kind !== 'chart_svg');
-    const visualAssets = lineageVisualAssets.filter(({ manifest }) =>
-      manifest.exportPolicy === 'allow' || manifest.exportPolicy === 'mask');
+    const visualAssets = lineageVisualAssets;
     const visualAnnotationBindings: VerifiedVisualAnnotationBinding[] = [];
     const usedAnnotationArtifacts = new Set<string>();
     for (const asset of lineageVisualAssets) {
@@ -519,17 +518,15 @@ export class ReportCompositionService implements ReportCompositionPort {
         }
         usedChartAssets.add(key);
         chartIds.add(spec.chartId);
-        if (asset.manifest.exportPolicy === 'allow' || asset.manifest.exportPolicy === 'mask') {
-          charts.push({
-            spec,
-            specHash,
-            table: expectedTable,
-            asset,
-            ...(dataArtifactRef ? { dataArtifactRef } : {}),
-            ...(data ? { data } : {}),
-            chartSpecArtifactRef,
-          });
-        }
+        charts.push({
+          spec,
+          specHash,
+          table: expectedTable,
+          asset,
+          ...(dataArtifactRef ? { dataArtifactRef } : {}),
+          ...(data ? { data } : {}),
+          chartSpecArtifactRef,
+        });
       } catch (error) {
         throw chartIntegrityError(
           chartInputArtifact.id,

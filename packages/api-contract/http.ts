@@ -4,6 +4,10 @@
 // 从而 route 与前端共享同一份响应契约,漂移在编译期就炸。
 
 import type {
+  NativeSkillInvocation,
+  ResolvedPlanInputs,
+} from './native-skill-orchestration.ts';
+import type {
   CurrentPlanStep,
   CurrentPlanStepV3,
   CurrentCapabilityGap,
@@ -30,9 +34,41 @@ export interface User {
   role?: string;
 }
 
-export interface Upload {
-  role: string;
-  dataUrl: string;
+export interface DatasetUploadMetadata {
+  rowMeaning: string;
+  timeRange: string;
+  fieldNotes: Record<string, string>;
+  units: Record<string, string>;
+  sampling: string;
+  piiConfirmedAbsent: boolean;
+}
+
+export interface DatasetUploadResponse {
+  datasetInputId: string;
+  fileName: string;
+  contentSha256: string;
+  byteSize: number;
+  rowCount: number;
+  columns: string[];
+}
+
+export interface DocumentUploadResponse {
+  documentInputId: string;
+  files: Array<{
+    fileName: string;
+    mediaType: 'text/markdown; charset=utf-8' | 'text/plain; charset=utf-8';
+    contentSha256: string;
+    byteSize: number;
+  }>;
+}
+
+export interface VisualUploadResponse {
+  visualInputId: string;
+  images: Array<{
+    contentSha256: string;
+    mediaType: 'image/jpeg' | 'image/png' | 'image/webp';
+    byteSize: number;
+  }>;
 }
 
 export interface Finding {
@@ -79,11 +115,13 @@ export interface ExecLogRow {
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。
 export interface FinalizedPlan {
-  execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3';
+  execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3' | 'native-skill-execution-plan-v1';
+  mode?: 'single_skill' | 'multi_skill';
   steps: Array<PlanStep | CurrentPlanStep | CurrentPlanStepV3>;
   activated_nodes: string[];
   assumptions: Assumption[];
-  skill_invocations?: Array<CurrentSkillInvocation | CurrentSkillInvocationV3>;
+  skill_invocations?: Array<CurrentSkillInvocation | CurrentSkillInvocationV3 | NativeSkillInvocation>;
+  resolved_inputs?: ResolvedPlanInputs;
   capability_demand_graph?: CapabilityDemandGraphV1;
   contribution_requirements?: PlanContributionRequirement[];
   portfolio_summary?: PlanPortfolioSummary;

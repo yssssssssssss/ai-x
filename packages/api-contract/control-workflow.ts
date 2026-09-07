@@ -1,14 +1,16 @@
+import type {
+  ReadableExecutionPlan,
+  ResolvedPlanInputs,
+} from './native-skill-orchestration.ts';
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   ContributionLedgerV1,
   ContributionSummaryV1,
   CrossSkillReviewV1,
-  CurrentExecutionPlan,
   CurrentExecutionPlanV3,
   EvidenceManifest,
   LegacyResearchDeliverableEnvelope,
   PendingInput,
-  ReadableCurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
 } from './research-deliverable.ts';
@@ -32,6 +34,14 @@ export type ControlWorkflowState =
   | 'rejected';
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
+
+export const ORCHESTRATION_MODES = ['single_skill', 'multi_skill'] as const;
+export type OrchestrationModeV1 = typeof ORCHESTRATION_MODES[number];
+
+export function isOrchestrationModeV1(value: unknown): value is OrchestrationModeV1 {
+  return typeof value === 'string'
+    && (ORCHESTRATION_MODES as readonly string[]).includes(value);
+}
 
 export interface PlanningGuidanceClarification {
   reasonCode: 'scenario_selection_required';
@@ -67,6 +77,7 @@ export interface ActivateRequirementVersionRequest {
 export interface PlanControlTaskRequest {
   originalInput: string;
   conversationId?: string;
+  orchestrationMode: OrchestrationModeV1;
 }
 
 
@@ -76,6 +87,7 @@ export interface ControlTaskResponse {
   stateVersion: number;
   activePlanVersionId: string | null;
   currentAttemptId: string | null;
+  orchestrationMode?: OrchestrationModeV1 | null;
 }
 
 export interface CreateControlTaskRequest {
@@ -92,17 +104,16 @@ export interface CurrentPlanCandidate {
   rationale: string;
   tradeoffs: string;
   planHash: string;
-  plan: CurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   pendingInputs: PendingInput[];
+  resolvedInputs?: ResolvedPlanInputs;
 }
 
 export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
   plan: CurrentExecutionPlanV3;
 }
 
-export interface ReadableCurrentPlanCandidate extends Omit<CurrentPlanCandidate, 'plan'> {
-  plan: ReadableCurrentExecutionPlan;
-}
+export type ReadableCurrentPlanCandidate = CurrentPlanCandidate;
 
 export interface ControlPlanCandidatesResponse {
   kind: 'current';
@@ -142,6 +153,7 @@ export interface ConfirmControlPlanRequest {
   planVersionId: string;
   confirmationAnswers: Record<string, unknown>;
   inputValues: Record<string, unknown>;
+  waivedInputKeys?: string[];
   idempotencyKey: string;
 }
 
@@ -213,6 +225,7 @@ export interface ControlExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  finalReportArtifactId?: string;
   crossSkillReviewArtifactId?: string;
   contributionLedgerArtifactId?: string;
   contributionSummaryArtifactId?: string;
@@ -244,7 +257,25 @@ export const REPORT_REVIEW_V2_DIMENSION_IDS = [
   ...REPORT_REVIEW_DIMENSION_IDS,
   ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
 ] as const;
-export type ReportReviewDimensionId = typeof REPORT_REVIEW_V2_DIMENSION_IDS[number];
+export const INDUSTRY_REPORT_REVIEW_DIMENSION_IDS = [
+  'requirement_coverage',
+  'question_coverage',
+  'ten_dimension_coverage',
+  'evidence_coverage',
+  'market_claim_strength',
+  'persona_evidence_boundary',
+  'competitor_sample_integrity',
+  'jd_diagnosis_quality',
+  'category_specificity',
+  'strategy_chain_actionability',
+  'category_asset_provenance',
+  'measurement_quality',
+  'risk_disclosure',
+  'visual_quality',
+] as const;
+export type ReportReviewDimensionId =
+  | typeof REPORT_REVIEW_V2_DIMENSION_IDS[number]
+  | typeof INDUSTRY_REPORT_REVIEW_DIMENSION_IDS[number];
 
 export interface ReportReviewIssue {
   id: string;
@@ -261,7 +292,7 @@ export interface ReportReviewDimension {
 }
 
 export interface ReportReviewArtifact {
-  version: 'report-review-v1' | 'report-review-v2';
+  version: 'report-review-v1' | 'report-review-v2' | 'report-review-v3';
   taskId: string;
   planVersionId: string;
   attemptId: string;

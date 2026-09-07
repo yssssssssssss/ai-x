@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadSkillRegistry, skillCompositionIssues } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { skillCompositionIssues } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import {
   inspectDeliverableRegistry,
   resolveDeliverableCompositionPolicy,
@@ -10,7 +11,7 @@ import {
 const contributionSchema = 'schemas/research-contribution-v1.schema.json';
 
 test('every production active Skill has an explicit valid composition classification', () => {
-  const active = loadSkillRegistry().skills.filter(({ status }) => status === 'active');
+  const active = new SkillLoader().listActiveSkills();
   assert.ok(active.length > 0);
   for (const skill of active) {
     assert.ok(skill.composition, `${skill.id} must be composition-classified`);

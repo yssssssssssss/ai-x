@@ -1,6 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type { VisualAssetReference } from '../../../../packages/api-contract/research-deliverable.ts';
+import {
+  parseReportPackageV2,
+  REPORT_PACKAGE_V2_VERSION,
+  type ReportPackageV2,
+} from '../../../../packages/api-contract/report-package.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { CurrentReportPackageReader } from './current-report-package-reader.ts';
 import {
@@ -8,6 +13,7 @@ import {
   type EditorialDeliverableType,
   type EditorialSourceBinding,
   type EditorialSourceVerifier,
+  type EditorialTaskContext,
   type EditorialTaskReader,
   type FrozenEditorialSource,
   type Sha256,
@@ -33,10 +39,12 @@ const MAX_VISUAL_SOURCE_BYTES = 60 * 1024 * 1024;
 
 const EDITORIAL_DELIVERABLE_TYPES = new Set<EditorialDeliverableType>([
   'research_plan',
+  'research_strategy_report',
   'competitive_analysis_report',
   'voc_diagnosis_report',
   'design_audit_report',
   'accessibility_audit_report',
+  'industry_market_analysis_report',
 ]);
 
 type VerifiedJson<T = unknown> = { artifact: ControlArtifact; value: T };
@@ -180,6 +188,53 @@ function uniqueVisualReferences(references: readonly VisualAssetReference[]): Vi
     .map(([, reference]) => reference);
 }
 
+function taskContext(input: {
+  originalInput: string;
+  structuredTask: unknown;
+}): EditorialTaskContext | undefined {
+  const task = record(input.structuredTask);
+  if (
+    !task
+    || task.version !== 'research-task-v2'
+    || typeof task.research_goal !== 'string'
+    || !Array.isArray(task.target_audience)
+    || !task.target_audience.every((item) => typeof item === 'string')
+    || !Array.isArray(task.scope)
+    || !task.scope.every((item) => typeof item === 'string')
+    || !Array.isArray(task.constraints)
+    || !Array.isArray(task.success_criteria)
+    || !Array.isArray(task.expected_deliverables)
+    || !task.expected_deliverables.every((item) => typeof item === 'string')
+    || (task.requested_artifacts !== undefined && !Array.isArray(task.requested_artifacts))
+    || (task.sensitivity !== 'public' && task.sensitivity !== 'internal' && task.sensitivity !== 'confidential')
+    || typeof task.pii_detected !== 'boolean'
+  ) return undefined;
+  const statements = (values: unknown[]): string[] | undefined => {
+    const result: string[] = [];
+    for (const value of values) {
+      const item = record(value);
+      if (!item || typeof item.statement !== 'string') return undefined;
+      result.push(item.statement);
+    }
+    return result;
+  };
+  const constraints = statements(task.constraints);
+  const successCriteria = statements(task.success_criteria);
+  if (!constraints || !successCriteria) return undefined;
+  return {
+    originalRequest: input.originalInput,
+    researchGoal: task.research_goal,
+    targetAudience: [...task.target_audience] as string[],
+    scope: [...task.scope] as string[],
+    constraints,
+    successCriteria,
+    expectedDeliverables: [...task.expected_deliverables] as string[],
+    requestedArtifacts: structuredClone(task.requested_artifacts ?? []),
+    sensitivity: task.sensitivity,
+    piiDetected: task.pii_detected,
+  };
+}
+
 function assertReportPackageArtifact(
   artifact: ControlArtifact | null,
   binding: { taskId: string; planVersionId: string; attemptId: string },
@@ -189,7 +244,7 @@ function assertReportPackageArtifact(
     !artifact
     || artifact.state !== 'SEALED'
     || artifact.kind !== 'report_package'
-    || artifact.schemaVersion !== REPORT_PACKAGE_SCHEMA_VERSION
+    || ![REPORT_PACKAGE_SCHEMA_VERSION, REPORT_PACKAGE_V2_VERSION].includes(artifact.schemaVersion)
     || artifact.taskId !== binding.taskId
     || artifact.planVersionId !== binding.planVersionId
     || artifact.attemptId !== binding.attemptId
@@ -391,6 +446,7 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
 
   private async currentBinding(taskId: string): Promise<{
     binding: EditorialSourceBinding;
+    taskContext?: EditorialTaskContext;
     reportPackageArtifact: ControlArtifact & { state: 'SEALED'; contentSha256: Sha256 };
   }> {
     const initialTask = await this.repository.getTaskDetail(taskId);
@@ -433,6 +489,10 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
     ) {
       fail('SOURCE_BINDING_CHANGED');
     }
+    const frozenTaskContext = taskContext({
+      originalInput: initialTask.originalInput,
+      structuredTask: initialTask.structuredTask,
+    });
     return {
       binding: {
         taskId,
@@ -443,6 +503,7 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
         reportPackageArtifactId: reportPackageArtifact.id,
         reportPackageContentSha256: reportPackageArtifact.contentSha256,
       },
+      ...(frozenTaskContext === undefined ? {} : { taskContext: frozenTaskContext }),
       reportPackageArtifact,
     };
   }
@@ -467,7 +528,7 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
   }
 
   async readCurrent(taskId: string): Promise<FrozenEditorialSource> {
-    const { binding, reportPackageArtifact } = await this.currentBinding(taskId);
+    const { binding, taskContext: frozenTaskContext, reportPackageArtifact } = await this.currentBinding(taskId);
     const artifacts = new MemoizedEditorialArtifacts(
       this.repository,
       this.artifacts,
@@ -479,9 +540,11 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
     if (!artifactMetadataMatches(reportPackageArtifact, frozenPackage.artifact)) {
       fail('SOURCE_INTEGRITY_INVALID');
     }
-    let reportPackage: ReturnType<typeof parseReportPackageArtifactValue>;
+    let reportPackage: ReturnType<typeof parseReportPackageArtifactValue> | ReportPackageV2;
     try {
-      reportPackage = parseReportPackageArtifactValue(frozenPackage.value);
+      reportPackage = frozenPackage.artifact.schemaVersion === REPORT_PACKAGE_V2_VERSION
+        ? parseReportPackageV2(frozenPackage.value)
+        : parseReportPackageArtifactValue(frozenPackage.value);
     } catch {
       fail('SOURCE_INTEGRITY_INVALID');
     }
@@ -495,11 +558,14 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
       fail(reportPackage.presentationMode === 'legacy_text' ? 'EDITORIAL_LEGACY_REPORT_UNSUPPORTED' : 'SOURCE_INTEGRITY_INVALID');
     }
 
+    const reportDocumentArtifactId = reportPackage.version === REPORT_PACKAGE_V2_VERSION
+      ? reportPackage.sourceReportDocumentArtifactId
+      : reportPackage.reportDocumentArtifactId;
     const componentIds = [
       reportPackage.deliverableArtifactId,
       reportPackage.evidenceManifestArtifactId,
       reportPackage.reportReviewArtifactId,
-      ...(reportPackage.reportDocumentArtifactId ? [reportPackage.reportDocumentArtifactId] : []),
+      ...(reportDocumentArtifactId ? [reportDocumentArtifactId] : []),
     ];
     await artifacts.preflightJson(componentIds);
     const componentResults = new Map<string, VerifiedJson>();
@@ -529,8 +595,8 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
       evidenceResults.set(artifactId, await artifacts.readVerifiedJson(artifactId));
     }));
 
-    const rawVisualReferences = reportPackage.reportDocumentArtifactId
-      ? reportDocumentVisualReferences(componentResults.get(reportPackage.reportDocumentArtifactId)?.value)
+    const rawVisualReferences = reportDocumentArtifactId
+      ? reportDocumentVisualReferences(componentResults.get(reportDocumentArtifactId)?.value)
       : [];
     for (const entry of evidenceEntries) {
       if (entry.kind !== 'screenshot') continue;
@@ -578,7 +644,15 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
         repository: this.repository,
         visualAssets: capturingVisualReader,
         schemaValidator: this.schemaValidator,
-      }).read(binding, reportPackage);
+      }).read(
+        binding,
+        reportPackage.version === REPORT_PACKAGE_V2_VERSION
+          ? {
+              artifactId: frozenPackage.artifact.id,
+              contentSha256: frozenPackage.artifact.contentSha256,
+            }
+          : reportPackage,
+      );
     } catch (error) {
       if (error instanceof EditorialSourceError) throw error;
       fail('SOURCE_INTEGRITY_INVALID');
@@ -617,6 +691,7 @@ export class EditorialSourceReader implements EditorialSourceVerifier {
     await this.assertStillCurrent(binding);
     return {
       binding,
+      ...(frozenTaskContext === undefined ? {} : { taskContext: frozenTaskContext }),
       reportPackage: {
         artifact: structuredClone(frozenPackage.artifact) as ControlArtifact & {
           state: 'SEALED';

@@ -123,7 +123,7 @@ export class Orchestrator {
     ws.writeDecisionStates(decisionStates);
     const loadedSources: Array<{ type: string; ref: string; hash?: string }> = [
       { type: 'research_task', ref: `research_tasks.${taskRow.id}` },
-      { type: 'registry', ref: 'orchestrator/skill-registry.yaml', hash: hashFile(CONFIG_PATHS.skillRegistry) },
+      { type: 'registry', ref: 'orchestrator/skill-bindings.yaml', hash: hashFile(CONFIG_PATHS.skillBindings) },
       { type: 'decision_graph', ref: 'orchestrator/decision-graph.yaml', hash: graphHash },
       ...guidanceSources.map((source) => ({
         type: 'knowledge',

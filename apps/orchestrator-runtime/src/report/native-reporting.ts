@@ -1,0 +1,1140 @@
+import { createHash } from 'node:crypto';
+import {
+  DEFAULT_REPORT_PROMPT,
+  NATIVE_FINAL_REPORT_VERSION,
+  NATIVE_REPORT_DOCUMENT_VERSION,
+  NATIVE_SKILL_RESULT_VERSION,
+  nativeReportDocumentHash,
+  parseNativeFinalReport,
+  parseNativeReportDocument,
+  parseNativeSkillResult,
+  nativeSkillResultPath,
+  type NativeAttachment,
+  type NativeFinalReport,
+  type NativeOutput,
+  type NativeOutputFormat,
+  type NativeReportPolicy,
+  type NativeReportDocumentV1,
+  type NativeSkillResult,
+  type SourceReference,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
+import type {
+  ControlArtifact,
+  ControlExecutionLease,
+} from '../../../../database/control-plane.ts';
+import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../control/artifact-publication-group.ts';
+import type { ControlArtifactStore } from '../control/artifact-store.ts';
+import type { LLMClient } from '../runtime/llm-client.ts';
+import { renderNativeReportDocumentHtml } from './native-report-renderer.ts';
+
+const CITATION = /\[(S(?:-|\d)[A-Za-z0-9._:-]*)\]/gu;
+const URL_IN_TEXT = /https?:\/\/[^\s<>)\]]+/gu;
+const MARKDOWN_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gu;
+const MAX_REPORT_BYTES = 5 * 1024 * 1024;
+
+function digest(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+export class NativeReportError extends Error {
+  constructor(message: string) {
+    super(`native reporting failed: ${message}`);
+    this.name = 'NativeReportError';
+  }
+}
+
+export interface NativeSkillResultDraft {
+  title: string;
+  status: NativeSkillResult['status'];
+  primary?: {
+    format: 'markdown';
+    content: string;
+  };
+  reportDocument?: NativeReportDocumentV1;
+  attachments: Array<{
+    path: string;
+    mediaType: 'text/markdown' | 'text/html';
+    content: string;
+  }>;
+  gaps: string[];
+  missingInputKeys?: string[];
+}
+
+const SOURCE_IDS_SCHEMA = {
+  type: 'array',
+  items: { type: 'string', pattern: '^S-[A-Za-z0-9._:-]+$' },
+  uniqueItems: true,
+} as const;
+
+const REPORT_BLOCK_SCHEMA = {
+  oneOf: [{
+    type: 'object', additionalProperties: false,
+    required: ['type', 'content', 'sourceIds'],
+    properties: { type: { const: 'markdown' }, content: { type: 'string', minLength: 1 }, sourceIds: SOURCE_IDS_SCHEMA },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'columns', 'rows', 'sourceIds'],
+    properties: {
+      type: { const: 'table' },
+      columns: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
+      rows: { type: 'array', minItems: 1, items: { type: 'array', minItems: 1, items: { type: 'string' } } },
+      sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'metrics', 'sourceIds'],
+    properties: {
+      type: { const: 'metric-group' },
+      metrics: { type: 'array', minItems: 1, items: {
+        type: 'object', additionalProperties: false, required: ['label', 'value'],
+        properties: { label: { type: 'string', minLength: 1 }, value: { type: 'string', minLength: 1 }, note: { type: 'string', minLength: 1 } },
+      } },
+      sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'assetId', 'caption', 'altText', 'display', 'sourceIds'],
+    properties: {
+      type: { const: 'image' }, assetId: { type: 'string', minLength: 1 },
+      caption: { type: 'string', minLength: 1 }, altText: { type: 'string', minLength: 1 },
+      display: { enum: ['phone-frame', 'thumbnail', 'full-width'] }, sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'xAxis', 'yAxis', 'points', 'sourceIds'],
+    properties: {
+      type: { const: 'quadrant' }, xAxis: { type: 'string', minLength: 1 }, yAxis: { type: 'string', minLength: 1 },
+      points: { type: 'array', minItems: 1, items: {
+        type: 'object', additionalProperties: false, required: ['label', 'x', 'y'],
+        properties: { label: { type: 'string', minLength: 1 }, x: { type: 'number', minimum: 0, maximum: 100 }, y: { type: 'number', minimum: 0, maximum: 100 } },
+      } },
+      sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'items', 'sourceIds'],
+    properties: {
+      type: { const: 'timeline' },
+      items: { type: 'array', minItems: 1, items: {
+        type: 'object', additionalProperties: false, required: ['title', 'description'],
+        properties: { title: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 }, tag: { type: 'string', minLength: 1 } },
+      } },
+      sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }, {
+    type: 'object', additionalProperties: false,
+    required: ['type', 'title', 'elements', 'sourceIds'],
+    properties: {
+      type: { const: 'wireframe' }, title: { type: 'string', minLength: 1 },
+      elements: { type: 'array', minItems: 1, items: {
+        type: 'object', additionalProperties: false, required: ['label'],
+        properties: { label: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 } },
+      } },
+      sourceIds: SOURCE_IDS_SCHEMA,
+    },
+  }],
+} as const;
+
+export const NATIVE_REPORT_DOCUMENT_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['version', 'title', 'tabs', 'assetIds'],
+  properties: {
+    version: { const: NATIVE_REPORT_DOCUMENT_VERSION },
+    title: { type: 'string', minLength: 1 },
+    subtitle: { type: 'string', minLength: 1 },
+    summary: {
+      type: 'object', additionalProperties: false, required: ['conclusion', 'findings', 'actions'],
+      properties: {
+        conclusion: { type: 'string', minLength: 1 },
+        findings: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
+        actions: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
+      },
+    },
+    tabs: { type: 'array', minItems: 1, items: {
+      type: 'object', additionalProperties: false, required: ['id', 'title', 'sections'],
+      properties: {
+        id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
+        title: { type: 'string', minLength: 1 },
+        sections: { type: 'array', minItems: 1, items: {
+          type: 'object', additionalProperties: false, required: ['id', 'title', 'blocks'],
+          properties: {
+            id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
+            title: { type: 'string', minLength: 1 },
+            blocks: { type: 'array', minItems: 1, items: REPORT_BLOCK_SCHEMA },
+          },
+        } },
+      },
+    } },
+    assetIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
+  },
+} as const;
+
+export const NATIVE_SKILL_RESULT_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'status', 'attachments', 'gaps'],
+  oneOf: [
+    { required: ['primary'], not: { required: ['reportDocument'] } },
+    { required: ['reportDocument'], not: { required: ['primary'] } },
+  ],
+  properties: {
+    title: { type: 'string', minLength: 1 },
+    status: { enum: ['completed', 'completed_with_gaps', 'needs_input'] },
+    primary: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['format', 'content'],
+      properties: {
+        format: { const: 'markdown' },
+        content: { type: 'string', minLength: 1 },
+      },
+    },
+    reportDocument: NATIVE_REPORT_DOCUMENT_DRAFT_SCHEMA,
+    attachments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path', 'mediaType', 'content'],
+        properties: {
+          path: { type: 'string', pattern: '^[^/\\\\][^\\\\]*$' },
+          mediaType: { enum: ['text/markdown', 'text/html'] },
+          content: { type: 'string', minLength: 1 },
+        },
+      },
+    },
+    gaps: { type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true },
+    missingInputKeys: {
+      type: 'array',
+      items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
+      minItems: 1,
+      uniqueItems: true,
+    },
+  },
+} as const;
+
+function nativeOutput(format: NativeOutputFormat, content: string): NativeOutput {
+  return { format, content, contentHash: digest(content) };
+}
+
+function nativeAttachments(
+  values: NativeSkillResultDraft['attachments'],
+  sources: readonly SourceReference[],
+): NativeAttachment[] {
+  return values.map((attachment) => {
+    const content = attachment.mediaType === 'text/html'
+      ? safeHtmlDocument(attachment.path, attachment.content, sources)
+      : sanitizeGeneratedPrimary({ format: 'markdown', content: attachment.content }, sources).primary.content;
+    return {
+      ...attachment,
+      content,
+      contentHash: digest(content),
+    };
+  });
+}
+
+type NativePrimaryDraft = {
+  format: NativeOutputFormat;
+  content: string;
+};
+
+function sanitizeGeneratedPrimary(
+  primary: NativePrimaryDraft,
+  sources: readonly SourceReference[],
+): { primary: NativePrimaryDraft; removed: boolean } {
+  if (primary.format === 'html') {
+    const content = sanitizeNativeHtml(primary.content, sources);
+    return { primary: { ...primary, content }, removed: content !== primary.content };
+  }
+  const byId = sourceMap(sources);
+  const allowedUrls = new Set(sources.flatMap(({ url }) => url ? [url] : []));
+  let removed = false;
+  let content = primary.content.replace(MARKDOWN_LINK, (full, label: string, url: string) => {
+    if (allowedUrls.has(url)) return full;
+    removed = true;
+    return label;
+  });
+  content = content.replace(CITATION, (full, id: string) => {
+    if (byId.has(id)) return full;
+    removed = true;
+    return '[未验证来源已移除]';
+  });
+  content = content.replace(URL_IN_TEXT, (raw) => {
+    const trailing = /[.,;:!?。，；：！？]+$/u.exec(raw)?.[0] ?? '';
+    const url = trailing ? raw.slice(0, -trailing.length) : raw;
+    if (allowedUrls.has(url)) return raw;
+    removed = true;
+    return trailing;
+  });
+  return { primary: { ...primary, content }, removed };
+}
+
+export function createNativeSkillResult(input: {
+  taskId?: string;
+  availableAssetIds?: readonly string[];
+  skillId: string;
+  invocationId: string;
+  draft: NativeSkillResultDraft;
+  sources: SourceReference[];
+  deterministicGaps?: string[];
+}): NativeSkillResult {
+  if ((input.draft.primary === undefined) === (input.draft.reportDocument === undefined)) {
+    throw new NativeReportError('Skill result must contain exactly one primary output');
+  }
+  const reportDocument = input.draft.reportDocument === undefined
+    ? undefined
+    : parseNativeReportDocument(input.draft.reportDocument);
+  if (reportDocument && !input.taskId) {
+    throw new NativeReportError('Task ID is required to render a ReportDocument');
+  }
+  if (reportDocument) {
+    const availableAssetIds = new Set(input.availableAssetIds ?? []);
+    const unavailable = reportDocument.assetIds.find((assetId) => !availableAssetIds.has(assetId));
+    if (unavailable) throw new NativeReportError(`ReportDocument references unavailable Asset ${unavailable}`);
+  }
+  const primaryDraft: NativePrimaryDraft = reportDocument
+    ? {
+        format: 'html',
+        content: renderNativeReportDocumentHtml({
+          document: reportDocument,
+          sources: input.sources,
+          gaps: input.draft.gaps,
+          assetUrl: (assetId) => `/api/control-tasks/${encodeURIComponent(input.taskId!)}/assets/${encodeURIComponent(assetId)}`,
+        }),
+      }
+    : input.draft.primary!;
+  const sanitized = reportDocument
+    ? { primary: primaryDraft, removed: false }
+    : sanitizeGeneratedPrimary(primaryDraft, input.sources);
+  const gaps = [...new Set([
+    ...input.draft.gaps,
+    ...(input.deterministicGaps ?? []),
+    ...(sanitized.removed ? ['模型输出中的未验证来源引用已移除。'] : []),
+  ])];
+  const status = input.draft.status === 'needs_input'
+    ? 'needs_input'
+    : gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+  return parseNativeSkillResult({
+    version: NATIVE_SKILL_RESULT_VERSION,
+    skillId: input.skillId,
+    invocationId: input.invocationId,
+    title: input.draft.title,
+    status,
+    primary: nativeOutput(sanitized.primary.format, sanitized.primary.content),
+    attachments: nativeAttachments(input.draft.attachments, input.sources),
+    sources: input.sources,
+    gaps,
+    ...(reportDocument === undefined
+      ? {}
+      : { reportDocument, reportDocumentHash: nativeReportDocumentHash(reportDocument) }),
+    ...(status === 'needs_input'
+      ? { missingInputKeys: input.draft.missingInputKeys }
+      : {}),
+  });
+}
+
+export interface ReportWriterInput {
+  requirement: unknown;
+  results: NativeSkillResult[];
+}
+
+export interface NativeReportWriter {
+  write(input: ReportWriterInput): Promise<string | NativeReportDocumentV1>;
+}
+
+export class LlmNativeReportWriter implements NativeReportWriter {
+  constructor(
+    private readonly llm: LLMClient,
+    private readonly receipt: {
+      attemptId: string;
+      stepNo: number;
+      stage: 'native_default_report' | 'native_multi_synthesis';
+      expectedModel?: string;
+      outputFormat?: NativeOutputFormat;
+      instructions?: string;
+    },
+  ) {}
+
+  async write(input: ReportWriterInput): Promise<string | NativeReportDocumentV1> {
+    const systemPrompt = [
+        ...(this.receipt.stage === 'native_default_report'
+          ? [DEFAULT_REPORT_PROMPT]
+          : [
+              '你负责把多个 Skill 的原始结果综合为一份最终报告。',
+              '只使用输入结果中的事实、Source ID 和 URL；不得新增事实、数字、来源或 URL。',
+              '保留冲突、资料缺口和待验证项；来源与资料缺口附录由系统生成。',
+              '所有用户可见标题、正文、表头、标签和资料缺口使用简体中文；专有名词可保留原文。',
+              '自主决定最适合当前问题的章节和顺序。',
+            ]),
+        ...(this.receipt.instructions ? ['必须优先遵循以下原版 Skill 报告要求：', this.receipt.instructions] : []),
+        this.receipt.outputFormat === 'html'
+          ? '生成 native-report-document-v1 结构化文档，不生成 HTML、CSS、JavaScript 或 Base64；只能复用输入结果已有的 Asset ID。'
+          : '只输出 Markdown。',
+      ].join('\n');
+    const context = {
+      requirement: input.requirement,
+      results: input.results.map((item) => ({
+        skillId: item.skillId,
+        invocationId: item.invocationId,
+        title: item.title,
+        status: item.status,
+        format: item.reportDocument ? 'report_document' : item.primary.format,
+        content: item.reportDocument ?? item.primary.content,
+        sourceIds: item.sources.map(({ id }) => id),
+        gaps: item.gaps,
+      })),
+    };
+    const receipt = {
+      stage: this.receipt.stage,
+      attemptId: this.receipt.attemptId,
+      stepNo: this.receipt.stepNo,
+      ...(this.receipt.expectedModel === undefined
+        ? {}
+        : { expectedModel: this.receipt.expectedModel }),
+    };
+    if (this.receipt.outputFormat === 'html') {
+      const result = await this.llm.generateStructured<NativeReportDocumentV1>({
+        prompt: `${systemPrompt}\n\n请围绕用户目标形成直接答案、关键分析和可执行建议。`,
+        schema: NATIVE_REPORT_DOCUMENT_DRAFT_SCHEMA,
+        schemaName: 'native-final-report-document',
+        context,
+        receipt,
+      });
+      return parseNativeReportDocument(result.data);
+    }
+    const result = await this.llm.generateText({
+      systemPrompt,
+      prompt: '请围绕用户目标形成直接答案、关键分析和可执行建议。',
+      context,
+      receipt,
+    });
+    return result.text;
+  }
+}
+
+function sameSource(left: SourceReference, right: SourceReference): boolean {
+  return left.id === right.id
+    && left.title === right.title
+    && left.type === right.type
+    && left.url === right.url
+    && left.locator === right.locator
+    && left.contentHash === right.contentHash;
+}
+
+function sourceMap(sources: readonly SourceReference[]): Map<string, SourceReference> {
+  const byId = new Map<string, SourceReference>();
+  for (const source of sources) {
+    const existing = byId.get(source.id);
+    if (existing && !sameSource(existing, source)) {
+      throw new NativeReportError(`source ${source.id} has conflicting definitions`);
+    }
+    byId.set(source.id, source);
+  }
+  return byId;
+}
+
+export function assertNativeContentReferences(
+  content: string,
+  sources: ReadonlyMap<string, SourceReference> | readonly SourceReference[],
+): void {
+  const byId: ReadonlyMap<string, SourceReference> = Array.isArray(sources)
+    ? sourceMap(sources)
+    : sources as ReadonlyMap<string, SourceReference>;
+  for (const match of content.matchAll(CITATION)) {
+    if (!byId.has(match[1]!)) throw new NativeReportError(`content references unknown source ${match[1]}`);
+  }
+  const allowedUrls = new Set(
+    [...byId.values()].flatMap(({ url }) => url === undefined ? [] : [url]),
+  );
+  for (const match of content.matchAll(URL_IN_TEXT)) {
+    const url = match[0].replace(/[.,;:!?。，；：！？]+$/u, '');
+    if (!allowedUrls.has(url)) throw new NativeReportError(`content references unverified URL ${url}`);
+  }
+}
+
+function assertResultSources(
+  result: NativeSkillResult,
+  verifiedById: ReadonlyMap<string, SourceReference>,
+): void {
+  for (const source of result.sources) {
+    const verified = verifiedById.get(source.id);
+    if (!verified || !sameSource(source, verified)) {
+      throw new NativeReportError(`Skill ${result.skillId} references an unverified source ${source.id}`);
+    }
+  }
+  if (result.reportDocument) return;
+  if (result.primary.format === 'html') sanitizeNativeHtml(result.primary.content, result.sources);
+  else assertNativeContentReferences(result.primary.content, verifiedById);
+}
+
+function mergeSources(results: readonly NativeSkillResult[]): SourceReference[] {
+  return [...sourceMap(results.flatMap(({ sources }) => sources)).values()];
+}
+
+function mergeGaps(results: readonly NativeSkillResult[], extra: readonly string[] = []): string[] {
+  return [...new Set([...results.flatMap(({ gaps }) => gaps), ...extra].filter((gap) => gap.trim()))];
+}
+
+function sourceMarkdown(sources: readonly SourceReference[]): string {
+  if (sources.length === 0) return '';
+  return [
+    '## 来源',
+    '',
+    ...sources.map((source) => {
+      const target = source.url ? `[${source.title}](${source.url})` : source.title;
+      return `- ${target}`;
+    }),
+  ].join('\n');
+}
+
+function gapMarkdown(gaps: readonly string[]): string {
+  if (gaps.length === 0) return '';
+  return ['## 资料缺口', '', ...gaps.map((gap) => `- ${gap}`)].join('\n');
+}
+
+function appendMarkdownAppendices(
+  markdown: string,
+  sources: readonly SourceReference[],
+  gaps: readonly string[],
+): string {
+  const appendices = [sourceMarkdown(sources), gapMarkdown(gaps)].filter(Boolean);
+  return appendices.length === 0
+    ? markdown
+    : `${markdown}${markdown.endsWith('\n') ? '\n' : '\n\n'}${appendices.join('\n\n')}\n`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function appendHtmlAppendices(
+  html: string,
+  sources: readonly SourceReference[],
+  gaps: readonly string[],
+): string {
+  const sourceItems = sources.map((source) => {
+    const title = source.url
+      ? `<a href="${escapeHtml(source.url)}">${escapeHtml(source.title)}</a>`
+      : escapeHtml(source.title);
+    return `<li>${title}</li>`;
+  }).join('');
+  const gapItems = gaps.map((gap) => `<li>${escapeHtml(gap)}</li>`).join('');
+  const appendix = `${sourceItems ? `<section><h2>来源</h2><ul>${sourceItems}</ul></section>` : ''}${gapItems ? `<section><h2>资料缺口</h2><ul>${gapItems}</ul></section>` : ''}`;
+  if (!appendix) return html;
+  return /<\/body>/iu.test(html)
+    ? html.replace(/<\/body>/iu, `${appendix}</body>`)
+    : `${html}${appendix}`;
+}
+
+export function sanitizeNativeHtml(html: string, sources: readonly SourceReference[]): string {
+  let sanitized = html
+    .replace(/<!--[\s\S]*?-->/gu, '')
+    .replace(/<\/?(?:script|iframe|frame|frameset|form|object|embed|link|meta|base)\b[^>]*>/giu, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, '')
+    .replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, '')
+    .replace(/@import\s+[^;]+;?/giu, '')
+    .replace(/url\s*\([^)]*\)/giu, '')
+    .replace(/expression\s*\([^)]*\)/giu, '');
+  const allowedUrls = new Set(sources.flatMap(({ url }) => url ? [url] : []));
+  sanitized = sanitized.replace(
+    /\s+(href|src|srcset|poster|xlink:href|action|formaction)\s*=\s*(?:(["'])(.*?)\2|([^\s>]+))/giu,
+    (_all, name: string, quote: string | undefined, quotedValue: string | undefined, bareValue: string | undefined) => {
+      const value = quotedValue ?? bareValue ?? '';
+      const normalizedName = name.toLowerCase();
+      if (normalizedName === 'href' && quote && allowedUrls.has(value) && value.startsWith('https://')) {
+        return ` href=${quote}${value}${quote}`;
+      }
+      if (normalizedName === 'src' && quote && /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/u.test(value)) {
+        return ` src=${quote}${value}${quote}`;
+      }
+      return '';
+    },
+  );
+  if (/<\/?(?:script|iframe|frame|frameset|form|object|embed)\b|\son[a-z]+\s*=|\bsrcdoc\s*=|@import|url\s*\(|expression\s*\(|\bjavascript\s*:/iu.test(sanitized)) {
+    throw new NativeReportError('HTML sanitizer left executable or network-bearing markup');
+  }
+  return sanitized;
+}
+
+function safeHtmlDocument(
+  title: string,
+  html: string,
+  sources: readonly SourceReference[],
+): string {
+  const sanitized = sanitizeNativeHtml(html, sources)
+    .replace(/<!doctype[^>]*>/giu, '')
+    .replace(/<\/?(?:html|head|body)\b[^>]*>/giu, '')
+    .replace(/<title\b[^>]*>[\s\S]*?<\/title>/giu, '');
+  return wrapHtml(title, sanitized);
+}
+
+function finalSkillReferences(results: readonly NativeSkillResult[]): NativeFinalReport['skillResults'] {
+  return results.map((result) => {
+    if (result.status === 'needs_input') throw new NativeReportError(`Skill ${result.skillId} still needs input`);
+    return {
+      skillId: result.skillId,
+      invocationId: result.invocationId,
+      status: result.status,
+      path: nativeSkillResultPath(result.invocationId),
+    };
+  });
+}
+
+function finalPrimary(
+  taskId: string,
+  result: NativeSkillResult,
+  sources: readonly SourceReference[],
+  gaps: readonly string[],
+): NativeOutput {
+  if (result.reportDocument) {
+    return nativeOutput('html', renderNativeReportDocumentHtml({
+      document: result.reportDocument,
+      sources,
+      gaps,
+      assetUrl: (assetId) => `/api/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
+    }));
+  }
+  if (result.primary.format === 'html') {
+    const body = appendHtmlAppendices(result.primary.content, sources, gaps);
+    return nativeOutput('html', safeHtmlDocument(result.title, body, sources));
+  }
+  return nativeOutput('markdown', appendMarkdownAppendices(result.primary.content, sources, gaps));
+}
+
+export async function finalizeSingleNativeReport(input: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  requirement: unknown;
+  result: NativeSkillResult;
+  verifiedSources: readonly SourceReference[];
+  reportPolicy: 'skill_defined' | 'default_llm';
+  defaultWriter?: NativeReportWriter;
+  extraGaps?: readonly string[];
+}): Promise<NativeFinalReport> {
+  const result = parseNativeSkillResult(input.result);
+  if (result.status === 'needs_input') throw new NativeReportError(`Skill ${result.skillId} still needs input`);
+  const verifiedById = sourceMap(input.verifiedSources);
+  assertResultSources(result, verifiedById);
+  const gaps = mergeGaps([result], input.extraGaps);
+  let primary: NativeOutput;
+  if (input.reportPolicy === 'default_llm') {
+    if (!input.defaultWriter) throw new NativeReportError('default report writer is unavailable');
+    const markdown = await input.defaultWriter.write({ requirement: input.requirement, results: [result] });
+    if (typeof markdown !== 'string' || !markdown.trim()) {
+      throw new NativeReportError('default report writer returned invalid Markdown');
+    }
+    assertNativeContentReferences(markdown, verifiedById);
+    primary = nativeOutput('markdown', appendMarkdownAppendices(markdown, result.sources, gaps));
+  } else {
+    primary = finalPrimary(input.taskId, result, result.sources, gaps);
+  }
+  return parseNativeFinalReport({
+    version: NATIVE_FINAL_REPORT_VERSION,
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    mode: 'single_skill',
+    title: result.title,
+    primary,
+    attachments: result.attachments,
+    sources: [...result.sources],
+    gaps,
+    skillResults: finalSkillReferences([result]),
+    ...(result.reportDocument === undefined
+      ? {}
+      : { reportDocument: result.reportDocument, reportDocumentHash: result.reportDocumentHash }),
+  });
+}
+
+function synthesisFallback(results: readonly NativeSkillResult[]): string {
+  return [
+    '# 综合报告暂不可用',
+    '',
+    '> 自动综合未完成。以下内容为各 Skill 的原始结果，已完成的 Skill 不会重新执行。',
+    '',
+    ...results.flatMap((result) => [
+      `## ${result.title}`,
+      '',
+      result.reportDocument
+        ? result.reportDocument.summary?.conclusion ?? '该能力生成了结构化报告，请在能力明细中查看。'
+        : result.primary.format === 'markdown'
+          ? result.primary.content
+          : '该能力生成了 HTML 结果，请在能力明细中查看。',
+      '',
+    ]),
+  ].join('\n').trimEnd();
+}
+
+export async function finalizeMultiNativeReport(input: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  title: string;
+  requirement: unknown;
+  results: NativeSkillResult[];
+  verifiedSources: readonly SourceReference[];
+  writer: NativeReportWriter;
+  reportPolicy: NativeReportPolicy;
+  extraGaps?: readonly string[];
+}): Promise<{ report: NativeFinalReport; synthesis: 'completed' | 'fallback' }> {
+  if (input.results.length === 0) throw new NativeReportError('Multi report has no Skill results');
+  const results = input.results.map(parseNativeSkillResult);
+  if (results.some(({ status }) => status === 'needs_input')) {
+    throw new NativeReportError('Multi report contains a Skill that still needs input');
+  }
+  const verifiedById = sourceMap(input.verifiedSources);
+  for (const result of results) assertResultSources(result, verifiedById);
+  const sources = mergeSources(results);
+  let synthesis: 'completed' | 'fallback' = 'completed';
+  let markdown: string | undefined;
+  let reportDocument: NativeReportDocumentV1 | undefined;
+  const extraGaps: string[] = [];
+  try {
+    const written = await input.writer.write({ requirement: input.requirement, results });
+    if (input.reportPolicy.kind === 'skill_defined' && input.reportPolicy.outputFormat === 'html') {
+      if (typeof written === 'string') throw new NativeReportError('synthesis returned text instead of a ReportDocument');
+      reportDocument = parseNativeReportDocument(written);
+      const allowedAssets = new Set(results.flatMap((result) => result.reportDocument?.assetIds ?? []));
+      const unavailable = reportDocument.assetIds.find((assetId) => !allowedAssets.has(assetId));
+      if (unavailable) throw new NativeReportError(`synthesis references unavailable Asset ${unavailable}`);
+    } else {
+      if (typeof written !== 'string' || !written.trim()) {
+        throw new NativeReportError('synthesis returned invalid Markdown');
+      }
+      markdown = written;
+      assertNativeContentReferences(markdown, verifiedById);
+    }
+  } catch {
+    synthesis = 'fallback';
+    markdown = synthesisFallback(results);
+    reportDocument = undefined;
+    extraGaps.push('自动综合未完成；当前最终报告按能力原始结果分组展示。');
+  }
+  const gaps = mergeGaps(results, [...(input.extraGaps ?? []), ...extraGaps]);
+  const primary = reportDocument
+    ? nativeOutput('html', renderNativeReportDocumentHtml({
+        document: reportDocument,
+        sources,
+        gaps,
+        assetUrl: (assetId) => `/api/control-tasks/${encodeURIComponent(input.taskId)}/assets/${encodeURIComponent(assetId)}`,
+      }))
+    : nativeOutput('markdown', appendMarkdownAppendices(markdown!, sources, gaps));
+  const report = parseNativeFinalReport({
+    version: NATIVE_FINAL_REPORT_VERSION,
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    mode: 'multi_skill',
+    title: input.title,
+    primary,
+    attachments: results.flatMap((result) => result.attachments.map((attachment) => ({
+      ...attachment,
+      path: `${encodeURIComponent(result.invocationId)}/${attachment.path}`,
+    }))),
+    sources,
+    gaps,
+    skillResults: finalSkillReferences(results),
+    ...(reportDocument === undefined
+      ? {}
+      : { reportDocument, reportDocumentHash: nativeReportDocumentHash(reportDocument) }),
+  });
+  return { report, synthesis };
+}
+
+export interface SealedNativeSkillResult {
+  result: NativeSkillResult;
+  jsonArtifact: ControlArtifact;
+  primaryArtifact: ControlArtifact;
+  attachmentArtifacts: ControlArtifact[];
+}
+
+export interface SealedNativeFinalReport {
+  report: NativeFinalReport;
+  jsonArtifact: ControlArtifact;
+  primaryArtifact: ControlArtifact;
+  htmlArtifact: ControlArtifact;
+  sourcesArtifact: ControlArtifact;
+  attachmentArtifacts: ControlArtifact[];
+}
+
+function extension(format: NativeOutputFormat): 'md' | 'html' {
+  return format === 'html' ? 'html' : 'md';
+}
+
+function mediaType(format: NativeOutputFormat): 'text/markdown; charset=utf-8' | 'text/html; charset=utf-8' {
+  return format === 'html' ? 'text/html; charset=utf-8' : 'text/markdown; charset=utf-8';
+}
+
+function attachmentRelativePath(base: string, path: string): string {
+  return `${base}/${path}`;
+}
+
+export class NativeReportArtifactService {
+  constructor(private readonly artifacts: ControlArtifactStore) {}
+
+  async sealSkillResult(input: {
+    activeLease: ControlExecutionLease;
+    result: NativeSkillResult;
+  }): Promise<SealedNativeSkillResult> {
+    const result = parseNativeSkillResult(input.result);
+    const publication = new ArtifactPublicationGroup(this.artifacts);
+    try {
+      const encoded = encodeURIComponent(result.invocationId);
+      const primaryArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'skill_result_primary',
+        relativePath: `skill-results/${encoded}/primary.${extension(result.primary.format)}`,
+        content: result.primary.content,
+        mediaType: mediaType(result.primary.format),
+        maxByteSize: MAX_REPORT_BYTES,
+        schemaVersion: NATIVE_SKILL_RESULT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(primaryArtifact.id);
+      const attachmentArtifacts: ControlArtifact[] = [];
+      for (const attachment of result.attachments) {
+        const artifact = await this.artifacts.writeText({
+          taskId: input.activeLease.taskId,
+          planVersionId: input.activeLease.planVersionId,
+          attemptId: input.activeLease.attemptId,
+          kind: 'skill_result_attachment',
+          relativePath: attachmentRelativePath(`skill-results/${encoded}/attachments`, attachment.path),
+          content: attachment.content,
+          mediaType: attachment.mediaType === 'text/html'
+            ? 'text/html; charset=utf-8'
+            : 'text/markdown; charset=utf-8',
+          maxByteSize: MAX_REPORT_BYTES,
+          schemaVersion: NATIVE_SKILL_RESULT_VERSION,
+          activeLease: input.activeLease,
+        });
+        publication.track(artifact.id);
+        attachmentArtifacts.push(artifact);
+      }
+      const jsonArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'skill_result',
+        relativePath: nativeSkillResultPath(result.invocationId),
+        value: result,
+        schemaVersion: NATIVE_SKILL_RESULT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(jsonArtifact.id);
+      publication.commit();
+      return { result, jsonArtifact, primaryArtifact, attachmentArtifacts };
+    } catch (error) {
+      try {
+        await publication.compensate('Native Skill result publication did not complete');
+      } catch (compensationError) {
+        if (compensationError instanceof ArtifactInvalidationError) {
+          throw new ArtifactInvalidationError(
+            compensationError.failedArtifactIds,
+            compensationError.invalidationReason,
+            [error, ...compensationError.failures],
+          );
+        }
+        throw compensationError;
+      }
+      throw error;
+    }
+  }
+
+  async sealFinalReport(input: {
+    activeLease: ControlExecutionLease;
+    report: NativeFinalReport;
+  }): Promise<SealedNativeFinalReport> {
+    const report = parseNativeFinalReport(input.report);
+    const displayHtml = renderNativeFinalReportHtml(report);
+    const publication = new ArtifactPublicationGroup(this.artifacts);
+    try {
+      const primaryArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report_primary',
+        relativePath: `reports/primary.${extension(report.primary.format)}`,
+        content: report.primary.content,
+        mediaType: mediaType(report.primary.format),
+        maxByteSize: MAX_REPORT_BYTES,
+        schemaVersion: NATIVE_FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(primaryArtifact.id);
+      const attachmentArtifacts: ControlArtifact[] = [];
+      for (const attachment of report.attachments) {
+        const artifact = await this.artifacts.writeText({
+          taskId: input.activeLease.taskId,
+          planVersionId: input.activeLease.planVersionId,
+          attemptId: input.activeLease.attemptId,
+          kind: 'final_report_attachment',
+          relativePath: attachmentRelativePath('reports/attachments', attachment.path),
+          content: attachment.content,
+          mediaType: attachment.mediaType === 'text/html'
+            ? 'text/html; charset=utf-8'
+            : 'text/markdown; charset=utf-8',
+          maxByteSize: MAX_REPORT_BYTES,
+          schemaVersion: NATIVE_FINAL_REPORT_VERSION,
+          activeLease: input.activeLease,
+        });
+        publication.track(artifact.id);
+        attachmentArtifacts.push(artifact);
+      }
+      const htmlArtifact = await this.artifacts.writeText({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report_html',
+        relativePath: 'reports/report.html',
+        content: displayHtml,
+        mediaType: 'text/html; charset=utf-8',
+        maxByteSize: MAX_REPORT_BYTES,
+        schemaVersion: NATIVE_FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(htmlArtifact.id);
+      const sourcesArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'report_sources',
+        relativePath: 'reports/sources.json',
+        value: report.sources,
+        schemaVersion: 'source-reference-list-v1',
+        activeLease: input.activeLease,
+      });
+      publication.track(sourcesArtifact.id);
+      const jsonArtifact = await this.artifacts.writeJson({
+        taskId: input.activeLease.taskId,
+        planVersionId: input.activeLease.planVersionId,
+        attemptId: input.activeLease.attemptId,
+        kind: 'final_report',
+        relativePath: 'reports/final-report.json',
+        value: report,
+        schemaVersion: NATIVE_FINAL_REPORT_VERSION,
+        activeLease: input.activeLease,
+      });
+      publication.track(jsonArtifact.id);
+      publication.commit();
+      return {
+        report,
+        jsonArtifact,
+        primaryArtifact,
+        htmlArtifact,
+        sourcesArtifact,
+        attachmentArtifacts,
+      };
+    } catch (error) {
+      try {
+        await publication.compensate('Native NativeFinalReport publication did not complete');
+      } catch (compensationError) {
+        if (compensationError instanceof ArtifactInvalidationError) {
+          throw new ArtifactInvalidationError(
+            compensationError.failedArtifactIds,
+            compensationError.invalidationReason,
+            [error, ...compensationError.failures],
+          );
+        }
+        throw compensationError;
+      }
+      throw error;
+    }
+  }
+}
+
+function renderInline(value: string, sources: ReadonlyMap<string, SourceReference>): string {
+  let cursor = 0;
+  let output = '';
+  for (const match of value.matchAll(MARKDOWN_LINK)) {
+    const index = match.index ?? 0;
+    output += escapeHtml(value.slice(cursor, index));
+    const title = match[1]!;
+    const url = match[2]!;
+    const verified = [...sources.values()].some((source) => source.url === url);
+    if (!verified || !url.startsWith('https://')) {
+      throw new NativeReportError(`HTML renderer received unverified URL ${url}`);
+    }
+    output += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`;
+    cursor = index + match[0].length;
+  }
+  output += escapeHtml(value.slice(cursor));
+  return output
+    .replace(CITATION, (_full, id: string) => {
+      if (!sources.has(id)) throw new NativeReportError(`HTML renderer received unknown source ${id}`);
+      return `<span class="citation">[${escapeHtml(id)}]</span>`;
+    })
+    .replace(/\*\*([^*]+)\*\*/gu, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/gu, '<code>$1</code>');
+}
+
+function markdownTableCells(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+  return trimmed.slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+function markdownTableSeparator(line: string, columns: number): boolean {
+  const cells = markdownTableCells(line);
+  return cells !== null
+    && cells.length === columns
+    && cells.every((cell) => /^:?-{3,}:?$/u.test(cell));
+}
+
+function renderMarkdownBody(markdown: string, sources: ReadonlyMap<string, SourceReference>): string {
+  const lines = markdown.replaceAll('\r\n', '\n').split('\n');
+  const html: string[] = [];
+  let inCode = false;
+  let code: string[] = [];
+  let list: 'ul' | 'ol' | null = null;
+  let paragraph: string[] = [];
+  const closeParagraph = (): void => {
+    if (paragraph.length === 0) return;
+    html.push(`<p>${renderInline(paragraph.join(' '), sources)}</p>`);
+    paragraph = [];
+  };
+  const closeList = (): void => {
+    if (!list) return;
+    html.push(`</${list}>`);
+    list = null;
+  };
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!;
+    if (line.startsWith('```')) {
+      closeParagraph();
+      closeList();
+      if (inCode) {
+        html.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+        code = [];
+      }
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+    const tableHeader = markdownTableCells(line);
+    if (
+      tableHeader
+      && lineIndex + 1 < lines.length
+      && markdownTableSeparator(lines[lineIndex + 1]!, tableHeader.length)
+    ) {
+      closeParagraph();
+      closeList();
+      const rows: string[][] = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length) {
+        const row = markdownTableCells(lines[lineIndex]!);
+        if (!row || row.length !== tableHeader.length) break;
+        rows.push(row);
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      html.push('<div class="table-wrap"><table><thead><tr>');
+      for (const cell of tableHeader) html.push(`<th>${renderInline(cell, sources)}</th>`);
+      html.push('</tr></thead><tbody>');
+      for (const row of rows) {
+        html.push('<tr>');
+        for (const cell of row) html.push(`<td>${renderInline(cell, sources)}</td>`);
+        html.push('</tr>');
+      }
+      html.push('</tbody></table></div>');
+      continue;
+    }
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/u.test(line)) {
+      closeParagraph();
+      closeList();
+      html.push('<hr>');
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+)$/u.exec(line);
+    if (heading) {
+      closeParagraph();
+      closeList();
+      const level = heading[1]!.length;
+      html.push(`<h${level}>${renderInline(heading[2]!, sources)}</h${level}>`);
+      continue;
+    }
+    const unordered = /^[-*]\s+(.+)$/u.exec(line);
+    const ordered = /^\d+[.)]\s+(.+)$/u.exec(line);
+    if (unordered || ordered) {
+      closeParagraph();
+      const nextList = unordered ? 'ul' : 'ol';
+      if (list !== nextList) {
+        closeList();
+        list = nextList;
+        html.push(`<${list}>`);
+      }
+      html.push(`<li>${renderInline((unordered ?? ordered)![1]!, sources)}</li>`);
+      continue;
+    }
+    const quote = /^>\s?(.*)$/u.exec(line);
+    if (quote) {
+      closeParagraph();
+      closeList();
+      html.push(`<blockquote>${renderInline(quote[1]!, sources)}</blockquote>`);
+      continue;
+    }
+    if (!line.trim()) {
+      closeParagraph();
+      closeList();
+      continue;
+    }
+    paragraph.push(line.trim());
+  }
+  if (inCode) html.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+  closeParagraph();
+  closeList();
+  return html.join('\n');
+}
+
+function wrapHtml(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; script-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>${escapeHtml(title)}</title>
+<style>
+:root{color-scheme:light;--bg:#f5f7fb;--card:#fff;--ink:#182033;--muted:#657089;--line:#dfe4ee;--accent:#d92f2f}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:40px auto;padding:48px;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 14px 45px #1d2a4414}h1,h2,h3{line-height:1.3}h1{font-size:2rem}h2{margin-top:2.2rem;padding-top:.7rem;border-top:1px solid var(--line)}a{color:#1f57a8}.citation{color:var(--accent);font-weight:650}blockquote{margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--accent);background:#fff6f6;color:var(--muted)}.table-wrap{overflow:auto;margin:1rem 0}table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{padding:.65rem .75rem;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f0f3f8;font-weight:700}tbody tr:nth-child(even){background:#fafbfc}hr{border:0;border-top:1px solid var(--line);margin:2rem 0}pre{overflow:auto;padding:16px;border-radius:10px;background:#111827;color:#f8fafc}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}@media print{body{background:#fff}main{margin:0;padding:0;border:0;box-shadow:none}}
+</style>
+</head>
+<body><main data-report-version="${NATIVE_FINAL_REPORT_VERSION}">${body}</main></body>
+</html>`;
+}
+
+export function renderNativeFinalReportHtml(reportValue: NativeFinalReport): string {
+  const report = parseNativeFinalReport(reportValue);
+  if (report.reportDocument) {
+    return renderNativeReportDocumentHtml({
+      document: report.reportDocument,
+      sources: report.sources,
+      gaps: report.gaps,
+      assetUrl: (assetId) => `/api/control-tasks/${encodeURIComponent(report.taskId)}/assets/${encodeURIComponent(assetId)}`,
+    });
+  }
+  const sources = sourceMap(report.sources);
+  const html = report.primary.format === 'html'
+    ? safeHtmlDocument(report.title, report.primary.content, report.sources)
+    : (() => {
+        assertNativeContentReferences(report.primary.content, sources);
+        return wrapHtml(report.title, renderMarkdownBody(report.primary.content, sources));
+      })();
+  if (Buffer.byteLength(html, 'utf8') > MAX_REPORT_BYTES) {
+    throw new NativeReportError('rendered HTML exceeds 5 MiB');
+  }
+  return html;
+}

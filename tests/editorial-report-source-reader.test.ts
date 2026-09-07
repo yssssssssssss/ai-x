@@ -297,6 +297,47 @@ test('freezes the current completed task and reads its exact verified SEALED Rep
   assert.deepEqual(source.verifiedVisualAssets, []);
 });
 
+test('freezes the reviewed requirement fields needed by the Editorial Summary', async () => {
+  const fixture = harness({
+    task: {
+      originalInput: '研究新业务模式并给出验证计划',
+      structuredTask: {
+        version: 'research-task-v2',
+        task_type: 'user_research_planning',
+        business_domain: 'new_business',
+        research_goal: '判断用户需求与风险',
+        target_audience: ['产品负责人'],
+        scope: ['中国市场'],
+        constraints: [{ id: 'constraint-1', statement: '只使用已审校证据', source: 'user' }],
+        success_criteria: [{ id: 'criterion-1', statement: '给出可执行验证计划' }],
+        expected_deliverables: ['研究方案'],
+        requested_artifacts: [{ id: 'artifact-1', kind: 'research_plan', title: '研究方案', required: true }],
+        assumptions: [],
+        ambiguities: [],
+        clarification_questions: [],
+        blocking_issues: [],
+        sensitivity: 'internal',
+        pii_detected: false,
+      },
+    },
+  });
+
+  const source = await fixture.reader.readCurrent(ids.task);
+
+  assert.deepEqual(source.taskContext, {
+    originalRequest: '研究新业务模式并给出验证计划',
+    researchGoal: '判断用户需求与风险',
+    targetAudience: ['产品负责人'],
+    scope: ['中国市场'],
+    constraints: ['只使用已审校证据'],
+    successCriteria: ['给出可执行验证计划'],
+    expectedDeliverables: ['研究方案'],
+    requestedArtifacts: [{ id: 'artifact-1', kind: 'research_plan', title: '研究方案', required: true }],
+    sensitivity: 'internal',
+    piiDetected: false,
+  });
+});
+
 test('rejects non-completed tasks before reading any Artifact', async () => {
   const fixture = harness({ task: { state: 'executing' } });
 

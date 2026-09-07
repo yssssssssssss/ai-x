@@ -186,7 +186,11 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
       return plannedResponse;
     },
   };
-  const requestBody: PlanControlTaskRequest = { originalInput, conversationId };
+  const requestBody: PlanControlTaskRequest = {
+    originalInput,
+    conversationId,
+    orchestrationMode: 'single_skill',
+  };
   let server: Server | undefined;
 
   try {
@@ -212,8 +216,13 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
 
     assert.equal(response.status, 200);
     const body = await response.json() as ControlPlanCandidatesResponse;
-    assert.deepEqual(planningInputs, [{ originalInput, ownerUserId, conversationId }]);
-    assert.deepEqual(Object.keys(requestBody).sort(), ['conversationId', 'originalInput']);
+    assert.deepEqual(planningInputs, [{
+      originalInput,
+      ownerUserId,
+      conversationId,
+      orchestrationMode: 'single_skill',
+    }]);
+    assert.deepEqual(Object.keys(requestBody).sort(), ['conversationId', 'orchestrationMode', 'originalInput']);
     assert.equal(body.kind, 'current');
     assert.equal(body.conversationId, conversationId);
     assert.equal(body.task.state, 'awaiting_selection');
@@ -226,6 +235,48 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
         { candidateId: 'speed', planVersionId: candidates[1].planVersionId },
       ],
     );
+  } finally {
+    if (server?.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server?.close((error) => error ? reject(error) : resolve());
+      });
+    }
+    restoreJwtSecret();
+  }
+});
+
+test('POST /api/control-tasks/plan rejects a missing orchestration mode before planning', async () => {
+  process.env.JWT_SECRET = `control-planning-mode-${randomUUID()}`;
+  let planningCalls = 0;
+  const controlPlanning: PlannedAgentApiDependencies['controlPlanning'] = {
+    async plan() {
+      planningCalls += 1;
+      throw new Error('planning must not run');
+    },
+  };
+  let server: Server | undefined;
+
+  try {
+    const token = signToken({ userId: activeOwnerUserId, email: 'mode@test.local' });
+    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
+    server = createServer(createApp({ controlPlanning }));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/control-tasks/plan`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ originalInput: '缺少模式的任务' }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(planningCalls, 0);
   } finally {
     if (server?.listening) {
       await new Promise<void>((resolve, reject) => {
@@ -261,7 +312,10 @@ test('POST /api/control-tasks/plan does not expose internal deliverable contract
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ originalInput: '生成宠物食品电商推广调研' }),
+      body: JSON.stringify({
+        originalInput: '生成宠物食品电商推广调研',
+        orchestrationMode: 'single_skill',
+      }),
     });
     const body = await response.json() as { error: string };
 
@@ -399,14 +453,19 @@ test('POST /api/control-tasks/plan/stream emits conversation, progress, and Curr
           authorization: `Bearer ${token}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ originalInput, conversationId }),
+        body: JSON.stringify({ originalInput, conversationId, orchestrationMode: 'single_skill' }),
       },
     );
 
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(planningInputs, [{ originalInput, ownerUserId, conversationId }]);
+    assert.deepEqual(planningInputs, [{
+      originalInput,
+      ownerUserId,
+      conversationId,
+      orchestrationMode: 'single_skill',
+    }]);
     assert.deepEqual(events.map((event) => event.event), [
       'conversation',
       'progress',
@@ -494,7 +553,7 @@ test('new-conversation SSE publishes conversation and progress before planning r
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ originalInput }),
+      body: JSON.stringify({ originalInput, orchestrationMode: 'single_skill' }),
     });
     await planningEntered;
     const response = await settleWithinIoTurns(
@@ -569,7 +628,10 @@ test('new-conversation SSE emits conversation before an error when planning fail
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ originalInput: '失败也要先返回新会话' }),
+      body: JSON.stringify({
+        originalInput: '失败也要先返回新会话',
+        orchestrationMode: 'single_skill',
+      }),
     });
     const events = parseSseEvents(await response.text());
 

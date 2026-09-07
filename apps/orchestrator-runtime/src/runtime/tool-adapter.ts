@@ -14,6 +14,8 @@ export type ToolFailureKind =
   | 'network'
   | 'quota'
   | 'authentication'
+  | 'permission'
+  | 'browser_bridge'
   | 'configuration'
   | 'schema'
   | 'capability'
@@ -32,6 +34,7 @@ export interface ToolInvocationReceipt {
   latencyMs: number;
   attemptId?: string;
   retryOf?: string | null;
+  runtimeVersions?: Record<string, string>;
 }
 
 export interface ToolAdapterResolution {
@@ -51,11 +54,23 @@ interface ToolInvocationErrorOptions {
   details?: Record<string, unknown>;
 }
 
+export interface ToolKnowledgeAttachment {
+  attachmentId: string;
+  title: string;
+  body: string;
+  sourceUrl: string;
+  author: string | null;
+  updatedAt: string | null;
+  contentSha256: string;
+  sensitivity: 'internal';
+}
+
 export interface ToolInvokeResult {
   output: object;
   latencyMs: number;
   receipt: ToolInvocationReceipt;
   mediaAttachments?: ToolMediaAttachment[];
+  knowledgeAttachments?: ToolKnowledgeAttachment[];
 }
 
 export type ToolAbortReason = 'lease_lost' | 'deadline_exceeded';
@@ -812,7 +827,17 @@ export class ToolRouter implements ToolAdapter {
       const result = await this.byType.get(opts.manifest.adapter_type)!.invoke(opts);
       throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
-      return { ...result, latencyMs, receipt: receiptFromResolution(resolution, 'ok', latencyMs, opts) };
+      const routedReceipt = receiptFromResolution(resolution, 'ok', latencyMs, opts);
+      return {
+        ...result,
+        latencyMs,
+        receipt: {
+          ...routedReceipt,
+          ...(result.receipt.runtimeVersions === undefined
+            ? {}
+            : { runtimeVersions: { ...result.receipt.runtimeVersions } }),
+        },
+      };
     } catch (err) {
       const latencyMs = Math.round(performance.now() - start);
       const structured = errorFromInvocation(
@@ -822,10 +847,16 @@ export class ToolRouter implements ToolAdapter {
         opts.context.signal,
         opts.context.deadlineAt,
       );
+      const failedReceipt = receiptFromResolution(resolution, 'failed', latencyMs, opts);
       throw new ToolInvocationError(opts.toolId, {
         kind: structured.kind, retryable: structured.retryable, providerStatus: structured.providerStatus,
         sanitizedMessage: structured.sanitizedMessage,
-        receipt: receiptFromResolution(resolution, 'failed', latencyMs, opts),
+        receipt: {
+          ...failedReceipt,
+          ...(structured.receipt?.runtimeVersions === undefined
+            ? {}
+            : { runtimeVersions: { ...structured.receipt.runtimeVersions } }),
+        },
         details: structured.details,
       });
     }

@@ -1067,7 +1067,7 @@ skills/<skill-id>/SKILL.md
 skills/<skill-id>/input.schema.json        # 可选
 skills/<skill-id>/output.schema.json       # payload schema，按需要
 schemas/skill-result-envelope.schema.json  # 共享
-orchestrator/skill-registry.yaml
+orchestrator/skill-bindings.yaml
 ```
 
 ### 12.2 Registry

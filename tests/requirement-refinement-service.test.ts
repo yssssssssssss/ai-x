@@ -45,6 +45,33 @@ function requirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
   };
 }
 
+function industryRequirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
+  return requirement({
+    task_type: 'industry_market_analysis',
+    outcome_mode: 'answer',
+    business_domain: 'pet-food',
+    research_goal: '形成宠物食品行业与京东频道策略报告',
+    target_audience: ['频道产品与设计团队'],
+    scope: ['中国大陆线上宠物食品'],
+    success_criteria: [{ id: 'criterion-1', statement: '形成可追溯的行业结论与策略' }],
+    expected_deliverables: ['industry_market_analysis_report'],
+    industry_scope: {
+      category: '宠物食品',
+      subcategories: ['猫用冻干'],
+      exclusions: ['线下渠道'],
+      analysis_depth: 'medium',
+      primary_focus: '竞品与设计策略',
+      secondary_focuses: ['用户洞察'],
+      decision_audience: ['频道产品与设计团队'],
+      decision_goal: '确定频道改版优先级',
+      time_window: '最近十二个月',
+    },
+    available_material_roles: ['competitor_screenshots'],
+    unavailable_material_roles: ['internal_metrics_dataset'],
+    ...overrides,
+  });
+}
+
 const ambiguousRequirement = requirement({
   ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
   clarification_questions: [{
@@ -218,7 +245,11 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
     expectedActualModel: 'pinned-model',
     planner: {
       async plan(
-        input: { originalInput: string; requirement: ResearchTaskV2 },
+        input: {
+          originalInput: string;
+          requirement: ResearchTaskV2;
+          orchestrationMode: 'single_skill' | 'multi_skill';
+        },
         onProgress?: (event: PlanProgress) => void,
       ) {
         planned = input;
@@ -236,7 +267,11 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
 
   assert.equal(result.status, 'ready_to_plan');
   assert.deepEqual(result.requirement, finalized);
-  assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: finalized });
+  assert.deepEqual(planned, {
+    originalInput: 'compare live-commerce competitors',
+    requirement: finalized,
+    orchestrationMode: 'single_skill',
+  });
   assert.match(llm.calls[0]?.prompt ?? '', /原顺序.*comparison_dimensions/u);
   assert.ok(Object.keys(llm.calls[0]?.schema ?? {}).length > 0, 'Gateway call must receive the current local ResearchTaskV2 schema');
   assert.deepEqual(progress, [planningProgress]);
@@ -325,6 +360,42 @@ test('public-only synthetic research boundaries remain constraints instead of bl
     null,
   );
   assert.deepEqual(normalized.blocking_issues, []);
+});
+
+test('retries when Industry normalization exposes missing Industry scope fields', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const initiallyGeneric = requirement({
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+  });
+  const valid = industryRequirement();
+  const llm = new FixtureLLM([initiallyGeneric, valid]);
+  const repository = makeRepository();
+  let planned: ResearchTaskV2 | undefined;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input: { requirement: ResearchTaskV2 }) {
+        planned = input.requirement;
+      },
+    },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '请分析宠物食品行业的市场、用户、竞品和京东频道现状，并给出设计策略。',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 2);
+  assert.equal(planned?.task_type, 'industry_market_analysis');
+  assert.deepEqual(planned?.expected_deliverables, ['industry_market_analysis_report']);
+  assert.equal(planned?.industry_scope?.category, '宠物食品');
 });
 
 test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
@@ -593,6 +664,35 @@ test('mixed request persists a coherent outcome gate instead of rejecting mismat
   assert.equal(result.requirement.clarification_questions[0]?.key, 'outcome_mode');
   assert.equal(repository.versions.length, 1);
   assert.equal(plannerCalls, 0);
+});
+
+test('strategy deliverable selection drops only non-blocking linked clarification questions', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+    ambiguities: [{
+      id: 'scope-detail',
+      statement: 'The exact scope can be refined later.',
+      blocking: false,
+    }],
+    clarification_questions: [{
+      key: 'scope_detail',
+      ambiguity_id: 'scope-detail',
+      question: 'Which additional scope should be used?',
+      rationale: 'Optional output depth.',
+    }],
+  });
+
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接给出综合策略地图和优先行动。',
+    { deliverable_intent: 'research_strategy_report' },
+  );
+
+  assert.equal(normalized.task_type, 'research_synthesis');
+  assert.deepEqual(normalized.expected_deliverables, ['research_strategy_report']);
+  assert.deepEqual(normalized.clarification_questions, []);
 });
 
 for (const selection of [
@@ -952,6 +1052,62 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.equal(plannedInput, 'raw original input from task');
   assert.equal(plannerCalls, 1);
   assert.deepEqual(progress, [planningProgress]);
+});
+
+test('successive clarification rounds preserve every prior explicit answer', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const regionRequirement = requirement({
+    target_audience: ['enterprise buyers'],
+    ambiguities: [{ id: 'region', statement: 'market region is unclear', blocking: true }],
+    clarification_questions: [{
+      key: 'market_region',
+      ambiguity_id: 'region',
+      question: 'Which market region?',
+      rationale: 'The competitor set depends on the region.',
+      options: ['Mainland China', 'North America'],
+    }],
+  });
+  const finalized = requirement({
+    target_audience: ['enterprise buyers'],
+    scope: ['Mainland China'],
+  });
+  const llm = new FixtureLLM([ambiguousRequirement, regionRequirement, finalized]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  await service.understand({ taskId, conversationId, ownerUserId, originalInput: 'compare competitors' });
+  const narrowed = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { audience: 'enterprise buyers' },
+  });
+  assert.equal(narrowed.status, 'clarification_required');
+
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { market_region: 'Mainland China' },
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.match(llm.calls[1]?.prompt ?? '', /累计显式回答.*不得重复已回答的问题/u);
+  assert.match(llm.calls[2]?.prompt ?? '', /累计显式回答.*不得重复已回答的问题/u);
+  assert.deepEqual(
+    (llm.calls[2]?.context as { clarification?: unknown } | undefined)?.clarification,
+    { audience: 'enterprise buyers', market_region: 'Mainland China' },
+  );
+  assert.deepEqual(repository.versions[2]?.clarification, {
+    audience: 'enterprise buyers',
+    market_region: 'Mainland China',
+  });
 });
 
 test('post-activation retry emits the ready message only after planning succeeds', async () => {

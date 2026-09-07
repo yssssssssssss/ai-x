@@ -15,6 +15,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   mayAutoApproveSmoke,
+  readEditorialSummaryWithOneRetry,
   resolveSmokeReportContract,
   resolveApprovalMode,
   resolveSmokeRequirement,
@@ -25,11 +26,12 @@ import {
   selectSmokeCandidate,
   SmokeInfrastructureError,
   summarizeSmokeEvidence,
+  verifyEditorialSummaryForSmoke,
   verifySmokeGapSummaryHashes,
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
 import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
-test('JD crowdfunding real-smoke contract requires Plan v3, exact Contributors, and real Tool stages', () => {
+test('JD crowdfunding native real-smoke contract requires its Contributor subset and one real Tool stage', () => {
   const fixture = JSON.parse(readFileSync(
     join(process.cwd(), 'tests/fixtures/jd-crowdfunding-multi-skill-real-smoke.json'),
     'utf8',
@@ -42,36 +44,26 @@ test('JD crowdfunding real-smoke contract requires Plan v3, exact Contributors, 
   const contributorInvocations = scenario.expectedContributorSkillIds.map((skillId, index) => ({
     invocation_id: `contributor-${index}`,
     skill_id: skillId,
-    role: 'contributor',
   }));
   const plan = {
-    execution_contract_version: 'current-execution-plan-v3',
-    skill_invocations: [
-      ...contributorInvocations,
-      { invocation_id: 'synth', skill_id: 'research-strategy-synthesis', role: 'synthesizer' },
-    ],
-    contribution_requirements: contributorInvocations.map((invocation, index) => ({
-      id: `demand-${index}`,
-      owner_invocation_id: invocation.invocation_id,
-    })),
-    portfolio_summary: { selected: [] },
+    execution_contract_version: 'native-skill-execution-plan-v1',
+    skill_invocations: contributorInvocations,
     steps: [
-      {
-        actor_type: 'tool', actor_id: 'tavily-web-search',
-        shared_stage_key: 'shared:tool:tavily-web-search',
-        shared_by_invocation_ids: ['contributor-0', 'synth'],
-      },
-      { actor_type: 'tool', actor_id: 'virtual-user-lab' },
+      { actor_type: 'tool', actor_id: 'tavily-web-search' },
     ],
   };
   assert.doesNotThrow(() => assertMultiSkillSmokePlan(plan, scenario));
+  assert.doesNotThrow(() => assertMultiSkillSmokePlan({
+    ...plan,
+    skill_invocations: [...plan.skill_invocations, { skill_id: 'issue-prioritization' }],
+  }, scenario));
   assert.throws(
     () => assertMultiSkillSmokePlan({ ...plan, execution_contract_version: 'current-execution-plan-v2' }, scenario),
-    /Plan v3/u,
+    /NativeSkillExecutionPlan v1/u,
   );
   assert.throws(
     () => assertMultiSkillSmokePlan({ ...plan, skill_invocations: plan.skill_invocations.slice(1) }, scenario),
-    /Contributor\/Synthesizer inventory/u,
+    /Contributor inventory/u,
   );
 });
 
@@ -100,6 +92,7 @@ const realSmokeScenarios = [
   { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
   { profile: 'design_audit', scenarioId: 'design-product-detail' },
   { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
+  { profile: 'industry_market_analysis', scenarioId: 'industry-pet-food-public' },
 ] as const;
 const realProfiles = realSmokeScenarios.map(({ profile }) => profile);
 
@@ -111,7 +104,9 @@ type SmokeReceipt = {
   taskId: string;
   planVersionId: string;
   attemptId: string;
-  reportPackageId: string;
+  contract: 'native';
+  finalReportArtifactId: string;
+  skillResultArtifactIds: string[];
   visualAssetCount: number;
   gapCount: number;
   toolArtifactIds: string[];
@@ -131,12 +126,8 @@ type SmokeReceipt = {
   requestedModel: string;
   actualModel: string;
   coreTool: string;
-  packageSealed: boolean;
-  review: {
-    artifactId: string;
-    automated: true;
-    verdict: 'pass';
-  };
+  reportSealed: boolean;
+  synthesisCallCount: number;
   machineEvidence?: unknown;
 };
 
@@ -154,7 +145,9 @@ async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeRecei
         process.cwd(),
         profile === 'research_synthesis'
           ? 'tests/fixtures/research-synthesis-real-smoke.json'
-          : 'tests/fixtures/current-semantic-gold.json',
+          : profile === 'industry_market_analysis'
+            ? 'tests/fixtures/industry-real-smoke.json'
+            : 'tests/fixtures/current-semantic-gold.json',
       ),
       profiles: [profile],
       scenarioId,
@@ -444,7 +437,31 @@ test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   }
 });
 
-test('current real smoke covers all six Current profiles', () => {
+test('real smoke retries an isolated Editorial Summary failure at most once', async () => {
+  let calls = 0;
+  const result = await readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('transient summary failure');
+    return '<!doctype html><html lang="zh-CN"></html>';
+  });
+  assert.match(result ?? '', /^<!doctype html>/u);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(() => readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    throw new Error('persistent summary failure');
+  }), /persistent summary failure/u);
+  assert.equal(calls, 2);
+
+  const explicitFailure = await verifyEditorialSummaryForSmoke(async () => {
+    throw new Error('persistent summary failure');
+  });
+  assert.equal(explicitFailure.status, 'failed');
+  assert.match(explicitFailure.failure ?? '', /^Current real smoke failed error_type=Error message_hash=[a-f0-9]{16}$/u);
+});
+
+test('current real smoke covers all seven Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
     'user_research_planning',
@@ -452,6 +469,7 @@ test('current real smoke covers all six Current profiles', () => {
     'voc_diagnosis',
     'design_audit',
     'a11y_audit',
+    'industry_market_analysis',
   ]);
 });
 
@@ -666,6 +684,128 @@ test('browser evidence is optional by default and mandatory only for the protect
     reread: textOnly,
     requireBrowserEvidence: true,
   }), /required browser or chart evidence is missing/u);
+});
+
+test('real smoke reconstructs one degraded Skill Gap from persisted Skill provenance', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    outputArtifactId: 'skill-output-2',
+    toolProvenance: null,
+    skillProvenance: {
+      status: 'degraded',
+      limitations: ['public evidence is insufficient'],
+    },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  const evidence = summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke reconstructs a frozen Skill resource Gap from the Plan', () => {
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:2',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one current source is available',
+        }],
+        step_nos: [2],
+      }],
+    },
+    steps: [],
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke counts every degraded Skill once and composes Skill, resource, and Tool Gaps', () => {
+  const degradedSteps = [
+    {
+      stepNo: 2,
+      actorType: 'skill',
+      actorId: 'competitive-web-research',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['insufficient evidence'] },
+    },
+    {
+      stepNo: 3,
+      actorType: 'skill',
+      actorId: 'research-strategy-synthesis',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['unverified assumptions'] },
+    },
+    {
+      stepNo: 4,
+      actorType: 'tool',
+      actorId: 'optional-tool',
+      state: 'skipped',
+      toolProvenance: null,
+    },
+  ] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:3',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one source is available',
+        }],
+        step_nos: [3],
+      }],
+    },
+    steps: degradedSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 4);
+
+  const succeededSteps = [{
+    ...degradedSteps[0],
+    skillProvenance: { status: 'succeeded', limitations: [] },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  assert.equal(summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps: succeededSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }).gapCount, 0);
+});
+
+test('real smoke fails closed on an unknown persisted Skill status', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    skillProvenance: { status: 'partial' },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  assert.throws(() => summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }), /skillProvenance\.status is invalid/u);
 });
 
 test('visual smoke keeps the legacy skipped-Tool gap fallback', () => {
@@ -1033,13 +1173,13 @@ test('current real smoke produces one receipt for each supported full-real profi
   );
 });
 
-test('current real smoke receipts preserve task, plan, attempt, and Report Package identity', realSmokeOptions, async () => {
+test('current real smoke receipts preserve task, plan, attempt, NativeFinalReport, and NativeSkillResult identity', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: RealSmokeRunner;
   };
   const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
 
-  for (const key of ['taskId', 'planVersionId', 'attemptId', 'reportPackageId'] as const) {
+  for (const key of ['taskId', 'planVersionId', 'attemptId', 'finalReportArtifactId'] as const) {
     const values = receipts.map((receipt) => receipt[key]);
     assert.ok(values.every((value) => value.trim().length > 0), `${key} must be present`);
     assert.equal(new Set(values).size, receipts.length, `${key} must be unique per profile`);
@@ -1077,7 +1217,7 @@ test('current real smoke reports visual and evidence counts for every profile', 
   }
 });
 
-test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, and automatically reviewed', realSmokeOptions, async () => {
+test('current real smoke is full-real, model-pinned, core-tool-backed, and NativeFinalReport-sealed', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: RealSmokeRunner;
   };
@@ -1091,10 +1231,10 @@ test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, a
     );
     assert.equal(receipt.actualModel, expectedByRequested.get(receipt.requestedModel));
     assert.equal(receipt.coreTool, 'tavily-web-search');
-    assert.equal(receipt.packageSealed, true);
-    assert.ok(receipt.review.artifactId);
-    assert.equal(receipt.review.automated, true);
-    assert.equal(receipt.review.verdict, 'pass');
+    assert.equal(receipt.contract, 'native');
+    assert.equal(receipt.reportSealed, true);
+    assert.ok(receipt.skillResultArtifactIds.length >= 1);
+    assert.ok(receipt.synthesisCallCount === 0 || receipt.synthesisCallCount === 1);
   }
 });
 
@@ -1140,24 +1280,4 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(ci, /knowledge-base\/assets\/playbooks\/images\/jingxi-img-01\.png/);
   for (const profile of realProfiles) assert.match(ci, new RegExp(profile));
   for (const port of ['8801', '8802', '8805']) assert.match(ci, new RegExp(port));
-});
-test('real smoke rejects missing or non-passing automated Review Artifact receipts', async () => {
-  const smoke = await import('../scripts/current-real-smoke.ts') as {
-    verifyAutomatedReviewArtifactReceipt: (value: unknown) => SmokeReceipt['review'];
-  };
-  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt(null), /automated Review Artifact/);
-  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt({
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'revise',
-  }), /automated Review Artifact/);
-  assert.deepEqual(smoke.verifyAutomatedReviewArtifactReceipt({
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'pass',
-  }), {
-    artifactId: 'review-1',
-    automated: true,
-    verdict: 'pass',
-  });
 });

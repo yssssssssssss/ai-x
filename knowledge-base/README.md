@@ -33,7 +33,7 @@
 | `methods/` | **122** | 既有采集/分析/规范/场景打法；另含 **24** 条 Hub 设计策略方法候选和 **15** 条设计编排 Scenario 候选（仅 Evaluation） |
 | `models/` | **21** | **需求与任务 7**：JTBD · 用户需求三层 · Job Map · 阶梯法 · 四力模型 · Kano · 5W2H<br>**用户与人群 3**：画像/分层/分群 · G7人群细分 · 用户养成<br>**认知与洞察 4**：用户洞察 · 认知偏见 · 心理物理学 · 人类学透镜<br>**满意度与可用性 2**：ECT · 尼尔森十大可用性启发式<br>**方法论与表达 5**：访谈认识论 · ORID · 设计冲刺 · 金字塔原理 · 黄金圈 |
 | `assets/` | **39** | 既有题库、量表、模板和经验卡片；另含 **14** 条 Hub 模板候选（Asset 不进通用 Knowledge Index） |
-| `skills/` | **20** | 既有 **18** 个 active KB Skill；`solution-generation`、`strategy-map-generation` 为 `candidate`，派生 Registry 状态固定为 `draft` |
+| `skills/` | **20** | 既有 **19** 个可用 KB Skill；`solution-generation` 为 `candidate`，Catalog 状态固定为 `blocked` |
 
 ---
 
@@ -108,7 +108,7 @@ related:        []        # [path/to/method, path/to/model]，跨层关联，手
 
 `wiki/user-research/` 是只读、仓库外提供的来源快照；canonical 文件只保存逻辑来源路径 `wiki/user-research/...`、来源哈希和 Gate-1 内部评测治理字段，不保存本机挂载路径。`scripts/user-research-hub-integration.ts apply` 只物化 disposition 为 `import_candidate` 的 Markdown，并为 `merge_into_existing` 生成 `.sources/` 下的审计合并稿；`source_only`、`reject_runtime` 和不透明附件不会进入 canonical 路径。
 
-Knowledge 的状态流为 `candidate → approved`，Gate 3 前禁止用 `draft` 绕过隔离。`loadRuntimeKnowledgeIndex()` 固定排除 `candidate`/`deprecated`，且没有 visibility 开关；显式评测必须使用独立的 `loadEvaluationKnowledgeIndex()`。Skill 的 `candidate` 仅派生为 Registry `draft`，`listSkills()` 与 `resolveSkill()` 均不会返回。既有 canonical 条目始终权威，Hub 差异只能先进入可审计合并稿，不得由 apply 覆盖 active 内容。
+Knowledge 的状态流为 `candidate → approved`，Gate 3 前禁止用 `draft` 绕过隔离。`loadRuntimeKnowledgeIndex()` 固定排除 `candidate`/`deprecated`，且没有 visibility 开关；显式评测必须使用独立的 `loadEvaluationKnowledgeIndex()`。Skill 的 `candidate` 在 InstalledSkill Catalog 中固定为 `blocked`，`listSkills()` 与 `resolveSkill()` 均不会返回。既有 canonical 条目始终权威，Hub 差异只能先进入可审计合并稿，不得由 apply 覆盖 active 内容。
 
 ---
 

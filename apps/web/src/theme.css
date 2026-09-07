@@ -719,6 +719,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .stage-title { font-size: 15px; letter-spacing: -0.005em; }
 .stage-note { color: var(--text-faint); font-size: 12px; }
+.dataset-field-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1.5fr) minmax(90px, 0.7fr);
+}
+@media (max-width: 520px) {
+  .dataset-field-row { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ---- 澄清需求:深色内嵌编辑面 ---- */
 .clarification-field {
@@ -1386,4 +1393,32 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .execution-flow-card { padding-inline: 16px; }
   .execution-flow-summary { align-items: flex-start; }
   .execution-flow-mode { margin-left: 0; }
+}
+
+.native-report .report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.native-report-document {
+  width: 100%;
+  min-height: 720px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.native-report-content {
+  margin: 12px 0 0;
+  padding: 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-card-hi);
+  color: var(--text);
+  font: 13px/1.65 var(--mono);
 }

@@ -279,6 +279,9 @@ test('report-review-v2 requires all six answer-quality dimensions in addition to
   assert.equal(result.version, 'report-review-v2');
   assert.deepEqual(result.dimensions.map(({ id }) => id), [...REPORT_REVIEW_V2_DIMENSION_IDS]);
   assert.equal(artifacts.writes[0]?.schemaVersion, 'report-review-v2');
+  assert.match(llm.calls[0]?.prompt ?? '', /same primary language/u);
+  assert.match(llm.calls[0]?.prompt ?? '', /never return revise with every dimension passed/u);
+  assert.equal((llm.calls[0]?.context as { researchGoal?: string }).researchGoal, 'answer q-1');
 });
 
 test('answer review reads actionable items from open strategy content blocks', async () => {
@@ -575,19 +578,29 @@ test('drops undeclared semantic review dimension fields before strict validation
   assert.equal(result.status, 'completed');
 });
 
-for (const verdict of ['revise', 'block'] as const) {
-  test(`does not upgrade a provider ${verdict} verdict when every dimension passes`, async () => {
-    const llm = new RecordingLlm([
-      semantic(verdict, 0, { dimensions: passingReviewDimensions() }),
-    ]);
-    const artifacts = new RecordingArtifacts();
+test('normalizes a provider revise verdict to pass when every dimension passes', async () => {
+  const llm = new RecordingLlm([
+    semantic('revise', 0, { dimensions: passingReviewDimensions() }),
+  ]);
+  const artifacts = new RecordingArtifacts();
 
-    const result = await service(llm, artifacts).review(input());
+  const result = await service(llm, artifacts).review(input());
 
-    assert.equal(result.verdict, verdict);
-    assert.equal(result.status, 'paused');
-  });
-}
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+});
+
+test('does not upgrade a provider block verdict when every dimension passes', async () => {
+  const llm = new RecordingLlm([
+    semantic('block', 0, { dimensions: passingReviewDimensions() }),
+  ]);
+  const artifacts = new RecordingArtifacts();
+
+  const result = await service(llm, artifacts).review(input());
+
+  assert.equal(result.verdict, 'block');
+  assert.equal(result.status, 'paused');
+});
 
 test('derives failed dimensions when semantic review supplies issues without passed flags', async () => {
   const dimensions = passingReviewDimensions().map(({ id }) => ({

@@ -456,10 +456,10 @@ export class ZeroPublicationService {
       for (const block of section.blocks) {
         for (const visual of blockVisuals(block)) {
           const manifest = manifestByAsset.get(visual.ref.assetId);
-          if (!manifest || manifest.exportPolicy === 'block') {
+          if (!manifest) {
             throw new ZeroPublicationServiceError(
               'visual_asset_blocked',
-              `Visual block ${block.id} has no exportable Asset`,
+              `Visual block ${block.id} has no Asset`,
             );
           }
           const verified = await this.dependencies.readVisualAsset({

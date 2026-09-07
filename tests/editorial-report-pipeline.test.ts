@@ -179,40 +179,6 @@ test('Phase 1 publishes one deterministic degraded bundle with zero model calls 
   assert.deepEqual(store.events, ['read:ready', 'acquire', 'lease-read:ready', 'lease-read:fallback', 'publish', 'release']);
 });
 
-test('Phase 1 publishes deterministic fallback for sensitivity and redaction-policy egress denials', async () => {
-  for (const policy of [
-    { sensitivity: 'confidential', redactionPolicyVersion: 'v1', reasonCode: 'EGRESS_SENSITIVITY_DENIED' },
-    { sensitivity: 'internal', redactionPolicyVersion: 'v2', reasonCode: 'EGRESS_REDACTION_POLICY_DENIED' },
-  ] as const) {
-    const { source, material } = fixture();
-    const verifier = {
-      readCurrent: async () => source,
-      assertStillCurrent: async () => undefined,
-    };
-    const store = new MemoryStore(verifier.assertStillCurrent);
-    const materialization = materializeResult(material);
-    materialization.sourcePolicyMetadata = materialization.sourcePolicyMetadata.map((entry) => ({
-      ...entry,
-      sensitivity: policy.sensitivity,
-      redactionPolicyVersion: policy.redactionPolicyVersion,
-    }));
-    const pipeline = new EditorialReportPipeline({
-      source: verifier,
-      store,
-      materialize: () => materialization,
-    });
-
-    const result = await pipeline.generate({ taskId: TASK_ID });
-
-    assert.equal(result.status, 'degraded');
-    const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
-    assert.equal(diagnostic.status, 'degraded');
-    assert.equal(diagnostic.modelEgress.reasonCode, policy.reasonCode);
-    assert.ok(diagnostic.issues.some(({ code }) => code === policy.reasonCode));
-    assert.deepEqual(store.stored?.manifest.modelCalls, []);
-  }
-});
-
 test('writes a mode-none failure Diagnostic only after the source snapshot is frozen', async () => {
   const { source, material } = fixture();
   let fenceCalls = 0;

@@ -1,3 +1,4 @@
+import type { OrchestrationModeV1 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   DeliverableType,
   EvidenceRequirement,
@@ -44,9 +45,22 @@ import type {
   FrozenDeliverableSelection,
 } from './plan-compiler.ts';
 
+export class OrchestrationModePlanningError extends Error {
+  readonly name = 'OrchestrationModePlanningError';
+
+  constructor(readonly kind: 'missing' | 'unavailable' | 'direct_skill_conflict') {
+    super(kind === 'missing'
+      ? 'orchestration mode is required for current planning'
+      : kind === 'unavailable'
+        ? 'multi_skill mode is not available'
+        : 'multi_skill mode cannot be combined with a direct Skill invocation');
+  }
+}
+
 export interface ResearchPlanningInput {
   originalInput: string;
   directSkillId?: string;
+  orchestrationMode?: OrchestrationModeV1;
   requirement?: ResearchTaskV2;
   selectedScenarioId?: ScenarioId;
   requireExplicitScenarioSelection?: boolean;
@@ -64,6 +78,7 @@ export interface ResearchPlanningResult {
 }
 
 export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResult, 'candidates' | 'structuredTask'> {
+  orchestrationMode?: OrchestrationModeV1;
   structuredTask: ResearchTaskV2;
   candidates: CurrentPlanCandidateProposal[];
   problemGraph: ProblemGraph;
@@ -79,6 +94,7 @@ export type CurrentResearchPlanningOutcome =
   | CurrentPlanningGuidanceClarification;
 
 export interface CurrentResearchPlanningOptions {
+  orchestrationMode: OrchestrationModeV1;
   selectedScenarioId?: ScenarioId;
   requireExplicitScenarioSelection?: boolean;
   requiredProfileId?: CandidateProfile;
@@ -98,6 +114,7 @@ export function isPlanningGuidanceClarification(
 const TASK_UNDERSTANDING_PROMPT =
   `把用户需求结构化为 ResearchTask。\n` +
   `【task_type 按"用户想做什么"选最贴切的一个,不要默认竞品】:\n` +
+  `- industry_market_analysis:对一个明确品类或频道完成行业、用户、供给、竞品、京东现状、机会和设计策略的完整分析。信号:"行业分析/市场分析/赛道分析/品类分析/频道年度规划/从行业到设计策略"。\n` +
   `- design_audit:对已有设计稿/页面/界面做走查·评估·审查(美学/视觉/注意力/品牌一致性/可用性)。信号:"走查/评估设计稿/看这个页面/UI 审查/视觉评估"。\n` +
   `- competitive_research:分析对标竞品、比较各家能力差异。信号:"竞品/对标/各家/横评/差异化"。\n` +
   `- user_research_planning:规划一次用户研究(找谁/用什么方法/问什么)。信号:"规划研究/研究方案/怎么调研/招募"。\n` +
@@ -127,13 +144,25 @@ export class ResearchPlanningService {
     onProgress?: (event: PlanProgress) => void,
   ): Promise<ResearchPlanningResult> {
     if (input.requirement) {
-      return this.planFromRequirement(input.requirement, input.originalInput, onProgress);
+      return this.planFromRequirement(
+        input.requirement,
+        input.originalInput,
+        onProgress,
+        input.orchestrationMode ?? 'single_skill',
+      );
     }
     const { llm, validator } = this.dependencies;
     const emit = onProgress ?? (() => {});
     const direct: DirectInvoke | null = input.directSkillId !== undefined
       ? { skillName: input.directSkillId, rest: input.originalInput }
       : parseDirectInvoke(input.originalInput);
+    const orchestrationMode = input.orchestrationMode ?? 'single_skill';
+    if (orchestrationMode === 'multi_skill' && direct) {
+      throw new OrchestrationModePlanningError('direct_skill_conflict');
+    }
+    if (orchestrationMode === 'multi_skill' && this.dependencies.multiSkillPortfolioMode !== 'active') {
+      throw new OrchestrationModePlanningError('unavailable');
+    }
     const understandInput = direct
       ? (direct.rest || direct.skillName)
       : input.originalInput;
@@ -163,13 +192,14 @@ export class ResearchPlanningService {
       modelVersion: taskGen.modelVersion,
       promptHash: taskGen.promptHash,
       traceId: taskGen.traceId,
-    }, emit);
+    }, emit, undefined, orchestrationMode);
   }
 
   async planFromRequirement(
     requirement: ResearchTaskV2,
     originalInput = requirement.research_goal,
     onProgress?: (event: PlanProgress) => void,
+    orchestrationMode: OrchestrationModeV1 = 'single_skill',
   ): Promise<ResearchPlanningResult> {
     const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task: ResearchTaskData = {
@@ -189,7 +219,14 @@ export class ResearchPlanningService {
       promptHash: hashPrompt(originalInput, canonicalRequirement, 'research-task-v2'),
       traceId: `trace_requirement_${hashPrompt(originalInput, canonicalRequirement).slice(-12)}`,
     };
-    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit, canonicalRequirement);
+    return this.planTask(
+      task,
+      parseDirectInvoke(originalInput),
+      provenance,
+      emit,
+      canonicalRequirement,
+      orchestrationMode,
+    );
   }
 
   async planCurrentFromRequirement(
@@ -201,6 +238,7 @@ export class ResearchPlanningService {
       requirement,
       originalInput,
       onProgress,
+      { orchestrationMode: 'single_skill' },
     );
     if (isPlanningGuidanceClarification(result)) {
       throw new Error(`Planning Guidance requires clarification: ${result.planningGuidance.reasonCode}`);
@@ -211,8 +249,8 @@ export class ResearchPlanningService {
   async planCurrentFromRequirementOutcome(
     requirement: ResearchTaskV2,
     originalInput = requirement.research_goal,
-    onProgress?: (event: PlanProgress) => void,
-    options: CurrentResearchPlanningOptions = {},
+    onProgress: ((event: PlanProgress) => void) | undefined,
+    options: CurrentResearchPlanningOptions,
   ): Promise<CurrentResearchPlanningOutcome> {
     const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task: ResearchTaskData = {
@@ -226,7 +264,17 @@ export class ResearchPlanningService {
       pii_detected: canonicalRequirement.pii_detected,
     };
     const emit = onProgress ?? (() => {});
+    const orchestrationMode = options.orchestrationMode;
+    if (orchestrationMode !== 'single_skill' && orchestrationMode !== 'multi_skill') {
+      throw new OrchestrationModePlanningError('missing');
+    }
     const direct = resolveExplicitDirectInvoke(originalInput);
+    if (orchestrationMode === 'multi_skill' && direct) {
+      throw new OrchestrationModePlanningError('direct_skill_conflict');
+    }
+    if (orchestrationMode === 'multi_skill' && this.dependencies.multiSkillPortfolioMode !== 'active') {
+      throw new OrchestrationModePlanningError('unavailable');
+    }
     const taskProvenance: PlanProvenance = {
       modelName: this.dependencies.llm.identity.requestedModel,
       modelVersion: 'research-task-v2',
@@ -239,6 +287,7 @@ export class ResearchPlanningService {
       direct,
       originalInput,
       requirement: canonicalRequirement,
+      orchestrationMode,
       guidanceRequirement: requirement,
       ...(options.selectedScenarioId ? { selectedScenarioId: options.selectedScenarioId } : {}),
       ...(options.requireExplicitScenarioSelection
@@ -250,6 +299,7 @@ export class ResearchPlanningService {
     }, deliverableSelection.evidenceRequirements);
     if (isPlanningGuidanceClarification(artifacts)) return artifacts;
     return {
+      orchestrationMode,
       task,
       structuredTask: canonicalRequirement,
       activatedNodes: artifacts.activated.map((node) => node.key),
@@ -273,12 +323,14 @@ export class ResearchPlanningService {
     direct: DirectInvoke | null,
     taskProvenance: PlanProvenance,
     emit: (event: PlanProgress) => void,
-    structuredTask?: ResearchTaskV2,
+    structuredTask: ResearchTaskV2 | undefined,
+    orchestrationMode: OrchestrationModeV1,
   ): Promise<ResearchPlanningResult> {
     const strategy = direct ? this.directPlanner : this.routedPlanner;
     const artifacts = await strategy.plan({
       task,
       direct,
+      orchestrationMode,
       taskProvenance,
       emit,
       ...(structuredTask ? { requirement: structuredTask } : {}),

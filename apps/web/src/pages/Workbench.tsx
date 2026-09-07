@@ -25,7 +25,7 @@ import { Stage2Candidates } from '../components/stages/Stage2Candidates.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
-import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
+import { NativeStage4Report } from '../components/stages/NativeStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
 import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
 import { Labs } from './Labs.tsx';
@@ -87,7 +87,8 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     exec,
     executionSteps,
     executionPlanSteps,
-    deliverable,
+    finalReport,
+    skillResults,
     reportState,
     deliverableError,
     error,
@@ -169,7 +170,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
       ) : (
       <main className="workbench-main">
         <div className="workbench-scroll">
-          <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
+          <div className={`chat-column${finalReport ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' ? (
               <Welcome onPick={flow.submitInput} />
             ) : phase === 'loading-task' ? (
@@ -236,7 +237,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {(phase === 'executing' || phase === 'reviewing' || phase === 'composing-report') && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase={phase}
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
+                      />
                     )}
                     <RunningTaskNotice
                       phase={phase}
@@ -249,14 +255,19 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'paused' && exec && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="paused" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="paused"
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
+                      />
                     )}
                     <FailureActionCard
                       stepNo={exec.failedStepNo}
                       stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
                       failure={exec.failure}
                       onRetry={() => flow.resumeStep('retry')}
-                      onReplan={() => flow.revisePlan('知识或 Skill 合同已变化，请基于当前 Requirement 重新生成计划。')}
+                      onReplan={() => flow.revisePlan('知识或分析能力已更新，请基于当前需求重新生成计划。')}
                       onAbort={() => flow.resumeStep('abort')}
                     />
                   </>
@@ -264,7 +275,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'done' && exec && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="done" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="done"
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
+                      />
                     )}
                     {error && <ErrorCard msg={error} />}
                     {exec.status === 'completed_with_gaps' && (
@@ -274,10 +290,11 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                     {reportState === 'report-loading-error' && (
                       <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
                     )}
-                    {deliverable && (
-                      <CurrentStage4Report
-                        report={deliverable}
-                        taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
+                    {finalReport && currentTaskId && (
+                      <NativeStage4Report
+                        taskId={currentTaskId}
+                        finalReport={finalReport}
+                        skillResults={skillResults}
                       />
                     )}
                   </>
@@ -285,7 +302,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'failed' && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="failed" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="failed"
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
+                      />
                     )}
                     <TerminalTaskNotice
                       state="failed"
@@ -296,7 +318,12 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                 {phase === 'cancelled' && (
                   <>
                     {executionPlanSteps.length > 0 && (
-                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="cancelled" />
+                      <Stage3Execute
+                        steps={executionPlanSteps}
+                        log={executionSteps}
+                        phase="cancelled"
+                        native={plan?.plan.execution_contract_version === 'native-skill-execution-plan-v1'}
+                      />
                     )}
                     <AbortedNotice />
                   </>
@@ -310,6 +337,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
         </div>
         <Composer
           disabled={phase === 'loading-task' || phase === 'planning' || phase === 'clarifying' || phase === 'selecting' || phase === 'executing' || phase === 'reviewing' || phase === 'composing-report' || phase === 'awaiting-approval'}
+          multiSkillEnabled={capabilities?.multiSkillPlanWriterEnabled === true}
           onSubmit={flow.submitInput}
         />
       </main>
@@ -455,11 +483,11 @@ function FailureActionCard({
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
         {canReplan
-          ? '当前计划绑定的知识或 Skill 合同已变化，必须重新生成并再次确认计划；终止不会生成交付物。'
+          ? '当前计划使用的知识或分析能力已更新，请重新生成并确认计划；终止后不会生成报告。'
           : failure?.kind === 'deliverable_validation'
             ? '重试会优先复用已验证的计划步骤，只重新构建 Canonical Deliverable 及后续报告；复用校验失败时才回退为完整重试。'
             : canRetry
-              ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
+              ? '重试会继续使用当前已确认的计划，从失败步骤重新执行；终止后不会生成报告。'
               : '该失败不可重试；终止任务后不会生成交付物。'}
       </p>
       <div style={{ display: 'flex', gap: 10 }}>
@@ -646,7 +674,7 @@ function TerminalTaskNotice({
 function CurrentHistoryNotice() {
   return (
     <aside style={{ color: 'var(--text-faint)', fontSize: 12, padding: '4px 2px 18px' }}>
-      Current 任务会保留在侧栏历史中；点击即可恢复最近状态和报告。
+      当前任务会保留在侧栏历史中；点击即可恢复最近状态和报告。
     </aside>
   );
 }
@@ -655,7 +683,7 @@ function AbortedNotice() {
   return (
     <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--danger)', fontWeight: 600 }}>任务已终止</div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>Current 任务已取消，未生成交付物。可新建任务重试。</div>
+      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>任务已取消，未生成报告。可新建任务重试。</div>
     </div>
   );
 }

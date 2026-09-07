@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "joyspace-read/output.schema.json",
+  "title": "JoyspaceReadOutput",
+  "oneOf": [
+    { "$ref": "#/$defs/searchOutput" },
+    { "$ref": "#/$defs/viewOutput" }
+  ],
+  "$defs": {
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["o2", "webcli"],
+      "properties": {
+        "o2": { "type": "string", "minLength": 1 },
+        "webcli": { "type": "string", "minLength": 1 }
+      }
+    },
+    "searchDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url", "author", "updatedAt", "preview"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https://joyspace\\.jd\\.com/" },
+        "author": { "type": ["string", "null"] },
+        "updatedAt": { "type": ["string", "null"] },
+        "preview": { "type": ["string", "null"] }
+      }
+    },
+    "viewDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "body", "author", "url", "contentSha256"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string", "minLength": 1 },
+        "author": { "type": ["string", "null"] },
+        "url": { "type": "string", "pattern": "^https://joyspace\\.jd\\.com/" },
+        "contentSha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "searchOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "operation", "status", "documents", "runtime"],
+      "properties": {
+        "version": { "const": "joyspace-read-output-v1" },
+        "operation": { "const": "search" },
+        "status": { "enum": ["available", "empty"] },
+        "documents": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/searchDocument" } },
+        "viewedDocument": { "$ref": "#/$defs/viewDocument" },
+        "runtime": { "$ref": "#/$defs/runtime" }
+      }
+    },
+    "viewOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "operation", "status", "document", "runtime"],
+      "properties": {
+        "version": { "const": "joyspace-read-output-v1" },
+        "operation": { "const": "view" },
+        "status": { "const": "available" },
+        "document": { "$ref": "#/$defs/viewDocument" },
+        "runtime": { "$ref": "#/$defs/runtime" }
+      }
+    }
+  }
+}

@@ -1,3 +1,7 @@
+import {
+  isNativeSkillExecutionPlanV1,
+  parseNativeSkillExecutionPlanV1,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv, { type ValidateFunction } from 'ajv';
@@ -32,6 +36,13 @@ export type SchemaName =
   | 'report-review'
   | 'report-editorial-intent-v2'
   | 'editorial-presentation-spec-v1'
+  | 'editorial-presentation-brief-v1'
+  | 'editorial-html-source-packet-v2'
+  | 'universal-editorial-showcase-intent-v1'
+  | 'universal-editorial-presentation-spec-v1'
+  | 'universal-editorial-showcase-render-manifest-v1'
+  | 'universal-editorial-showcase-profile-v1'
+  | 'universal-editorial-showcase-golden-contract-v1'
   | 'report-package-v3';
 
 // checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。
@@ -84,6 +95,14 @@ export class SchemaValidator {
 
   // 返回错误信息数组;空数组表示通过。
   validate(name: SchemaName | string, data: unknown): string[] {
+    if (name === 'current-execution-plan' && isNativeSkillExecutionPlanV1(data)) {
+      try {
+        parseNativeSkillExecutionPlanV1(data);
+        return [];
+      } catch (error) {
+        return [error instanceof Error ? error.message : String(error)];
+      }
+    }
     const schemaName = name === 'current-execution-plan'
       && typeof data === 'object'
       && data !== null

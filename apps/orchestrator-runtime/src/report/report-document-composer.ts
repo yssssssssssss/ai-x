@@ -3,6 +3,7 @@ import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type { ReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   ChartSpec,
+  IndustryMarketAnalysisPayloadV1,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   ResearchStrategyReportPayload,
@@ -34,6 +35,7 @@ import {
   requiredPayloadPointers,
 } from './report-projection.ts';
 import { composeResearchStrategyDocument } from './dynamic-report-composer.ts';
+import { projectIndustryMarketReport } from './industry-market-report-projector.ts';
 import { isResearchStrategyPayloadV2 } from './research-strategy-deliverable-assembler.ts';
 import {
   deterministicReportLayout,
@@ -378,7 +380,6 @@ function assertVerifiedVisualAsset(
   ) {
     fail(`${label} Visual Asset, bytes, and Manifest identity do not match`);
   }
-  if (asset.manifest.exportPolicy === 'block') fail(`${label} Visual Asset is blocked from report export`);
 }
 
 function assetReference(asset: VerifiedVisualAsset): ReportAssetReference {
@@ -470,13 +471,15 @@ export function assertReportCompositionInput(input: ComposeReportDocumentInput):
     requireCoverage: true,
   });
 
-  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1', 'report-review-v2']);
+  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1', 'report-review-v2', 'report-review-v3']);
   assertSealedJsonValue(input.review.artifact, input.review.value, 'Review');
   assertValueBinding(input.review.value, binding, 'Review');
   assertValidReportReviewArtifact(input.review.value, DOCUMENT_SCHEMA);
   const expectedReviewVersion = contract.entry.id === 'research_strategy_report'
     ? 'report-review-v2'
-    : 'report-review-v1';
+    : contract.entry.id === 'industry_market_analysis_report'
+      ? 'report-review-v3'
+      : 'report-review-v1';
   if (input.review.value.version !== expectedReviewVersion) {
     fail(`Review value version must be ${expectedReviewVersion} for ${contract.entry.id}`);
   }
@@ -1556,6 +1559,35 @@ export function assertValidReportDocument(
 
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
   const { contract } = assertReportCompositionInput(input);
+  if (input.deliverable.value.deliverableType === 'industry_market_analysis_report') {
+    const payload = input.deliverable.value.payload as IndustryMarketAnalysisPayloadV1;
+    const readablePayload = selectReadablePayloadSchema(contract, payload);
+    const { document } = projectIndustryMarketReport({
+      payload,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      requiredQuestionIds: input.requiredQuestionIds,
+      requiredPointers: requiredPayloadPointers(readablePayload.schema),
+    });
+    assertReportProjectionIntegrity({
+      document,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payload,
+      requiredPointers: requiredPayloadPointers(readablePayload.schema),
+    });
+    assertValidReportDocument(document, {
+      requiredQuestionIds: input.requiredQuestionIds,
+      evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      findingIds: input.deliverable.value.findingGraph.findings.map(({ id }) => id),
+      summaryIds: input.deliverable.value.findingGraph.subQuestionSummaries.map(({ id }) => id),
+      visualAssets: input.visualAssets.map(assetReference),
+      charts: input.charts.map(({ spec, asset }) => ({
+        chartId: spec.chartId,
+        ...assetReference(asset),
+        specHash: chartManifestSpecHash(asset),
+      })),
+    });
+    return document;
+  }
   if (input.deliverable.value.deliverableType === 'research_strategy_report') {
     const payload = input.deliverable.value.payload;
     const readablePayload = selectReadablePayloadSchema(contract, payload);

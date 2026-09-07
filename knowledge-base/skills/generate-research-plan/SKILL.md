@@ -8,7 +8,7 @@ description: 吃一个研究需求（可能很碎、很模糊，甚至只有一�
 id: skill_generate_research_plan
 source: xingyun_wiki
 source_path: skills/generate-research-plan/SKILL.md
-content_hash: sha256:2e6dc9b242131ea3e54436044bebe356ab716bd7235bc012548ace9a48af5755
+content_hash: sha256:dfd9a647bad6839183dd86ec0c24cb07bf25565bde51ac64d585584d30ad9860
 guide_tags: []
 guide_stage: []
 type: skill
@@ -18,8 +18,6 @@ task_types:
   - user_research_planning
 required_tools:
   - tavily-web-search
-execution_mode: compiled
-execution_contract: orchestrator/skill-executions/generate-research-plan.yaml
 inputs: []
 outputs: []
 status: approved
@@ -28,8 +26,6 @@ status: approved
 # Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案
 
 吃一个研究需求，交付一份**这次专用**的研究方案。真人研究员接到需求不会立刻写方案，而是**先把需求问清、对齐成 brief，再展开成方案**——本 skill 复刻这套「一份方案到底」的工作方式：一个 skill、两个内部阶段，中间留一道「需求不清就停下来」的闸门。本 skill 不发明研究方法，而是编排系统在确认前从受控 Knowledge 索引选定并冻结的正典——需求沟通规范、项目流程规范、采集/分析方法本体、场景打法、理论模型——把它们组装成贴合本次决策的执行方案。
-
-机器执行以 `orchestrator/skill-executions/generate-research-plan.yaml` 为唯一拓扑真相：确认前展开为 7 个可见阶段——外部上下文 Tool、Knowledge 加载、brief 对齐、方法选择、抽样与排期、方案合成、自审。本文“阶段一/阶段二”只是这 7 个节点的业务说明，不代表隐藏的二阶段执行。Tool 只能使用本 Skill Registry 声明并在冻结能力决策中授权的 `tavily-web-search`。
 
 ## 北极星与边界（先理解，再动手）
 

@@ -1,6 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  NATIVE_SKILL_EXECUTION_PLAN_VERSION,
+  isNativeSkillExecutionPlanV1,
+  parseNativeSkillExecutionPlanV1,
+  type NativeSkillExecutionPlanV1,
+  type NativeSkillInvocation,
+  type NativeSkillRunSpec,
+  type ReadableExecutionPlan,
+  type ResolvedPlanInputs,
+  type SkillInputRequirement,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type {
   CurrentCapabilityApproval,
   CurrentCapabilityDecisions,
@@ -37,8 +48,9 @@ import {
   loadToolRegistry,
   type ToolRegistryEntry,
 } from '../runtime/config-loader.ts';
+import { resolvePlanInputs } from '../input-resolution/resolved-plan-inputs.ts';
 import { SchemaValidator } from '../schema/validator.ts';
-import type { SkillLoader } from '../runtime/skill-loader.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 import { resolveCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
 import {
   assertCompiledSkillPlan,
@@ -70,6 +82,7 @@ export interface PlanCompileInput {
   planning_provenance?: PlanningProvenance;
   requireCompetitiveWeightContract?: boolean;
   frozen_skill_invocations?: CurrentExecutionPlan['skill_invocations'];
+  skillLoader?: SkillLoader;
 }
 
 export interface PortfolioPlanCompileInput extends Omit<
@@ -194,6 +207,36 @@ function fail(kind: PlanCompilerValidationKind, ...issueIds: string[]): never {
   throw new PlanCompilerValidationError(kind, issueIds);
 }
 
+export function assertSingleSkillExecutionPlan(
+  plan: CurrentExecutionPlan | CurrentExecutionPlanV3,
+): void {
+  const invocationCount = Array.isArray(plan.skill_invocations)
+    ? plan.skill_invocations.length
+    : 0;
+  if (
+    plan.execution_contract_version !== 'current-execution-plan-v2'
+    || invocationCount !== 1
+  ) {
+    fail(
+      'skill_execution_contract_invalid',
+      'single_skill_invocation_count_invalid',
+      `version=${plan.execution_contract_version ?? 'unversioned'}`,
+      `actual=${invocationCount}`,
+      'expected=1',
+    );
+  }
+  const invocationId = plan.skill_invocations![0]!.invocation_id;
+  if (plan.steps.some((step) => (
+    step.actor_type === 'skill'
+    && step.skill_invocation_id !== invocationId
+  ))) {
+    fail(
+      'skill_execution_contract_invalid',
+      'single_skill_step_ownership_invalid',
+      invocationId,
+    );
+  }
+}
 
 function validateProposalShape(candidate: CurrentPlanCandidateProposal): void {
   const unknownCandidateKeys = Object.keys(candidate).filter((key) => !CANDIDATE_KEYS.has(key));
@@ -321,14 +364,24 @@ function freezeCapabilityDecisions(
 ): CurrentCapabilityDecisions {
   const freezeDecision = (
     decision: CapabilityResolution['eligible'][number] | CurrentCapabilityDecisions['eligible'][number],
-  ) => ({
-    ...structuredClone(decision),
-    skill: {
-      ...structuredClone(decision.skill),
-      optional_tools: [...(decision.skill.optional_tools ?? [])],
-    },
-    optional_tool_decisions: structuredClone(decision.optional_tool_decisions ?? []),
-  });
+  ) => {
+    const {
+      input_requirements: _inputRequirements,
+      report_template: _reportTemplate,
+      ...persistedSkill
+    } = decision.skill as typeof decision.skill & {
+      input_requirements?: unknown;
+      report_template?: unknown;
+    };
+    return {
+      ...structuredClone(decision),
+      skill: {
+        ...structuredClone(persistedSkill),
+        optional_tools: [...(decision.skill.optional_tools ?? [])],
+      },
+      optional_tool_decisions: structuredClone(decision.optional_tool_decisions ?? []),
+    };
+  };
   return {
     eligible: resolution.eligible.map(freezeDecision),
     rejected: resolution.rejected.map(freezeDecision),
@@ -343,6 +396,259 @@ export function normalizeCurrentExecutionPlanOptionalFields(
     capability_decisions: freezeCapabilityDecisions(plan.capability_decisions),
     capability_gaps: structuredClone(plan.capability_gaps ?? []),
   };
+}
+
+function materializedRequirementValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return value !== undefined && value !== null;
+}
+
+function nativeStepClosure(
+  steps: readonly CurrentPlanStep[],
+  invocations: readonly { invocation_id: string; skill_id: string }[],
+): Set<number> {
+  const byNo = new Map(steps.map((step) => [step.step_no, step]));
+  const invocationById = new Map(invocations.map((invocation) => [invocation.invocation_id, invocation]));
+  const retained = new Set(
+    steps
+      .filter((step) => {
+        if (!step.skill_invocation_id || step.actor_type !== 'skill') return false;
+        return invocationById.get(step.skill_invocation_id)?.skill_id === step.actor_id;
+      })
+      .map((step) => step.step_no),
+  );
+  const visit = (stepNo: number): void => {
+    const step = byNo.get(stepNo);
+    if (!step) fail('candidate_schema_invalid', 'native_dependency', String(stepNo));
+    for (const dependency of [
+      ...step.depends_on,
+      ...step.input_bindings.map(({ source_step_no }) => source_step_no),
+    ]) {
+      if (retained.has(dependency)) continue;
+      retained.add(dependency);
+      visit(dependency);
+    }
+  };
+  for (const stepNo of [...retained]) visit(stepNo);
+  return retained;
+}
+
+function nativePendingInputs(plan: NativeSkillExecutionPlanV1): PendingInput[] {
+  const stepByInvocation = new Map(plan.skill_invocations.map((invocation) => [
+    invocation.invocation_id,
+    [...plan.steps].reverse().find((step) => (
+      step.skill_invocation_id === invocation.invocation_id
+      && step.actor_type === 'skill'
+      && step.actor_id === invocation.skill_id
+    ))!,
+  ]));
+  return plan.resolved_inputs.pending.map(({ requirement, targetInvocationIds }) => ({
+    kind: requirement.kind,
+    role: requirement.key,
+    label: requirement.label,
+    multiple: requirement.multiple,
+    targets: targetInvocationIds.map((invocationId) => {
+      const step = stepByInvocation.get(invocationId);
+      if (!step) fail('candidate_schema_invalid', 'native_pending_target', invocationId);
+      return {
+        step_no: step.step_no,
+        tool_id: step.actor_id,
+        field: requirement.key,
+        multiple: requirement.multiple,
+      };
+    }),
+  }));
+}
+
+export function compileNativeSkillExecutionPlan(input: {
+  plan: ReadableCurrentExecutionPlan;
+  mode: 'single_skill' | 'multi_skill';
+  task: ResearchTaskV2;
+  skillLoader?: SkillLoader;
+}): {
+  plan: NativeSkillExecutionPlanV1;
+  pendingInputs: PendingInput[];
+  resolvedInputs: ResolvedPlanInputs;
+} {
+  const skillLoader = input.skillLoader ?? new SkillLoader();
+  const sourceInvocations = input.plan.skill_invocations ?? [];
+  const retainedInvocations = sourceInvocations.filter((invocation) => (
+    !('role' in invocation) || invocation.role === 'contributor'
+  ));
+  if (retainedInvocations.length === 0) {
+    fail('candidate_schema_invalid', 'native_skill_invocations');
+  }
+  if (input.mode === 'single_skill' && retainedInvocations.length !== 1) {
+    fail('candidate_schema_invalid', 'native_single_skill_invocations');
+  }
+  const retainedIds = new Set(retainedInvocations.map(({ invocation_id }) => invocation_id));
+  const retainedStepNos = nativeStepClosure(input.plan.steps, retainedInvocations);
+  const sourceSteps = input.plan.steps
+    .filter(({ step_no }) => retainedStepNos.has(step_no))
+    .sort((left, right) => left.step_no - right.step_no);
+  const stepNoMap = new Map(sourceSteps.map((step, index) => [step.step_no, index + 1]));
+  const steps: CurrentPlanStep[] = sourceSteps.map((source, index) => {
+    const step = structuredClone(source) as CurrentPlanStep & {
+      shared_stage_key?: string;
+      shared_by_invocation_ids?: string[];
+      share_fingerprint?: string;
+    };
+    delete step.shared_stage_key;
+    delete step.shared_by_invocation_ids;
+    delete step.share_fingerprint;
+    step.step_no = index + 1;
+    step.depends_on = source.depends_on
+      .filter((dependency) => stepNoMap.has(dependency))
+      .map((dependency) => stepNoMap.get(dependency)!);
+    step.input_bindings = source.input_bindings
+      .filter(({ source_step_no }) => stepNoMap.has(source_step_no))
+      .map((binding) => ({ ...binding, source_step_no: stepNoMap.get(binding.source_step_no)! }));
+    return step;
+  });
+  const unavailableCapabilityIds = new Set((input.plan.capability_gaps ?? []).map(({ capability_id }) => capability_id));
+  const invocations: NativeSkillInvocation[] = retainedInvocations.map((source) => {
+    const loadedRunSpec = skillLoader.loadNativeRunSpec(source.skill_id, input.task);
+    const runSpec: NativeSkillRunSpec = {
+      ...loadedRunSpec,
+      tool_bindings: loadedRunSpec.tool_bindings.map((binding) => ({
+        ...binding,
+        status: binding.status === 'needs_binding' || unavailableCapabilityIds.has(binding.toolId)
+          ? 'needs_binding'
+          : 'bound',
+      })),
+    };
+    const missingRequiredBinding = runSpec.tool_bindings.find(({ required, status }) => required && status === 'needs_binding');
+    if (missingRequiredBinding) {
+      fail('required_tool_missing', source.skill_id, missingRequiredBinding.toolId);
+    }
+    const sourceRecord = source as unknown as Record<string, unknown>;
+    const dependencyIds = Array.isArray(sourceRecord.depends_on_invocation_ids)
+      ? sourceRecord.depends_on_invocation_ids.filter(
+          (id): id is string => typeof id === 'string' && retainedIds.has(id),
+        )
+      : [];
+    const required = typeof sourceRecord.required === 'boolean' ? sourceRecord.required : true;
+    const failurePolicy = sourceRecord.failure_policy === 'gap' ? 'gap' : 'block';
+    return {
+      invocation_id: source.invocation_id,
+      skill_id: source.skill_id,
+      depends_on_invocation_ids: dependencyIds,
+      step_nos: source.step_nos
+        .filter((stepNo) => stepNoMap.has(stepNo))
+        .map((stepNo) => stepNoMap.get(stepNo)!),
+      required,
+      failure_policy: failurePolicy,
+      run_spec: runSpec,
+    };
+  });
+  const reportOwner = input.mode === 'multi_skill'
+    ? sourceInvocations.find((invocation) => 'role' in invocation && invocation.role === 'synthesizer')
+    : retainedInvocations[0];
+  const finalReportPolicy = reportOwner
+    ? (invocations.find(({ invocation_id }) => invocation_id === reportOwner.invocation_id)?.run_spec
+      ?? skillLoader.loadNativeRunSpec(reportOwner.skill_id, input.task)).report_policy
+    : invocations[0]!.run_spec.report_policy;
+  const taskRecord = input.task as unknown as Record<string, unknown>;
+  const requirementKinds = new Map<string, SkillInputRequirement['kind']>();
+  for (const invocation of invocations) {
+    for (const requirement of invocation.run_spec.input_requirements) {
+      requirementKinds.set(requirement.key, requirement.kind);
+    }
+  }
+  const available = [...requirementKinds].flatMap(([key, kind]) => (
+    materializedRequirementValue(taskRecord[key])
+      ? [{
+          key,
+          kind,
+          valueRef: `requirement:/${key}`,
+          source: 'conversation' as const,
+          authorized: true,
+        }]
+      : []
+  ));
+  const executionBoundKeys = new Set<string>();
+  for (const step of steps) {
+    for (const binding of step.input_bindings) {
+      const match = /^\/([^/]+)$/u.exec(binding.target_pointer);
+      if (match) executionBoundKeys.add(match[1]!);
+    }
+  }
+  const resolvedInputs = resolvePlanInputs({
+    invocations,
+    available,
+    executionBoundKeys: [...executionBoundKeys],
+  });
+  const valueByKey = new Map(
+    resolvedInputs.resolved.map(({ key }) => [key, structuredClone(taskRecord[key])]),
+  );
+  for (const invocation of invocations) {
+    const outputStep = [...steps].reverse().find((step) => (
+      step.skill_invocation_id === invocation.invocation_id
+      && step.actor_type === 'skill'
+      && step.actor_id === invocation.skill_id
+    ));
+    if (!outputStep) fail('candidate_schema_invalid', 'native_output_step', invocation.invocation_id);
+    for (const requirement of invocation.run_spec.input_requirements) {
+      if (valueByKey.has(requirement.key)) {
+        outputStep.input[requirement.key] = structuredClone(valueByKey.get(requirement.key));
+      } else if (!Object.hasOwn(outputStep.input, requirement.key)) {
+        outputStep.input[requirement.key] = null;
+      }
+    }
+  }
+  const keptSkillIds = new Set(invocations.map(({ skill_id }) => skill_id));
+  const capabilityDecisions = {
+    eligible: input.plan.capability_decisions.eligible.filter(({ skill }) => (
+      typeof skill.id === 'string' && keptSkillIds.has(skill.id)
+    )),
+    rejected: input.plan.capability_decisions.rejected,
+  };
+  const keptToolIds = new Set([
+    ...capabilityDecisions.eligible.flatMap(({ skill }) => [
+      ...skill.required_tools,
+      ...(skill.optional_tools ?? []),
+    ]),
+    ...invocations.flatMap(({ run_spec }) => run_spec.tool_bindings.map(({ toolId }) => toolId)),
+  ]);
+  const capabilityGaps = (input.plan.capability_gaps ?? []).filter(({ capability_id }) => (
+    keptToolIds.has(capability_id)
+  ));
+  for (const binding of invocations.flatMap(({ run_spec }) => run_spec.tool_bindings)) {
+    if (
+      binding.status === 'needs_binding'
+      && !capabilityGaps.some(({ capability_id }) => capability_id === binding.toolId)
+    ) {
+      capabilityGaps.push({
+        capability_type: 'tool',
+        capability_id: binding.toolId,
+        code: 'optional_tool_real_adapter_unavailable',
+        message: `Skill 声明的外部能力 ${binding.capability} 尚未绑定；执行不得模拟该能力。`,
+      });
+    }
+  }
+  const plan = parseNativeSkillExecutionPlanV1({
+    task_id: input.plan.task_id || 'pending-task',
+    execution_contract_version: NATIVE_SKILL_EXECUTION_PLAN_VERSION,
+    mode: input.mode,
+    deliverable_type: input.plan.deliverable_type,
+    evidence_requirements: structuredClone(input.plan.evidence_requirements),
+    problem_graph: structuredClone(input.plan.problem_graph),
+    problem_graph_provenance: structuredClone(input.plan.problem_graph_provenance),
+    capability_decisions: structuredClone(capabilityDecisions),
+    capability_gaps: structuredClone(capabilityGaps),
+    steps,
+    candidate_metadata: structuredClone(input.plan.candidate_metadata),
+    ...(input.plan.planning_provenance
+      ? { planning_provenance: structuredClone(input.plan.planning_provenance) }
+      : {}),
+    activated_nodes: [...input.plan.activated_nodes],
+    skill_invocations: invocations,
+    final_report_policy: structuredClone(finalReportPolicy),
+    resolved_inputs: resolvedInputs,
+  });
+  const pendingInputs = nativePendingInputs(plan);
+  return { plan, pendingInputs, resolvedInputs };
 }
 
 function capabilityGaps(
@@ -868,11 +1174,18 @@ function validateSkillInvocations(
       if (assigned.has(stepNo)) fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
       assigned.add(stepNo);
       const step = steps[stepNo - 1];
-      if (
-        !step
-        || step.skill_invocation_id !== invocation.invocation_id
-        || !step.skill_stage_id
-      ) {
+      if (!step || step.skill_invocation_id !== invocation.invocation_id) {
+        fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+      }
+      if (invocation.execution_mode === 'legacy_single_call') {
+        if (
+          step.skill_stage_id !== undefined
+          || step.actor_type !== 'skill'
+          || step.actor_id !== invocation.skill_id
+        ) {
+          fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+        }
+      } else if (!step.skill_stage_id) {
         fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
       }
       if (step.actor_type === 'skill' && step.actor_id === invocation.skill_id) hasSkillOutput = true;
@@ -946,7 +1259,7 @@ function derivePendingInputs(
     const decision = eligibleSkills.get(step.actor_id)!;
     for (const pending of decision.pending_inputs) {
       if (!Object.hasOwn(step.input, pending.role)) {
-        fail('pending_input_schema_invalid', step.actor_id, pending.role, String(step.step_no));
+        step.input[pending.role] = pending.multiple ? [] : null;
       }
       let item = pendingByRole.get(pending.role);
       if (!item) {
@@ -1041,9 +1354,14 @@ export class PlanCompiler {
     const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
     const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
     validateProposalShape(input.candidate);
+    const normalizedCandidateSteps = copySteps(input.candidate);
     const expandedSkills = input.frozen_skill_invocations
-      ? { steps: input.candidate.steps.map((step) => structuredClone(step)), invocations: structuredClone(input.frozen_skill_invocations) }
-      : compileSkillSteps(input.candidate.steps, input.task);
+      ? { steps: normalizedCandidateSteps, invocations: structuredClone(input.frozen_skill_invocations) }
+      : compileSkillSteps(
+          normalizedCandidateSteps,
+          input.task,
+          input.skillLoader ?? new SkillLoader(),
+        );
     const candidate = { ...input.candidate, steps: expandedSkills.steps };
     this.validator.validateOrThrow('current-execution-plan', {
       task_id: '',
@@ -1164,6 +1482,7 @@ export class PlanCompiler {
         steps: input.candidate.steps,
         task: input.task,
         portfolio: input.portfolio,
+        capabilityResolution,
         ...(input.skillLoader ? { skillLoader: input.skillLoader } : {}),
       });
     } catch (error) {
@@ -1283,8 +1602,18 @@ export function validateCurrentPlanRevision(input: {
   pending_inputs: unknown;
   task_id: string;
   candidate_id: PlanCandidate['id'];
-}, validator = new SchemaValidator()): ReadableCurrentExecutionPlan {
+}, validator = new SchemaValidator()): ReadableExecutionPlan {
   validator.validateOrThrow('research-task-v2', input.task);
+  if (isNativeSkillExecutionPlanV1(input.plan)) {
+    const plan = parseNativeSkillExecutionPlanV1(input.plan);
+    if (plan.task_id !== input.task_id) {
+      fail('candidate_schema_invalid', 'task_id', plan.task_id, input.task_id);
+    }
+    if (!isDeepStrictEqual(nativePendingInputs(plan), input.pending_inputs)) {
+      fail('candidate_schema_invalid', 'pending_inputs_mismatch');
+    }
+    return plan;
+  }
   validator.validateOrThrow('current-execution-plan', input.plan);
   const task = input.task as ResearchTaskV2;
   if (

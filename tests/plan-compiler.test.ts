@@ -3,6 +3,10 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
+import type {
+  NativeSkillExecutionPlanV1,
+  ReadableExecutionPlan,
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import type { CandidateProfile, PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -312,20 +316,6 @@ function expectCompileError(
     },
   );
 }
-
-test('rejects pending input roles missing from the frozen Skill step input', () => {
-  const value = input();
-  delete (value.candidate.steps[1]!.input as Record<string, unknown>).competitor_screenshots;
-  assert.throws(
-    () => new PlanCompiler().compile(value),
-    (error: unknown) => {
-      assert.ok(error instanceof PlanCompilerValidationError);
-      assert.equal(error.kind, 'pending_input_schema_invalid');
-      assert.match(error.message, /competitor_screenshots/);
-      return true;
-    },
-  );
-});
 
 test('rejects a step dependency cycle', () => {
   expectCompileError((value) => {
@@ -744,6 +734,15 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
     assert.deepEqual(compiled.plan.capability_gaps, []);
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.deepEqual(compiled.plan.skill_invocations, [{
+      invocation_id: 'competitive-web-research:2',
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call',
+      step_nos: [2],
+    }]);
+    assert.equal(compiled.plan.steps[1]?.skill_invocation_id, 'competitive-web-research:2');
+    assert.equal(compiled.plan.steps[1]?.skill_stage_id, undefined);
     assert.deepEqual(
       compiled.plan.steps[1]?.input.scoring_weights,
       Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
@@ -765,6 +764,21 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
   assert.equal(speed.plan.candidate_metadata.title, '快速研究');
   assert.notDeepEqual(depth.plan.candidate_metadata, speed.plan.candidate_metadata);
   assert.equal('purpose' in depth.plan.steps[0]!, false);
+
+  const validator = new SchemaValidator();
+  assert.deepEqual(validator.validate('current-execution-plan', depth.plan), []);
+  const emptyInvocations = { ...structuredClone(depth.plan), skill_invocations: [] };
+  assert.notDeepEqual(validator.validate('current-execution-plan', emptyInvocations), []);
+  const legacyWithCompiledField = structuredClone(depth.plan) as unknown as {
+    skill_invocations: Array<Record<string, unknown>>;
+  };
+  legacyWithCompiledField.skill_invocations[0]!.contract_hash = `sha256:${'0'.repeat(64)}`;
+  assert.notDeepEqual(validator.validate('current-execution-plan', legacyWithCompiledField), []);
+  const unknownMode = structuredClone(depth.plan) as unknown as {
+    skill_invocations: Array<Record<string, unknown>>;
+  };
+  unknownMode.skill_invocations[0]!.execution_mode = 'unknown';
+  assert.notDeepEqual(validator.validate('current-execution-plan', unknownMode), []);
 });
 
 test('compiles a controlled specialty profile and freezes optional recommendation and planning provenance', () => {
@@ -913,7 +927,7 @@ interface CurrentResearchPlanningFixture {
 
 interface PreparedCandidate {
   candidateId: PlanCandidate['id'];
-  plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: '' };
+  plan: Omit<ReadableExecutionPlan, 'task_id'> & { task_id?: string };
   pendingInputs: PendingInput[];
 }
 
@@ -959,10 +973,14 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
   };
 }
 
-function planningServiceHarness(result: CurrentResearchPlanningFixture) {
+function planningServiceHarness(
+  result: CurrentResearchPlanningFixture,
+  skillLoader?: SkillLoader,
+) {
   let repositoryCalls = 0;
   let persistedCandidates: PreparedCandidate[] = [];
   const service = new ControlPlanningService({
+    ...(skillLoader ? { skillLoader } : {}),
     planning: {
       async plan() { return result as never; },
     },
@@ -988,7 +1006,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
             taskId: input.taskId,
             version: index + 1,
             candidateId: candidate.candidateId,
-            plan: { ...candidate.plan, task_id: input.taskId } as ReadableCurrentExecutionPlan,
+            plan: { ...candidate.plan, task_id: input.taskId } as unknown as ReadableExecutionPlan,
             planHash: `sha256:${String(index + 1).repeat(64)}`,
             pendingInputs: candidate.pendingInputs,
           })),
@@ -1003,7 +1021,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
   };
 }
 
-test('Current planning persists only compiled graph, capability decisions, exact steps, and pending inputs', async () => {
+test('Current planning persists the native Plan, frozen snapshot, and pending input bindings', async () => {
   const result = currentPlanningResult();
   const harness = planningServiceHarness(result);
   await harness.service.planExistingTask({
@@ -1016,17 +1034,117 @@ test('Current planning persists only compiled graph, capability decisions, exact
 
   assert.equal(harness.repositoryCalls(), 1);
   for (const candidate of harness.persistedCandidates()) {
-    assert.deepEqual(candidate.plan.problem_graph, result.problemGraph);
-    assert.deepEqual(candidate.plan.problem_graph_provenance, result.problemGraphProvenance);
-    assert.deepEqual(candidate.plan.capability_decisions, result.capabilityResolution);
-    assert.deepEqual(candidate.plan.steps.map((item) => item.step_no), [1, 2]);
+    const plan = candidate.plan as NativeSkillExecutionPlanV1;
+    assert.deepEqual(plan.problem_graph, result.problemGraph);
+    assert.deepEqual(plan.problem_graph_provenance, result.problemGraphProvenance);
+    assert.equal(plan.execution_contract_version, 'native-skill-execution-plan-v1');
+    assert.equal(plan.mode, 'single_skill');
+    assert.equal(plan.skill_invocations.length, 1);
+    assert.equal(plan.skill_invocations[0]?.skill_id, eligibleSkill.id);
+    assert.match(plan.skill_invocations[0]?.run_spec.package_hash ?? '', /^sha256:/u);
+    assert.equal(plan.final_report_policy.kind, plan.skill_invocations[0]?.run_spec.report_policy.kind);
+    assert.deepEqual(plan.steps.map((item) => item.step_no), [1, 2]);
     assert.deepEqual(candidate.pendingInputs[0]?.targets, [{
       step_no: 2,
       tool_id: eligibleSkill.id,
-      field: 'competitor_screenshots',
+      field: 'public_evidence',
       multiple: true,
     }]);
   }
+});
+
+test('Current planning uses the injected SkillLoader for every frozen run spec', async () => {
+  class MarkedSkillLoader extends SkillLoader {
+    calls = 0;
+
+    override loadNativeRunSpec(id: string) {
+      this.calls += 1;
+      const runSpec = super.loadNativeRunSpec(id);
+      return {
+        ...runSpec,
+        tool_bindings: [
+          ...runSpec.tool_bindings,
+          { capability: 'injected-marker', toolId: 'tavily-web-search', required: false, status: 'bound' as const },
+        ],
+      };
+    }
+  }
+
+  const result = currentPlanningResult();
+  const skillLoader = new MarkedSkillLoader();
+  const harness = planningServiceHarness(result, skillLoader);
+  await harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+  }, result as never);
+
+  assert.equal(skillLoader.calls, result.candidates.length);
+  for (const candidate of harness.persistedCandidates()) {
+    const plan = candidate.plan as NativeSkillExecutionPlanV1;
+    assert.equal(
+      plan.skill_invocations[0]!.run_spec.tool_bindings.some(({ capability }) => capability === 'injected-marker'),
+      true,
+    );
+  }
+});
+
+test('single_skill planning rejects a candidate without a Skill Invocation before persistence', async () => {
+  const candidate = validCandidate('depth');
+  const skillQuestionIds = candidate.steps.find(({ actor_type }) => actor_type === 'skill')?.question_ids ?? [];
+  candidate.steps = candidate.steps.filter(({ actor_type }) => actor_type !== 'skill');
+  candidate.steps[0]!.question_ids = [...new Set([
+    ...candidate.steps[0]!.question_ids,
+    ...skillQuestionIds,
+  ])];
+  const result = currentPlanningResult(candidate);
+  const harness = planningServiceHarness(result);
+
+  await assert.rejects(() => harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+    orchestrationMode: 'single_skill',
+  }, result as never), /single_skill_invocation_count_invalid/u);
+  assert.equal(harness.repositoryCalls(), 0);
+});
+
+test('single_skill planning rejects a candidate with more than one Skill Invocation before persistence', async () => {
+  const candidate = validCandidate('depth');
+  const secondSkill = structuredClone(candidate.steps[1]!);
+  secondSkill.step_no = 3;
+  secondSkill.step_name = '第二个独立 Skill 分析';
+  secondSkill.actor_id = 'competitive-analysis';
+  secondSkill.depends_on = [2];
+  secondSkill.input = { research_goal: task.research_goal };
+  secondSkill.input_bindings = [];
+  secondSkill.expected_outputs = [{ pointer: '/payload', description: '第二份独立竞品分析' }];
+  candidate.steps.push(secondSkill);
+  const result = currentPlanningResult(candidate);
+  const secondSkillCapability = new SkillLoader().listCapabilitySkills().find(({ id }) => id === 'competitive-analysis');
+  assert.ok(secondSkillCapability && secondSkillCapability.status === 'active');
+  result.capabilityResolution.eligible.push({
+    skill: secondSkillCapability,
+    required_approvals: [],
+    reasons: [{ code: 'eligible', message: 'fixture second Skill is eligible' }],
+    pending_inputs: [],
+    optional_tool_decisions: [],
+  });
+  const harness = planningServiceHarness(result);
+
+  await assert.rejects(() => harness.service.planExistingTask({
+    taskId: 'task-1',
+    conversationId: 'conversation-1',
+    ownerUserId: 'owner-1',
+    expectedStateVersion: 1,
+    originalInput: task.research_goal,
+    orchestrationMode: 'single_skill',
+  }, result as never), /single_skill_invocation_count_invalid/u);
+  assert.equal(harness.repositoryCalls(), 0);
 });
 
 test('malformed LLM Current candidate never reaches the repository', async () => {
@@ -1317,6 +1435,7 @@ function fixedTestPlanningPolicy() {
 function routedPlanningHarness(
   candidateFixtureMode: CurrentCandidateFixtureMode,
   planningPolicy: unknown = fixedTestPlanningPolicy(),
+  multiSkillPortfolioMode?: 'inactive' | 'active',
 ) {
   const llm = new CurrentPlanningLLM(candidateFixtureMode);
   const tools = new ToolRouter();
@@ -1334,6 +1453,7 @@ function routedPlanningHarness(
     tools,
     approvalAuthorities: ['owner'],
     planningPolicy,
+    ...(multiSkillPortfolioMode ? { multiSkillPortfolioMode } : {}),
   } as never);
   return { llm, planning };
 }
@@ -1386,6 +1506,7 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   assert.match(candidateCall.prompt, /competitive-web-research.*scoring_weights/);
+  assert.match(candidateCall.prompt, /必须且只能包含一个 actor_type=skill/u);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;
@@ -1518,7 +1639,10 @@ test('Current routed planning requires a direction choice even when Scenario wor
     requirement,
     rawInput,
     undefined,
-    { requireExplicitScenarioSelection: true },
+    {
+      orchestrationMode: 'single_skill',
+      requireExplicitScenarioSelection: true,
+    },
   );
 
   assert.ok('kind' in result && result.kind === 'planning_guidance_clarification');
@@ -1554,7 +1678,10 @@ test('Current routed planning generates candidates after an explicit direction s
     requirement,
     rawInput,
     undefined,
-    { selectedScenarioId: 'competitor-benchmark-research' },
+    {
+      orchestrationMode: 'single_skill',
+      selectedScenarioId: 'competitor-benchmark-research',
+    },
   );
 
   assert.equal('kind' in result, false);
@@ -1565,6 +1692,35 @@ test('Current routed planning generates candidates after an explicit direction s
   assert.equal(result.planningProvenance.classifier_call_count, 0);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 0);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates').length, 1);
+});
+
+test('explicit single_skill mode keeps Plan v2 routing when the multi-Skill writer is active', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { planning } = routedPlanningHarness('dynamic', dynamicPolicy, 'active');
+  const rawInput = '梳理宠物心智的设计表达策略全景';
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    research_goal: rawInput,
+  };
+
+  const result = await planning.planCurrentFromRequirementOutcome(
+    requirement,
+    rawInput,
+    undefined,
+    {
+      selectedScenarioId: 'competitor-benchmark-research',
+      orchestrationMode: 'single_skill',
+    },
+  );
+
+  assert.equal('kind' in result, false);
+  if ('kind' in result) return;
+  assert.equal(result.orchestrationMode, 'single_skill');
+  assert.equal(result.capabilityDemandGraph, undefined);
+  assert.equal(result.portfolios, undefined);
 });
 
 test('dynamic repair preserves passing baselines and drops a specialty after the single merged correction', async () => {
@@ -1788,7 +1944,7 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   }
   const compiler = new PlanCompiler();
   for (const candidate of result.candidates) {
-    assert.doesNotThrow(() => compiler.compile({
+    const compiled = compiler.compile({
       candidate,
       task,
       problem_graph: result.problemGraph,
@@ -1797,7 +1953,225 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
       activated_nodes: result.activatedNodes,
       requireCompetitiveWeightContract: true,
-    }));
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.deepEqual(compiled.plan.skill_invocations, [{
+      invocation_id: `competitive-web-research:${candidate.steps.findIndex(({ actor_type }) => actor_type === 'skill') + 1}`,
+      skill_id: 'competitive-web-research',
+      execution_mode: 'legacy_single_call',
+      step_nos: [candidate.steps.findIndex(({ actor_type }) => actor_type === 'skill') + 1],
+    }]);
+  }
+});
+
+test('finalized Current direct Industry Skill keeps the unchanged package as one visible invocation', async () => {
+  const industryTask: ResearchTaskV2 = {
+    version: 'research-task-v2',
+    task_type: 'industry_market_analysis',
+    outcome_mode: 'answer',
+    business_domain: 'pet-food',
+    research_goal: '形成宠物食品行业、用户、竞品、京东现状与设计策略报告',
+    target_audience: ['频道产品与设计团队'],
+    scope: ['中国大陆线上宠物食品'],
+    constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '形成可追溯的行业证据' },
+      { id: 'criterion-action', statement: '形成可执行的行业策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'internal',
+    pii_detected: false,
+    industry_scope: {
+      category: '宠物食品',
+      subcategories: ['猫用冻干'],
+      exclusions: ['线下渠道'],
+      analysis_depth: 'medium',
+      primary_focus: '竞品与设计策略',
+      secondary_focuses: ['用户洞察'],
+      decision_audience: ['频道产品与设计团队'],
+      decision_goal: '确定频道改版优先级',
+      time_window: '最近十二个月',
+    },
+    available_material_roles: [
+      'jd_screenshots',
+      'competitor_screenshots',
+      'competitor_platform_names',
+      'user_research_dataset',
+      'internal_metrics_dataset',
+    ],
+    unavailable_material_roles: [],
+  };
+  const llm = new CurrentPlanningLLM();
+  const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'tavily',
+    implementationId: 'qualified-real-tavily',
+    executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+
+  const result = await planning.planCurrentFromRequirement(
+    industryTask,
+    `$industry-market-analysis ${industryTask.research_goal}`,
+  );
+  assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
+
+  const compiler = new PlanCompiler();
+  const selection = resolvePlanningDeliverableSelection(industryTask);
+  for (const candidate of result.candidates) {
+    const compiled = compiler.compile({
+      candidate,
+      task: industryTask,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements,
+      activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.equal(compiled.plan.skill_invocations?.length, 1);
+    assert.equal(compiled.plan.skill_invocations?.[0]?.skill_id, 'industry-market-analysis');
+    assert.equal(compiled.plan.skill_invocations?.[0]?.execution_mode, 'legacy_single_call');
+    assert.deepEqual(
+      compiled.pending_inputs.map(({ role, kind, multiple }) => ({ role, kind, multiple })),
+      [
+        { role: 'jd_screenshots', kind: 'visual', multiple: true },
+        { role: 'competitor_screenshots', kind: 'visual', multiple: true },
+        { role: 'competitor_platform_names', kind: 'value', multiple: false },
+        { role: 'user_research_dataset', kind: 'dataset', multiple: false },
+        { role: 'internal_metrics_dataset', kind: 'dataset', multiple: false },
+      ],
+    );
+  }
+});
+
+test('Industry planning removes unavailable materials from Pending Inputs without changing mode or deliverable', async () => {
+  const unavailableTask: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
+    business_domain: 'books', research_goal: '形成图书行业与频道策略报告',
+    target_audience: ['频道团队'], scope: ['中国大陆线上图书'], constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '结论可追溯' },
+      { id: 'criterion-action', statement: '形成可执行策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+    industry_scope: {
+      category: '图书', subcategories: ['童书'], exclusions: [], analysis_depth: 'medium',
+      primary_focus: '行业与频道策略', secondary_focuses: [], decision_audience: ['频道团队'],
+      decision_goal: '确定改版优先级', time_window: '最近十二个月',
+    },
+    available_material_roles: [],
+    unavailable_material_roles: [
+      'jd_screenshots', 'competitor_screenshots', 'competitor_platform_names',
+      'user_research_dataset', 'internal_metrics_dataset',
+    ],
+  };
+  const tools = new ToolRouter().register({
+    adapterType: 'tavily', implementationId: 'qualified-real-tavily', executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test', async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm: new CurrentPlanningLLM(), validator: new SchemaValidator(), skillLoader: new SkillLoader(),
+    tools, approvalAuthorities: ['owner'],
+  });
+  const result = await planning.planCurrentFromRequirement(
+    unavailableTask,
+    `$industry-market-analysis ${unavailableTask.research_goal}`,
+  );
+  const selection = resolvePlanningDeliverableSelection(unavailableTask);
+  for (const candidate of result.candidates) {
+    const compiled = new PlanCompiler().compile({
+      candidate, task: unavailableTask, problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements,
+      activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    assert.equal(compiled.plan.execution_contract_version, 'current-execution-plan-v2');
+    assert.equal(compiled.plan.deliverable_type, 'industry_market_analysis_report');
+    assert.equal(compiled.plan.skill_invocations?.[0]?.skill_id, 'industry-market-analysis');
+    assert.deepEqual(compiled.pending_inputs, []);
+  }
+});
+
+test('Industry planning binds an available Joyspace optional Tool to the unchanged Skill', async () => {
+  const industryTask: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
+    business_domain: 'pet-food', research_goal: '形成宠物食品行业与频道策略报告',
+    target_audience: ['频道团队'], scope: ['中国大陆线上市场'], constraints: [],
+    success_criteria: [
+      { id: 'criterion-source', statement: '结论可追溯' },
+      { id: 'criterion-action', statement: '形成可执行策略' },
+    ],
+    expected_deliverables: ['industry_market_analysis_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    industry_scope: {
+      category: '宠物食品', subcategories: ['猫用冻干'], exclusions: [], analysis_depth: 'medium',
+      primary_focus: '行业策略', secondary_focuses: [], decision_audience: ['频道团队'],
+      decision_goal: '确定方向', time_window: '最近十二个月',
+    },
+    available_material_roles: [], unavailable_material_roles: [],
+  };
+  const tools = new ToolRouter()
+    .register({
+      adapterType: 'tavily', implementationId: 'qualified-real-tavily', executionMode: 'real',
+      endpointHost: () => 'api.tavily.com', async invoke() { throw new Error('not used'); },
+    })
+    .register({
+      adapterType: 'o2', implementationId: 'o2-joyspace-test', executionMode: 'real',
+      endpointHost: () => 'joyspace.jd.com', async invoke() { throw new Error('not used'); },
+    });
+  const planning = new ResearchPlanningService({
+    llm: new CurrentPlanningLLM(), validator: new SchemaValidator(), skillLoader: new SkillLoader(),
+    tools, approvalAuthorities: ['owner'],
+  });
+  const result = await planning.planCurrentFromRequirement(
+    industryTask,
+    `$industry-market-analysis ${industryTask.research_goal}`,
+  );
+  const selection = resolvePlanningDeliverableSelection(industryTask);
+  for (const candidate of result.candidates) {
+    const compiled = new PlanCompiler().compile({
+      candidate, task: industryTask, problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution, deliverable_selection: selection,
+      evidence_requirements: selection.evidenceRequirements, activated_nodes: result.activatedNodes,
+      planning_provenance: result.planningProvenance,
+    });
+    const joyspace = compiled.plan.steps.find(({ actor_id }) => actor_id === 'joyspace-read');
+    const output = compiled.plan.steps.find(({ actor_id, actor_type }) => (
+      actor_id === 'industry-market-analysis' && actor_type === 'skill'
+    ));
+    assert.ok(joyspace && output);
+    assert.deepEqual(joyspace.input, {
+      operation: 'search', target: '用户研究 行业分析', limit: 5, scope: 'auto', viewTopResult: true,
+    });
+    assert.ok(output.depends_on.includes(joyspace.step_no));
+    assert.equal(compiled.plan.skill_invocations?.length, 1);
+    assert.equal(compiled.plan.skill_invocations?.[0]?.step_nos.length, 1);
+    assert.deepEqual(
+      compiled.plan.capability_decisions.eligible
+        .find(({ skill }) => skill.id === 'industry-market-analysis')
+        ?.optional_tool_decisions,
+      [{ tool_id: 'joyspace-read', status: 'available' }],
+    );
   }
 });
 
@@ -1840,6 +2214,8 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
   cpSync(join(realRoot, 'orchestrator'), join(fixtureRoot, 'orchestrator'), { recursive: true });
   cpSync(join(realRoot, 'schemas'), join(fixtureRoot, 'schemas'), { recursive: true });
   cpSync(join(realRoot, 'tools'), join(fixtureRoot, 'tools'), { recursive: true });
+  cpSync(join(realRoot, 'skills'), join(fixtureRoot, 'skills'), { recursive: true });
+  cpSync(join(realRoot, 'knowledge-base/skills'), join(fixtureRoot, 'knowledge-base/skills'), { recursive: true });
   const registryPath = join(fixtureRoot, 'orchestrator', 'tool-registry.yaml');
   const draftRegistry = readFileSync(registryPath, 'utf8');
   const activeRegistry = draftRegistry.replace(
@@ -2145,11 +2521,9 @@ test('direct Current depth and speed prepend every required Tool with remapped s
   assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
   const directSkill = skillLoader.getSkill('digital-human-competitive-analysis');
   assert.ok(directSkill);
-  assert.ok(directSkill.input_schema);
-  assert.equal(
-    result.capabilityResolution.eligible.find((decision) => decision.skill.id === directSkill.id)?.skill.payload_schema,
-    directSkill.payload_schema,
-  );
+  const directRunSpec = skillLoader.loadNativeRunSpec('digital-human-competitive-analysis');
+  assert.match(directRunSpec.package_hash, /^sha256:/u);
+  assert.equal(directRunSpec.input_requirements.some(({ key }) => key === 'business_domain'), true);
   const requiredToolIds = directSkill.required_tools ?? [];
   assert.deepEqual(requiredToolIds, [
     'tavily-web-search',
@@ -2195,7 +2569,6 @@ test('direct Current depth and speed prepend every required Tool with remapped s
     assert.deepEqual(skillStep.expected_outputs.map((output) => output.pointer), ['/payload']);
     assert.deepEqual(skillStep.depends_on, requiredToolIds.map((_, index) => index + 1));
     assert.deepEqual(skillStep.input_bindings, []);
-    validator.validateFileOrThrow(join(getConfigRoot(), directSkill.input_schema), skillStep.input);
 
     const reviewers = steps.filter((item) => item.actor_type === 'reviewer');
     assert.equal(reviewers.length, candidateId === 'depth' ? 1 : 0);

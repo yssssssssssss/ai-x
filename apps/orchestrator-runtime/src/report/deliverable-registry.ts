@@ -10,11 +10,11 @@ import {
   getConfigRoot,
   loadEvidencePolicy,
   loadReportTemplate,
-  loadSkillRegistry,
   resolveSkillComposition,
   type EvidencePolicyEntry,
   type ReportTemplateConfig,
 } from '../runtime/config-loader.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 
 export type DeliverableCompositionPolicy =
   | { mode: 'standalone_compat' }
@@ -475,7 +475,7 @@ function parseDeliverableRegistry(validateResources: boolean): {
       }
     }
   }
-  const registeredSkills = new Map(loadSkillRegistry().skills.map((skill) => [skill.id, skill]));
+  const registeredSkills = new Map(new SkillLoader().listCapabilitySkills().map((skill) => [skill.id, skill]));
   for (const entry of activeEntries) {
     if (entry.composition?.mode !== 'portfolio') continue;
     const target = `deliverable:${entry.id}`;

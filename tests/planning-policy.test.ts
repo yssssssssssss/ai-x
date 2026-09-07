@@ -115,7 +115,7 @@ test('validated dynamic policy maps real CapabilityResolution semantics through 
         when_to_use: '公开资料竞品研究',
         owner: '竞品分析组',
         status: 'active' as const,
-        task_types: ['competitive_research'],
+        task_types: ['competitive_research', 'industry_market_analysis'],
         inputs: ['research_goal'],
         outputs: ['competitive_analysis'],
         required_tools: ['tavily-web-search'],

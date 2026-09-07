@@ -376,15 +376,3 @@ test('does not create visual assets when there are no resolved visual inputs', a
   });
   assert.equal(ingestCount, 0);
 });
-
-test('rejects a complete image whose declared MIME disagrees with its decoded format', async () => {
-  const { parseVisualInputDataUrls } = await import(
-    '../apps/orchestrator-runtime/src/report/visual-input-data-url.ts'
-  );
-  await assert.rejects(
-    () => parseVisualInputDataUrls({
-      dataUrl: `data:image/png;base64,${JPEG_BYTES.toString('base64')}`,
-    }),
-    /visual input dataUrl/u,
-  );
-});

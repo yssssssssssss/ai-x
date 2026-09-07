@@ -13,7 +13,7 @@ export function isFactualEvidenceClass(evidenceClass: EvidenceClass): boolean {
   return FACTUAL_EVIDENCE_CLASSES.has(evidenceClass);
 }
 
-export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot';
+export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot' | 'dataset';
 
 export interface ToolProof {
   implementationId: string;

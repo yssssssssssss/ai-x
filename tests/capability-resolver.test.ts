@@ -14,7 +14,7 @@ import {
   resolveCapabilities,
   type CapabilityApproval,
   type CapabilityResolveInput,
-  type CapabilitySkillRegistryEntry,
+  type CapabilitySkill,
   type CapabilityToolState,
 } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
@@ -37,7 +37,7 @@ const task: ResearchTaskV2 = {
   pii_detected: false,
 };
 
-function skill(overrides: Partial<CapabilitySkillRegistryEntry> = {}): CapabilitySkillRegistryEntry {
+function skill(overrides: Partial<CapabilitySkill> = {}): CapabilitySkill {
   return {
     id: 'competitive-web-research',
     name: '竞品分析·Web搜索',
@@ -263,6 +263,60 @@ test('preserves explicitly plural visual input cardinality', () => {
   }]);
 });
 
+test('preserves a single-file dataset PendingInput kind', () => {
+  const resolution = resolveCapabilities(input({
+    available_input_roles: ['research_goal'],
+    skills: [skill({
+      inputs: ['research_goal', 'user_research_dataset'],
+      dataset_inputs: ['user_research_dataset'],
+    })],
+  }));
+
+  assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'dataset',
+    role: 'user_research_dataset',
+    label: 'user_research_dataset',
+    multiple: false,
+    capability_id: 'competitive-web-research',
+  }]);
+});
+
+test('Industry material declarations create pending inputs only for available optional roles', () => {
+  const resolution = resolveCapabilities(input({
+    task: {
+      ...task,
+      task_type: 'industry_market_analysis',
+      expected_deliverables: ['industry_market_analysis_report'],
+      industry_scope: {
+        category: '宠物食品', subcategories: [], exclusions: [], analysis_depth: 'medium',
+        primary_focus: '用户洞察', secondary_focuses: [], decision_audience: ['产品团队'],
+        decision_goal: '形成用户策略', time_window: '最近十二个月',
+      },
+      available_material_roles: ['user_research_dataset'],
+      unavailable_material_roles: ['internal_metrics_dataset'],
+    },
+    skills: [skill({
+      id: 'industry-market-analysis',
+      task_types: ['industry_market_analysis'],
+      inputs: ['research_goal'],
+      dataset_inputs: ['user_research_dataset', 'internal_metrics_dataset'],
+      composition: {
+        modes: ['standalone'],
+        supported_outcomes: ['answer'],
+        compatible_deliverables: ['industry_market_analysis_report'],
+        required_input_roles: ['research_goal'],
+        optional_input_roles: ['user_research_dataset', 'internal_metrics_dataset'],
+        standalone_reason: 'single Skill release',
+      },
+    })],
+  }));
+
+  assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'dataset', role: 'user_research_dataset', label: 'user_research_dataset',
+    multiple: false, capability_id: 'industry-market-analysis',
+  }]);
+});
+
 test('rejects high-risk skills when no matching approval capability exists', () => {
   const denied = resolveCapabilities(input({
     skills: [skill({ risk_level: 'high' })],
@@ -358,7 +412,7 @@ test('active capability loader preserves native declarations and normalizes KB a
   const knowledgeBaseSkill = skills.find((entry) => entry.id === 'competitive-analysis');
 
   assert.deepEqual(nativeSkill?.inputs, ['research_goal']);
-  assert.deepEqual(nativeSkill?.outputs, ['competitive_analysis']);
+  assert.deepEqual(nativeSkill?.outputs, ['native_result']);
   assert.deepEqual(nativeSkill?.required_tools, ['tavily-web-search']);
   assert.deepEqual(nativeSkill?.optional_tools, ['playwright-page-capture']);
   assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitor_screenshots']);
@@ -370,13 +424,13 @@ test('active capability loader preserves native declarations and normalizes KB a
     'attention-analysis-lab',
     'vision-brand-lab',
   ]);
-  assert.deepEqual(knowledgeBaseSkill?.inputs, []);
-  assert.deepEqual(knowledgeBaseSkill?.outputs, []);
+  assert.deepEqual(knowledgeBaseSkill?.inputs, ['research_goal']);
+  assert.deepEqual(knowledgeBaseSkill?.outputs, ['native_result']);
   assert.deepEqual(knowledgeBaseSkill?.required_tools, []);
   assert.deepEqual(knowledgeBaseSkill?.optional_tools, []);
 });
 
-test('production capability registry preserves the valid M1 secondary task routes', () => {
+test('production capability catalog preserves the valid M1 secondary task routes', () => {
   const skills = new SkillLoader().listCapabilitySkills();
   const expectedRoutes = [
     ['accessibility-review', 'design_audit'],
@@ -414,13 +468,19 @@ test('capability loader preserves inactive skills for explicit resolver rejectio
   const realRoot = getConfigRoot();
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'capability-loader-'));
   mkdirSync(join(fixtureRoot, 'orchestrator'), { recursive: true });
-  writeFileSync(join(fixtureRoot, 'orchestrator', 'skill-registry.yaml'), [
+  mkdirSync(join(fixtureRoot, 'skills', 'inactive-skill'), { recursive: true });
+  writeFileSync(join(fixtureRoot, 'skills', 'inactive-skill', 'SKILL.md'), [
+    '---', 'name: inactive-skill', 'description: inactive', 'status: draft', '---', '# Inactive',
+  ].join('\n'));
+  writeFileSync(join(fixtureRoot, 'orchestrator', 'skill-bindings.yaml'), [
     'version: 1',
     'skills:',
     '  - id: inactive-skill',
-    '    name: inactive',
-    '    status: draft',
+    '    enabled: false',
+    '    inputs: []',
+    '    risk_level: low',
   ].join('\n'));
+  writeFileSync(join(fixtureRoot, 'orchestrator', 'tool-registry.yaml'), 'version: 1\ntools: []\n');
 
   try {
     setConfigRoot(fixtureRoot);
@@ -444,20 +504,20 @@ test('capability loader rejects present non-array metadata on active KB skills',
   const realRoot = getConfigRoot();
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'capability-loader-malformed-'));
   mkdirSync(join(fixtureRoot, 'orchestrator'), { recursive: true });
-  writeFileSync(join(fixtureRoot, 'orchestrator', 'skill-registry.yaml'), [
+  mkdirSync(join(fixtureRoot, 'skills', 'malformed-kb-skill'), { recursive: true });
+  writeFileSync(join(fixtureRoot, 'skills', 'malformed-kb-skill', 'SKILL.md'), [
+    '---', 'name: malformed-kb-skill', 'description: never', '---', '# Malformed',
+  ].join('\n'));
+  writeFileSync(join(fixtureRoot, 'orchestrator', 'skill-bindings.yaml'), [
     'version: 1',
     'skills:',
     '  - id: malformed-kb-skill',
-    '    name: malformed',
-    '    path: knowledge-base/skills/malformed-kb-skill',
-    '    entry: knowledge-base/skills/malformed-kb-skill/SKILL.md',
-    '    when_to_use: never',
-    '    owner: test',
-    '    status: active',
+    '    enabled: true',
     '    task_types: [competitive_research]',
     '    inputs: research_goal',
     '    risk_level: low',
   ].join('\n'));
+  writeFileSync(join(fixtureRoot, 'orchestrator', 'tool-registry.yaml'), 'version: 1\ntools: []\n');
 
   try {
     setConfigRoot(fixtureRoot);

@@ -191,25 +191,37 @@ class OfflineEligibleRealLLM implements LLMClient {
     let data: unknown;
     if (options.schemaName.startsWith('skill:')) {
       this.skillContexts.push(structuredClone(options.context ?? {}));
-      data = {
-        version: 'skill-output-v2',
-        status: 'succeeded',
-        summary: '基于公开来源完成宠物辅食竞品分析。',
-        findings: [{ id: 'finding-1', statement: '公开资料支持竞品场景定位差异。', confidence: 0.9 }],
-        assumptions: [],
-        limitations: [],
-        recommendations: ['按宠物类型与使用场景细分研究样本。'],
-        payload: {
-          comparison_matrix: [{
-            competitor: '公开竞品 A',
-            dimension: '产品定位',
-            assessment: '公开来源支持其宠物辅食场景定位',
-            source: 'tool_result',
-          }],
-          differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
-          sources: [evidenceUrl],
-        },
-      };
+      const properties = (options.schema as { properties?: Record<string, unknown> }).properties;
+      data = properties?.primary
+        ? {
+            title: '宠物辅食竞品分析',
+            status: 'completed',
+            primary: {
+              format: 'markdown',
+              content: `# 宠物辅食竞品分析\n\n公开资料支持竞品场景定位差异 [S-step-1-1]。`,
+            },
+            attachments: [],
+            gaps: [],
+          }
+        : {
+            version: 'skill-output-v2',
+            status: 'succeeded',
+            summary: '基于公开来源完成宠物辅食竞品分析。',
+            findings: [{ id: 'finding-1', statement: '公开资料支持竞品场景定位差异。', confidence: 0.9 }],
+            assumptions: [],
+            limitations: [],
+            recommendations: ['按宠物类型与使用场景细分研究样本。'],
+            payload: {
+              comparison_matrix: [{
+                competitor: '公开竞品 A',
+                dimension: '产品定位',
+                assessment: '公开来源支持其宠物辅食场景定位',
+                source: 'tool_result',
+              }],
+              differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
+              sources: [evidenceUrl],
+            },
+          };
     } else if (options.schemaName === 'research-task-v2') {
       data = {
         version: 'research-task-v2',
@@ -437,6 +449,25 @@ class PlanningModelFixtureLLM implements LLMClient {
         requires_approval: false,
         fallback_actor_ids: [],
       });
+      const skillStep = () => {
+        const skillId = this.requirement.task_type === 'competitive_research'
+          ? 'competitive-analysis'
+          : 'generate-interview-guide';
+        return {
+          step_no: 99,
+          step_name: skillId,
+          actor_type: 'skill' as const,
+          actor_id: skillId,
+          question_ids: ['model-receipt-question'],
+          depends_on: [],
+          input: { research_goal: this.requirement.research_goal },
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/payload', description: 'skill result' }],
+          acceptance_criteria: ['研究计划可执行'],
+          requires_approval: false,
+          fallback_actor_ids: [],
+        };
+      };
       const specialtyCandidate = (
         id: Exclude<CandidateProfile, 'speed' | 'depth'>,
         title: string,
@@ -446,8 +477,8 @@ class PlanningModelFixtureLLM implements LLMClient {
         rationale: `按${title}组织研究路径`,
         tradeoffs: '针对性增强，需要对应能力可用',
         steps: [{
-          ...systemStep('llm', 'research-synthesis', []),
-          input: { profile_contract: id },
+          ...skillStep(),
+          input: { research_goal: this.requirement.research_goal, profile_contract: id },
         }],
         assumptions: [],
       });
@@ -456,7 +487,7 @@ class PlanningModelFixtureLLM implements LLMClient {
         title: string;
         rationale: string;
         tradeoffs: string;
-        steps: ReturnType<typeof systemStep>[];
+        steps: Array<ReturnType<typeof systemStep> | ReturnType<typeof skillStep>>;
         assumptions: never[];
       }>([
         ['depth', {
@@ -465,7 +496,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           rationale: '包含复核',
           tradeoffs: '耗时更长',
           steps: [
-            systemStep('llm', 'research-synthesis', []),
+            skillStep(),
             systemStep('reviewer', 'evidence-reviewer', [1]),
           ],
           assumptions: [],
@@ -475,7 +506,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           title: '快速研究',
           rationale: '最短路径',
           tradeoffs: '复核较少',
-          steps: [systemStep('llm', 'research-synthesis', [])],
+          steps: [skillStep()],
           assumptions: [],
         }],
         ['breadth', specialtyCandidate('breadth', '广度扫描')],
@@ -1124,6 +1155,259 @@ after(async () => {
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
 });
 
+test('Dataset multipart upload forwards the owner-bound Idempotency-Key and parsed CSV metadata', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'dataset route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证 Dataset 上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:dataset-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadDataset: async (input: unknown) => {
+      calls.push(input);
+      return {
+        datasetInputId: 'dataset-1', fileName: 'users.csv', contentSha256: `sha256:${'1'.repeat(64)}`,
+        byteSize: 26, rowCount: 1, columns: ['sample_id', 'quote'],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('metadata', JSON.stringify({
+      rowMeaning: '一行一位匿名用户', timeRange: '2026-Q3', fieldNotes: {}, units: {},
+      sampling: '访谈样本', piiConfirmedAbsent: true,
+    }));
+    form.append('file', new Blob(['sample_id,quote\nu1,很好\n'], { type: 'text/csv' }), 'users.csv');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/user_research_dataset/dataset`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(response.headers.get('Idempotency-Key'), key);
+    assert.equal(calls.length, 1);
+    const call = calls[0] as {
+      taskId: string; planVersionId: string; role: string; ownerUserId: string;
+      idempotencyKey: string; fileName: string; mediaType: string; bytes: Uint8Array;
+    };
+    assert.deepEqual({
+      taskId: call.taskId, planVersionId: call.planVersionId, role: call.role,
+      ownerUserId: call.ownerUserId, idempotencyKey: call.idempotencyKey,
+      fileName: call.fileName, mediaType: call.mediaType, content: Buffer.from(call.bytes).toString('utf8'),
+    }, {
+      taskId: task.id, planVersionId: plan.id, role: 'user_research_dataset',
+      ownerUserId, idempotencyKey: key, fileName: 'users.csv', mediaType: 'text/csv',
+      content: 'sample_id,quote\nu1,很好\n',
+    });
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('Document multipart upload forwards all selected files without inline Base64', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'document route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证文档上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:document-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadDocument: async (input: unknown) => {
+      calls.push(input);
+      return {
+        documentInputId: 'document-1',
+        files: [{
+          fileName: 'background.md', mediaType: 'text/markdown; charset=utf-8',
+          contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 8,
+        }],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('file', new Blob(['# 业务背景'], { type: 'text/markdown' }), 'background.md');
+    form.append('file', new Blob(['访谈内容'], { type: 'text/plain' }), 'interview.txt');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/internal_documents/document`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(response.headers.get('Idempotency-Key'), key);
+    assert.equal(calls.length, 1);
+    const call = calls[0] as {
+      taskId: string; planVersionId: string; role: string; ownerUserId: string;
+      idempotencyKey: string; files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+    };
+    assert.deepEqual({
+      taskId: call.taskId,
+      planVersionId: call.planVersionId,
+      role: call.role,
+      ownerUserId: call.ownerUserId,
+      idempotencyKey: call.idempotencyKey,
+      files: call.files.map((file) => ({
+        fileName: file.fileName,
+        mediaType: file.mediaType,
+        content: Buffer.from(file.bytes).toString('utf8'),
+      })),
+    }, {
+      taskId: task.id,
+      planVersionId: plan.id,
+      role: 'internal_documents',
+      ownerUserId,
+      idempotencyKey: key,
+      files: [{ fileName: 'background.md', mediaType: 'text/markdown', content: '# 业务背景' },
+        { fileName: 'interview.txt', mediaType: 'text/plain', content: '访谈内容' }],
+    });
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('Visual multipart upload forwards image bytes without data URLs', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'visual route',
+    taskType: 'design_audit',
+    structuredTask: { research_goal: '验证图片上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:visual-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadVisual: async (input: unknown) => {
+      calls.push(input);
+      return {
+        visualInputId: 'visual-1',
+        images: [{ contentSha256: `sha256:${'3'.repeat(64)}`, mediaType: 'image/png', byteSize: 4 }],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }), 'screen.png');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/jd_screenshots/visual`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(calls.length, 1);
+    const call = calls[0] as { files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }> };
+    assert.deepEqual(call.files.map((file) => ({
+      fileName: file.fileName,
+      mediaType: file.mediaType,
+      bytes: [...file.bytes],
+    })), [{ fileName: 'screen.png', mediaType: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47] }]);
+    assert.doesNotMatch(JSON.stringify(call), /data:image|base64/u);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('owner can download a generated native report ZIP', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'zip route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证离线报告下载' },
+    state: 'completed',
+  });
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    readFinalReportZip: async () => new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await fetch(`${local.baseUrl}/api/control-tasks/${task.id}/final-report.zip`, {
+      headers: { authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}` },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.headers.get('content-type'), 'application/zip');
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0x50, 0x4b, 0x03, 0x04]);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
+test('owner can read a sealed uploaded image through the report Asset route', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'uploaded image route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证报告图片读取' },
+    state: 'completed',
+  });
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    readVisualAsset: async () => ({
+      artifact: { id: 'input-image-1' },
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: 'image/png' as const,
+      inputAsset: true as const,
+    }),
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await fetch(`${local.baseUrl}/api/control-tasks/${task.id}/assets/input-image-1`, {
+      headers: { authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}` },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [1, 2, 3]);
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
 test('GET /api/control-tasks lists only tasks owned by the authenticated user', async () => {
   const ownerTask = await repository.createTask({
     conversationId,
@@ -1215,9 +1499,8 @@ test('GET /api/control-tasks/:id rejects an invalid awaiting clarification paylo
   }
 });
 
-test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
+test('production control runtime completes a native Single report without the legacy report chain', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
-  const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
   const llm = new OfflineEligibleRealLLM(['revise', 'pass', 'revise', 'block']);
@@ -1253,20 +1536,23 @@ test('production control runtime returns the revised final deliverable ID for pa
   const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
     originalInput,
     conversationId,
+    orchestrationMode: 'single_skill',
   });
   assert.equal(planResponse.status, 200, await planResponse.clone().text());
   const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
+  assert.equal(planned.task.orchestrationMode, 'single_skill');
   const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
     headers: { authorization: `Bearer ${ownerToken}` },
   });
   assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
   const refreshed = await refreshedResponse.json() as {
-    task: { originalInput: string; structuredTask: unknown };
+    task: { originalInput: string; structuredTask: unknown; orchestrationMode?: string };
     activatedNodes: string[];
     candidates: ControlPlanCandidatesResponse['candidates'];
   };
   assert.equal(refreshed.task.originalInput, originalInput);
+  assert.equal(refreshed.task.orchestrationMode, 'single_skill');
   assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
   assert.deepEqual(refreshed.activatedNodes, planned.activatedNodes);
   assert.deepEqual(
@@ -1296,7 +1582,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   for (const candidate of planned.candidates) {
     assert.deepEqual(
       candidate.plan.steps.map((step) => step.actor_type),
-      ['tool', 'skill', 'llm', 'reviewer'],
+      ['tool', 'skill'],
     );
   }
   const speed = planned.candidates.find((candidate) => candidate.candidateId === 'speed');
@@ -1343,7 +1629,7 @@ test('production control runtime returns the revised final deliverable ID for pa
       expectedVersion: selected.stateVersion,
       planVersionId: speed.planVersionId,
       confirmationAnswers: {},
-      inputValues: { business_domain: suppliedBusinessDomain },
+      inputValues: {},
     },
     `confirm-${randomUUID()}`,
   );
@@ -1359,20 +1645,19 @@ test('production control runtime returns the revised final deliverable ID for pa
        WHERE task_id = $1 AND plan_version_id = $2 AND gate_type = 'input'`,
       [planned.task.id, speed.planVersionId],
     );
-    assert.deepEqual(persistedInputGate.rows, [{
-      gate_key: 'business_domain',
-      value_json: suppliedBusinessDomain,
-    }]);
+    assert.deepEqual(persistedInputGate.rows, []);
   } finally {
     inputGateConnection.release();
   }
 
+  const executeKey = `execute-${randomUUID()}`;
+  const executeBody = { expectedVersion: confirmed.stateVersion, planVersionId: speed.planVersionId };
   const executeResponse = await postJson(
     baseUrl,
     `/api/control-tasks/${planned.task.id}/execute`,
     ownerToken,
-    { expectedVersion: confirmed.stateVersion, planVersionId: speed.planVersionId },
-    `execute-${randomUUID()}`,
+    executeBody,
+    executeKey,
   );
   if (executeResponse.status !== 200) {
     const failedTask = await repository.getTaskDetail(planned.task.id);
@@ -1390,56 +1675,76 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(execution.executionDisabled, false);
   assert.equal(execution.state, 'completed', JSON.stringify(execution));
   assert.equal(execution.status, 'completed', JSON.stringify(execution));
-  assert.match(execution.deliverableArtifactId, /^[0-9a-f-]{36}$/);
+  assert.ok(execution.finalReportArtifactId);
+  assert.ok(execution.evidenceManifestArtifactId);
+  assert.match(execution.finalReportArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
-  assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
-  assert.match(execution.reportPackageArtifactId, /^[0-9a-f-]{36}$/);
-
-  const completedResumeResponse = await postJson(
+  assert.equal(execution.deliverableArtifactId, undefined);
+  assert.equal(execution.reportReviewArtifactId, undefined);
+  assert.equal(execution.reportPackageArtifactId, undefined);
+  const replayResponse = await postJson(
     baseUrl,
-    `/api/control-tasks/${planned.task.id}/resume`,
+    `/api/control-tasks/${planned.task.id}/execute`,
     ownerToken,
-    { expectedVersion: execution.stateVersion, action: 'retry' },
-    `completed-resume-${randomUUID()}`,
+    executeBody,
+    executeKey,
   );
-  assert.equal(completedResumeResponse.status, 409, await completedResumeResponse.clone().text());
+  assert.equal(replayResponse.status, 200, await replayResponse.clone().text());
+  const replayedExecution = await replayResponse.json() as ExecutionResponse;
+  assert.equal(replayedExecution.finalReportArtifactId, execution.finalReportArtifactId);
+  assert.equal(replayedExecution.attemptId, execution.attemptId);
 
-  const ownerDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
+  const finalResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/final-report`,
     { headers: { authorization: `Bearer ${ownerToken}` } },
   );
-  assert.equal(ownerDeliverableResponse.status, 200);
-  const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
-  assertRecord(ownerDeliverableBody);
-  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
-  const envelope = ownerDeliverableBody.deliverable;
-  assertRecord(envelope);
-  assert.equal(envelope.taskId, planned.task.id);
-  assert.equal(envelope.deliverableType, 'research_plan');
-  assert.equal(envelope.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
-  const reportReview = ownerDeliverableBody.reportReview;
-  assertRecord(reportReview);
-  assert.equal(reportReview.verdict, 'pass');
-  assert.equal(reportReview.revisionRound, 1);
-  assert.equal(reportReview.taskId, planned.task.id);
-  assert.equal(reportReview.planVersionId, speed.planVersionId);
-  assert.equal(reportReview.attemptId, execution.attemptId);
-  assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
-  assert.equal(Object.hasOwn(ownerDeliverableBody, 'reportDocument'), false);
-  assert.equal(Object.hasOwn(ownerDeliverableBody, 'visualAssetManifests'), false);
-  assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
-  assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
+  assert.equal(finalResponse.status, 200, await finalResponse.clone().text());
+  const finalReport = await finalResponse.json() as {
+    version: string;
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    mode: string;
+    primary: { format: string; content: string };
+    skillResults: Array<{ invocationId: string; path: string }>;
+  };
+  assert.equal(finalReport.version, 'native-final-report-v1');
+  assert.equal(finalReport.taskId, planned.task.id);
+  assert.equal(finalReport.planVersionId, speed.planVersionId);
+  assert.equal(finalReport.attemptId, execution.attemptId);
+  assert.equal(finalReport.mode, 'single_skill');
+  assert.equal(finalReport.skillResults.length, 1);
+  assert.match(finalReport.primary.content, /^# 宠物辅食竞品分析/u);
 
-  const foreignDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
-    { headers: { authorization: `Bearer ${foreignToken}` } },
-  );
-  assert.equal(foreignDeliverableResponse.status, 404);
-  const missingDeliverableResponse = await fetch(
-    `${baseUrl}/api/control-tasks/${randomUUID()}/deliverable`,
+  const skillResultsResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/skill-results`,
     { headers: { authorization: `Bearer ${ownerToken}` } },
   );
-  assert.equal(missingDeliverableResponse.status, 404);
+  assert.equal(skillResultsResponse.status, 200, await skillResultsResponse.clone().text());
+  const skillResults = await skillResultsResponse.json() as {
+    results: Array<{ version: string; invocationId: string; primary: { content: string } }>;
+  };
+  assert.equal(skillResults.results.length, 1);
+  assert.equal(skillResults.results[0]?.version, 'native-skill-result-v1');
+  assert.equal(skillResults.results[0]?.invocationId, finalReport.skillResults[0]?.invocationId);
+  assert.ok(finalReport.primary.content.startsWith(skillResults.results[0]?.primary.content ?? 'missing'));
+
+  const htmlResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/final-report.html`,
+    { headers: { authorization: `Bearer ${ownerToken}` } },
+  );
+  assert.equal(htmlResponse.status, 200, await htmlResponse.clone().text());
+  assert.equal(htmlResponse.headers.get('content-type'), 'text/html; charset=utf-8');
+  const html = await htmlResponse.text();
+  assert.match(html, /Content-Security-Policy/u);
+  assert.doesNotMatch(html, /<script|<iframe|<form|onload=/u);
+
+  for (const route of ['final-report', 'skill-results', 'final-report.html']) {
+    const foreign = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}/${route}`, {
+      headers: { authorization: `Bearer ${foreignToken}` },
+    });
+    assert.equal(foreign.status, 404);
+  }
 
   const steps = await repository.listExecutionSteps(execution.attemptId);
   assert.deepEqual(
@@ -1447,332 +1752,35 @@ test('production control runtime returns the revised final deliverable ID for pa
     [
       { actorType: 'tool', state: 'succeeded' },
       { actorType: 'skill', state: 'succeeded' },
-      { actorType: 'llm', state: 'succeeded' },
-      { actorType: 'reviewer', state: 'succeeded' },
     ],
   );
   assert.equal(steps[0]?.toolProvenance?.executionMode, 'real');
-  assert.equal(llm.skillContexts.length, 1);
-  const skillContext = llm.skillContexts[0] as {
-    input?: unknown;
-    prior_outputs?: Array<{
-      stepNo?: unknown;
-      actorId?: unknown;
-      kind?: unknown;
-      output?: { results?: Array<{ url?: unknown }> };
-      artifact?: { state?: unknown };
-    }>;
-  };
-  assert.deepEqual(skillContext.input, { business_domain: suppliedBusinessDomain });
-  assert.equal(skillContext.prior_outputs?.length, 1);
-  assert.equal(skillContext.prior_outputs?.[0]?.stepNo, 1);
-  assert.equal(skillContext.prior_outputs?.[0]?.actorId, 'tavily-web-search');
-  assert.equal(skillContext.prior_outputs?.[0]?.kind, 'tool_output');
-  assert.equal(skillContext.prior_outputs?.[0]?.output?.results?.[0]?.url, evidenceUrl);
-  assert.equal(skillContext.prior_outputs?.[0]?.artifact?.state, 'SEALED');
-  assert.equal(steps[0]?.toolProvenance?.implementationId, tavily.implementationId);
   assert.equal(tavily.calls, 1);
+  assert.equal(llm.skillContexts.length, 1);
 
-  const modelReceipts = await repository.listModelCalls(execution.attemptId);
-  assert.deepEqual(modelReceipts.map(({ stage, status }) => ({ stage, status })), [
-    { stage: 'skill', status: 'succeeded' },
-    { stage: 'llm', status: 'succeeded' },
-    { stage: 'reviewer', status: 'succeeded' },
-    { stage: 'deliverable', status: 'succeeded' },
-    { stage: 'deliverable_review', status: 'succeeded' },
-    { stage: 'deliverable', status: 'succeeded' },
-    { stage: 'deliverable_review', status: 'succeeded' },
-  ]);
-  for (const receipt of modelReceipts) {
-    assert.equal(receipt.provider, llm.identity.provider);
-    assert.equal(receipt.endpointHost, llm.identity.endpointHost);
-    assert.equal(receipt.requestedModel, llm.identity.requestedModel);
-    assert.equal(receipt.actualModel, llm.identity.requestedModel);
-    assert.match(receipt.promptHash, /^sha256:/);
-    assert.ok(receipt.traceId);
-    assert.ok(receipt.tokens);
-  }
-  const skillReceipt = modelReceipts.find((receipt) => receipt.stage === 'skill');
-  const succeededSkillStep = steps.find((step) => step.actorType === 'skill');
-  assert.ok(skillReceipt);
-  assert.ok(succeededSkillStep);
-  assert.equal(succeededSkillStep?.skillProvenance?.modelReceiptId, skillReceipt.id);
-
-  const failedSkillProvenance = {
-    skillBodyHash: 'sha256:failed-api-skill-body',
-    inputSchemaHash: 'sha256:failed-api-input-schema',
-    outputSchemaHash: 'sha256:failed-api-output-schema',
-    inputHash: 'sha256:failed-api-input',
-    outputHash: null,
-    promptHash: 'sha256:failed-api-prompt',
-    traceId: 'trace-failed-api-skill',
-    modelReceiptId: skillReceipt.id,
-    outputArtifactId: null,
-    status: 'failed',
-  };
-  const failedStepConnection = await scopedDatabase.connect();
-  try {
-    await failedStepConnection.query(
-      `INSERT INTO control_execution_steps
-         (attempt_id, step_no, step_name, actor_type, actor_id, state,
-          skill_provenance, failure_json, started_at, finished_at)
-       VALUES ($1, 99, 'failed skill provenance exposure', 'skill',
-               'competitive-web-research', 'failed', $2, $3, $4, $5)`,
-      [
-        execution.attemptId,
-        JSON.stringify(failedSkillProvenance),
-        JSON.stringify({ kind: 'fixture_failure', retryable: false }),
-        new Date('2026-08-14T00:00:00Z'),
-        new Date('2026-08-14T00:00:01Z'),
-      ],
-    );
-  } finally {
-    failedStepConnection.release();
-  }
-
-  const executionRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
-    headers: { authorization: `Bearer ${ownerToken}` },
+  const artifactsForAttempt = await repository.listArtifactsForAttempt({
+    taskId: planned.task.id,
+    planVersionId: speed.planVersionId,
+    attemptId: execution.attemptId,
   });
-  assert.equal(executionRefreshResponse.status, 200, await executionRefreshResponse.clone().text());
-  const executionRefresh = await executionRefreshResponse.json() as CurrentTaskReadResponse;
-  assert.deepEqual(
-    executionRefresh.executionSteps
-      .filter((step) => step.actorType === 'skill')
-      .map((step) => ({ state: step.state, skillProvenance: step.skillProvenance })),
-    [
-      { state: 'succeeded', skillProvenance: succeededSkillStep.skillProvenance },
-      { state: 'failed', skillProvenance: failedSkillProvenance },
-    ],
-  );
-
-  const connection = await scopedDatabase.connect();
-  try {
-    const terminalArtifacts = await connection.query(
-      `SELECT id, kind, state, storage_uri, schema_version, created_at
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN (
-         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'report_package', 'execution_summary'
-       )
-       ORDER BY kind, created_at, id`,
-      [execution.attemptId],
-    );
-    assert.deepEqual(
-      terminalArtifacts.rows.map((row) => ({ kind: row.kind, state: row.state })),
-      [
-        { kind: 'deliverable', state: 'SEALED' },
-        { kind: 'deliverable', state: 'SEALED' },
-        { kind: 'evidence_manifest', state: 'SEALED' },
-        { kind: 'report_package', state: 'SEALED' },
-        { kind: 'report_review', state: 'SEALED' },
-        { kind: 'report_review', state: 'SEALED' },
-      ],
-    );
-    const deliverableArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
-    assert.equal(deliverableArtifacts.length, 2);
-    assert.equal(new Set(deliverableArtifacts.map((row) => row.id)).size, 2);
-    assert.ok(deliverableArtifacts.some((row) => row.id === execution.deliverableArtifactId));
-    assert.equal(
-      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
-      execution.deliverableArtifactId,
-    );
-    assert.notEqual(
-      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
-      execution.deliverableArtifactId,
-    );
-    assert.equal(
-      terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
-      execution.evidenceManifestArtifactId,
-    );
-    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
-    assert.equal(reviewArtifacts.length, 2);
-    assert.equal(
-      reviewArtifacts.find((row) => String(row.storage_uri).endsWith('/reports/review-r1.json'))?.id,
-      execution.reportReviewArtifactId,
-    );
-    const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
-      artifactId: execution.reportPackageArtifactId,
-      attemptId: execution.attemptId,
-    });
-    assert.equal(verifiedReportPackage.value.taskId, planned.task.id);
-    assert.equal(verifiedReportPackage.value.planVersionId, speed.planVersionId);
-    assert.equal(verifiedReportPackage.value.deliverableArtifactId, execution.deliverableArtifactId);
-    assert.equal(verifiedReportPackage.value.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
-    assert.equal(verifiedReportPackage.value.reportReviewArtifactId, execution.reportReviewArtifactId);
-    assert.equal(verifiedReportPackage.value.presentationMode, 'current_text');
-    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, undefined);
-    const reportPackageStorageUri = verifiedReportPackage.artifact.storageUri;
-    const originalReportPackageContent = readFileSync(reportPackageStorageUri, 'utf8');
-    try {
-      writeFileSync(reportPackageStorageUri, '{}');
-      await assert.rejects(() => new ReportPackageArtifactService(artifacts).verify({
-        artifactId: execution.reportPackageArtifactId,
-        attemptId: execution.attemptId,
-      }), /Report Package|artifact|size|checksum|integrity/i);
-    } finally {
-      writeFileSync(reportPackageStorageUri, originalReportPackageContent);
-    }
-
-    const referencedArtifacts = await connection.query(
-      `SELECT id, kind, storage_uri, content_sha256
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('tool_output', 'evidence_manifest', 'report_review')`,
-      [execution.attemptId],
-    );
-    const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
-    const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
-    const reviewArtifact = referencedArtifacts.rows.find((row) => row.id === execution.reportReviewArtifactId);
-    assert.ok(toolArtifact);
-    assert.ok(manifestArtifact);
-    assert.ok(reviewArtifact);
-    const toolStorageUri = String(toolArtifact.storage_uri);
-    const manifestStorageUri = String(manifestArtifact.storage_uri);
-    const originalToolContent = readFileSync(toolStorageUri, 'utf8');
-    const originalManifestContent = readFileSync(manifestStorageUri, 'utf8');
-    const reviewStorageUri = String(reviewArtifact.storage_uri);
-    const originalReviewContent = readFileSync(reviewStorageUri, 'utf8');
-    const originalManifestHash = String(manifestArtifact.content_sha256);
-    const ownerDeliverableUrl = `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`;
-    const revalidationFailures: string[] = [];
-    const expectOwnerReadRejected = async (mutation: string): Promise<void> => {
-      const response = await fetch(ownerDeliverableUrl, {
-        headers: { authorization: `Bearer ${ownerToken}` },
-      });
-      if (response.status === 200) revalidationFailures.push(mutation);
-    };
-
-    try {
-      writeFileSync(toolStorageUri, JSON.stringify({ tampered: true }));
-      await expectOwnerReadRejected('referenced Tool Artifact content');
-    } finally {
-      writeFileSync(toolStorageUri, originalToolContent);
-    }
-
-    try {
-      writeFileSync(reviewStorageUri, JSON.stringify({ tampered: true }));
-      await expectOwnerReadRejected('Report Review Artifact content');
-    } finally {
-      writeFileSync(reviewStorageUri, originalReviewContent);
-    }
-
-    const mutateManifestEntry = async (
-      mutation: string,
-      mutate: (entry: Record<string, unknown>) => void,
-    ): Promise<void> => {
-      const manifestValue: unknown = JSON.parse(originalManifestContent);
-      assertRecord(manifestValue);
-      assert.ok(Array.isArray(manifestValue.entries));
-      const entry = manifestValue.entries[0];
-      assertRecord(entry);
-      mutate(entry);
-      const mutatedContent = JSON.stringify(manifestValue, null, 2);
-      const mutatedHash = `sha256:${createHash('sha256').update(mutatedContent).digest('hex')}`;
-      try {
-        writeFileSync(manifestStorageUri, mutatedContent);
-        await connection.query(
-          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
-          [manifestArtifact.id, mutatedHash],
-        );
-        await expectOwnerReadRejected(mutation);
-      } finally {
-        writeFileSync(manifestStorageUri, originalManifestContent);
-        await connection.query(
-          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
-          [manifestArtifact.id, originalManifestHash],
-        );
-      }
-    };
-
-    await mutateManifestEntry('Evidence JSON pointer', (entry) => {
-      entry.jsonPointer = '/output/results/999';
-    });
-    await mutateManifestEntry('Evidence Artifact hash', (entry) => {
-      entry.artifactContentSha256 = `sha256:${'0'.repeat(64)}`;
-    });
-    assert.deepEqual(revalidationFailures, []);
-  } finally {
-    connection.release();
-  }
-
-  const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
-    originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
-    conversationId,
-  });
-  assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
-  const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
-  const pausedSpeed = pausedPlanned.candidates.find((candidate) => candidate.candidateId === 'speed');
-  assert.ok(pausedSpeed);
-  const pausedSelectResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/select`,
-    ownerToken,
-    { expectedVersion: pausedPlanned.task.stateVersion, planVersionId: pausedSpeed.planVersionId },
-    `paused-select-${randomUUID()}`,
-  );
-  assert.equal(pausedSelectResponse.status, 200, await pausedSelectResponse.clone().text());
-  const pausedSelected = await pausedSelectResponse.json() as { stateVersion: number };
-  const pausedConfirmResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/confirm`,
-    ownerToken,
-    {
-      expectedVersion: pausedSelected.stateVersion,
-      planVersionId: pausedSpeed.planVersionId,
-      confirmationAnswers: {},
-      inputValues: { business_domain: suppliedBusinessDomain },
-    },
-    `paused-confirm-${randomUUID()}`,
-  );
-  assert.equal(pausedConfirmResponse.status, 200, await pausedConfirmResponse.clone().text());
-  const pausedConfirmed = await pausedConfirmResponse.json() as { stateVersion: number };
-  const pausedExecuteResponse = await postJson(
-    baseUrl,
-    `/api/control-tasks/${pausedPlanned.task.id}/execute`,
-    ownerToken,
-    { expectedVersion: pausedConfirmed.stateVersion, planVersionId: pausedSpeed.planVersionId },
-    `paused-execute-${randomUUID()}`,
-  );
-  assert.equal(pausedExecuteResponse.status, 200, await pausedExecuteResponse.clone().text());
-  const pausedExecution = await pausedExecuteResponse.json() as ExecutionResponse;
-  assert.equal(pausedExecution.status, 'paused');
-  assert.equal(pausedExecution.state, 'paused');
-  assert.equal(pausedExecution.reviewStatus, 'paused');
-
-  const pausedConnection = await scopedDatabase.connect();
-  try {
-    const terminalArtifacts = await pausedConnection.query(
-      `SELECT id, kind, storage_uri
-       FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('deliverable', 'report_review')
-       ORDER BY kind, created_at`,
-      [pausedExecution.attemptId],
-    );
-    const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
-    assert.equal(pausedDeliverables.length, 2);
-    assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
-    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
-    assert.equal(reviewArtifacts.length, 2);
-    const finalReviewArtifact = reviewArtifacts.find((row) => (
-      String(row.storage_uri).endsWith('/reports/review-r1.json')
-    ));
-    assert.ok(finalReviewArtifact);
-    assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
-    const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
-    assertRecord(finalReview);
-    assert.equal(finalReview.revisionRound, 1);
-    assert.equal(finalReview.verdict, 'block');
-    assert.equal(finalReview.deliverableArtifactId, pausedExecution.deliverableArtifactId);
-    assert.ok(pausedDeliverables.some((row) => row.id === pausedExecution.deliverableArtifactId));
-    assert.equal(
-      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
-      pausedExecution.deliverableArtifactId,
-    );
-    assert.notEqual(
-      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
-      pausedExecution.deliverableArtifactId,
-    );
-  } finally {
-    pausedConnection.release();
-  }
+  const kinds = new Set(artifactsForAttempt.map(({ kind }) => kind));
+  for (const expected of [
+    'skill_result',
+    'skill_result_primary',
+    'final_report',
+    'final_report_primary',
+    'final_report_html',
+    'report_sources',
+  ]) assert.equal(kinds.has(expected), true, expected);
+  for (const removed of [
+    'deliverable',
+    'report_review',
+    'report_document',
+    'report_package',
+    'cross_skill_review',
+    'contribution_ledger',
+    'contribution_summary',
+  ]) assert.equal(kinds.has(removed), false, removed);
 });
 
 test('production plan stream stops at the explicit direction gate before planning work', async () => {
@@ -1797,7 +1805,11 @@ test('production plan stream stops at the explicit direction gate before plannin
       app.baseUrl,
       '/api/control-tasks/plan/stream',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput: `progress-stream-${randomUUID()}`, conversationId },
+      {
+        originalInput: `progress-stream-${randomUUID()}`,
+        conversationId,
+        orchestrationMode: 'single_skill',
+      },
     );
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
@@ -1856,6 +1868,7 @@ test('production API persists Scenario selection guidance and resumes planning a
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -1923,6 +1936,7 @@ test('production API persists Scenario selection guidance and resumes planning a
         'persist:start',
         'persist:done',
       ],
+      JSON.stringify(selectedEvents.at(-1)),
     );
     assert.equal(selectedEvents.at(-1)?.event, 'result');
     const selected = selectedEvents.at(-1)?.data as ControlPlanCandidatesResponse;
@@ -1977,7 +1991,7 @@ test('production Current planning rejects model drift before candidate persisten
       app.baseUrl,
       '/api/control-tasks/plan',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 502);
     assert.match(await response.text(), /model drift/i);
@@ -2055,7 +2069,7 @@ test('production Current planning persists candidates only when every receipt ma
       app.baseUrl,
       '/api/control-tasks/plan',
       token,
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 200, await response.clone().text());
     const direction = await response.json() as CurrentPlanningResponse;
@@ -2180,8 +2194,8 @@ test('supplied foreign and missing planning conversations return 404 before crea
   );
   const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const cases = [
-    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}` },
-    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}` },
+    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
+    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
   ];
   try {
     for (const target of cases) {
@@ -2392,6 +2406,38 @@ test('migration 012 fails only incomplete clarification shells and is idempotent
     await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
   }
 });
+
+test('migration 015 adds task orchestration mode idempotently', async () => {
+  const compatibilitySchema = `task_orchestration_mode_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_tasks (
+        id UUID PRIMARY KEY,
+        state TEXT NOT NULL
+      )
+    `);
+    const migration = readFileSync(
+      join(process.cwd(), 'database', 'migrations', '015_add_task_orchestration_mode.sql'),
+      'utf8',
+    );
+    await client.query(migration);
+    await client.query(migration);
+    const columns = await client.query(
+      `SELECT column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'control_tasks' AND column_name = 'orchestration_mode'`,
+      [compatibilitySchema],
+    );
+    assert.deepEqual(columns.rows, [{ column_name: 'orchestration_mode', data_type: 'text' }]);
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
 test('clarification idempotency is durable across concurrent and newly created routers', async () => {
 
   const created = await repository.createTask({
@@ -2561,6 +2607,7 @@ test('post-activation clarification failure reclaims the same command without an
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2681,6 +2728,7 @@ test('latest-version fresh-key clarification recovers hydrated unchanged assumpt
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2820,6 +2868,7 @@ test('response delivery failure after atomic clarification commit replays the pe
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput: `response-delivery-replay-${randomUUID()}`,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;

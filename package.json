@@ -35,24 +35,29 @@
     "eval:skills:kb:compare": "tsx evaluations/skills/kb/compare.ts",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
-    "quality": "pnpm typecheck && pnpm lint:registry && pnpm lint:knowledge && pnpm test"
+    "quality": "pnpm typecheck && pnpm lint:registry && pnpm lint:knowledge && pnpm test",
+    "editorial:showcase": "tsx apps/orchestrator-runtime/src/universal-editorial-report.ts",
+    "editorial:showcase:offline": "tsx apps/orchestrator-runtime/src/universal-editorial-showcase.ts"
   },
   "dependencies": {
     "@openclaw/fs-safe": "0.5.5",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "bcryptjs": "^3.0.3",
+    "busboy": "^1.6.0",
+    "csv-parse": "^7.0.2",
     "echarts": "^6.1.0",
     "express": "^5.2.1",
     "fflate": "^0.8.3",
     "image-size": "^2.0.2",
     "jsonwebtoken": "^9.0.3",
-    "playwright": "1.60.0",
     "pg": "^8.13.1",
+    "playwright": "1.60.0",
     "sharp": "^0.35.3",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.20.1",

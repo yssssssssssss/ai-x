@@ -137,6 +137,73 @@ test('generic deliverable ledger verifies required Contributions against reachab
   })), [{ disposition: 'included', canonicalNodeIds: ['summary-market'] }]);
 });
 
+test('generic Industry ledger records transformed Contributor mappings as review conditions', () => {
+  const sourceId = contributionUnitId(artifactId, 'market-1');
+  const result = buildGenericReviewedContributionLedger({
+    bundle,
+    deliverable: {
+      coverage: { questionBindings: [] },
+      findingGraph: { findings: [], analyses: [], subQuestionSummaries: [], overallConclusions: [] },
+      risksAndOpenIssues: [],
+      payload: {
+        schemaVersion: 'industry-market-analysis-v1',
+        mappedNodes: [{
+          id: 'industry-node-1',
+          statement: 'A transformed interpretation of the source contribution.',
+          support: {
+            questionIds: ['question-market'],
+            sourceContributionUnitIds: [sourceId],
+            status: 'provisional',
+          },
+        }],
+      },
+    },
+    contributionRequirements: requirements,
+    synthesisArtifactId: 'artifact-synthesis',
+  });
+
+  assert.equal(result.review.verdict, 'pass_with_conditions');
+  assert.ok(result.review.issues.some((issue) => (
+    issue.type === 'unauthorized_source_rewrite'
+    && issue.sourceUnitIds.includes(sourceId)
+  )));
+  assert.equal(result.ledger.entries[0]?.disposition, 'included');
+  assert.deepEqual(result.ledger.entries[0]?.canonicalNodeIds, ['industry-node-1']);
+});
+
+test('generic Industry ledger records cross-Question mappings as review conditions', () => {
+  const sourceId = contributionUnitId(artifactId, 'market-1');
+  const result = buildGenericReviewedContributionLedger({
+    bundle,
+    deliverable: {
+      coverage: { questionBindings: [] },
+      findingGraph: { findings: [], analyses: [], subQuestionSummaries: [], overallConclusions: [] },
+      risksAndOpenIssues: [],
+      payload: {
+        schemaVersion: 'industry-market-analysis-v1',
+        mappedNodes: [{
+          id: 'industry-node-other',
+          statement: bundle.entries[0]!.contribution.units[0]!.statement,
+          support: {
+            questionIds: ['question-other'],
+            sourceContributionUnitIds: [sourceId],
+            status: 'provisional',
+          },
+        }],
+      },
+    },
+    contributionRequirements: requirements,
+    synthesisArtifactId: 'artifact-synthesis',
+  });
+
+  assert.equal(result.review.verdict, 'pass_with_conditions');
+  assert.ok(result.review.issues.some((issue) => (
+    issue.type === 'scope_mismatch'
+    && issue.sourceUnitIds.includes(sourceId)
+  )));
+  assert.equal(result.ledger.entries[0]?.disposition, 'included');
+});
+
 test('generic deliverable ledger records required provisional Contribution omission', () => {
   const omittedBundle = structuredClone(bundle);
   omittedBundle.entries[0]!.contribution.units.push({

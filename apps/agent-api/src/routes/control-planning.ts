@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { ControlPlaneAuthorizationError, ControlPlaneConflictError } from '../../../../database/control-plane.ts';
-import type {
-  ControlPlanCandidatesResponse,
-  ControlTaskResponse,
-  PlanningGuidanceClarification,
-  PlanControlTaskRequest,
+import {
+  isOrchestrationModeV1,
+  type ControlPlanCandidatesResponse,
+  type ControlTaskResponse,
+  type PlanningGuidanceClarification,
+  type PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import { OrchestrationModePlanningError } from '../../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { ModelDriftError } from '../../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import { requireAuth } from '../middleware.ts';
 
@@ -42,6 +44,7 @@ function isConversationLookupError(error: unknown): boolean {
 }
 
 function planningErrorMessage(error: unknown): string {
+  if (error instanceof OrchestrationModePlanningError) return error.message;
   if (error instanceof ModelDriftError) return error.message;
   return isConversationLookupError(error)
     ? '会话不存在'
@@ -54,15 +57,20 @@ export function createControlPlanningRouter(port: ControlPlanningPort): Router {
   router.use(requireAuth);
 
   router.post('/plan', async (req, res) => {
-    const { originalInput, conversationId } = req.body ?? {};
+    const { originalInput, conversationId, orchestrationMode } = req.body ?? {};
     if (typeof originalInput !== 'string' || originalInput.trim().length === 0) {
       res.status(400).json({ error: 'originalInput 必须是非空字符串' });
+      return;
+    }
+    if (!isOrchestrationModeV1(orchestrationMode)) {
+      res.status(400).json({ error: 'orchestrationMode 必须是 single_skill 或 multi_skill' });
       return;
     }
 
     try {
       const response = await port.plan({
         originalInput,
+        orchestrationMode,
         ...(typeof conversationId === 'string' && conversationId.trim().length > 0
           ? { conversationId }
           : {}),
@@ -70,6 +78,10 @@ export function createControlPlanningRouter(port: ControlPlanningPort): Router {
       });
       res.json(response);
     } catch (error) {
+      if (error instanceof OrchestrationModePlanningError) {
+        res.status(error.kind === 'unavailable' ? 409 : 422).json({ error: error.message });
+        return;
+      }
       if (isConversationLookupError(error)) {
         res.status(404).json({ error: '会话不存在' });
         return;
@@ -79,9 +91,13 @@ export function createControlPlanningRouter(port: ControlPlanningPort): Router {
   });
 
   router.post('/plan/stream', async (req, res) => {
-    const { originalInput, conversationId } = req.body ?? {};
+    const { originalInput, conversationId, orchestrationMode } = req.body ?? {};
     if (typeof originalInput !== 'string' || originalInput.trim().length === 0) {
       res.status(400).json({ error: 'originalInput 必须是非空字符串' });
+      return;
+    }
+    if (!isOrchestrationModeV1(orchestrationMode)) {
+      res.status(400).json({ error: 'orchestrationMode 必须是 single_skill 或 multi_skill' });
       return;
     }
 
@@ -108,6 +124,7 @@ export function createControlPlanningRouter(port: ControlPlanningPort): Router {
     try {
       const response = await port.plan({
         originalInput,
+        orchestrationMode,
         ...(requestedConversationId ? { conversationId: requestedConversationId } : {}),
         ownerUserId: req.userId!,
       }, (event) => {

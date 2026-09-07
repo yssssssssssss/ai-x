@@ -49,3 +49,10 @@ policies:
         accepted_classes: [screenshot, user_input, public_source]
         minimum_count: 1
         required: true
+  - task_type: industry_market_analysis
+    deliverable_type: industry_market_analysis_report
+    requirements:
+      - id: industry-market-analysis-report
+        accepted_classes: [public_source, screenshot, knowledge, user_input, dataset]
+        minimum_count: 1
+        required: true

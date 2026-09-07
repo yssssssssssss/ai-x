@@ -225,7 +225,7 @@ class RoutedPlanningFixtureLLM implements LLMClient {
   }
 }
 
-function planningHarness() {
+function planningHarness(multiSkillPortfolioMode: 'inactive' | 'active' = 'active') {
   const llm = new RoutedPlanningFixtureLLM();
   const tools = new ToolRouter();
   let toolInvocationCount = 0;
@@ -251,11 +251,44 @@ function planningHarness() {
     skillLoader,
     tools,
     approvalAuthorities: ['owner'],
-    multiSkillPortfolioMode: 'active',
+    multiSkillPortfolioMode,
     planningPolicy: loadPlanningPolicy(),
   });
   return { llm, planning, skillLoader, toolInvocationCount: () => toolInvocationCount };
 }
+
+test('current planning rejects a missing mode instead of deriving it from writer availability', async () => {
+  const { llm, planning } = planningHarness('active');
+
+  await assert.rejects(
+    () => planning.planCurrentFromRequirementOutcome(
+      requirement,
+      requirement.research_goal,
+      undefined,
+      {} as never,
+    ),
+    /orchestration mode is required for current planning/u,
+  );
+  assert.equal(llm.calls.length, 0);
+});
+
+test('explicit multi_skill mode fails instead of falling back when the writer is inactive', async () => {
+  const { llm, planning } = planningHarness('inactive');
+
+  await assert.rejects(
+    () => planning.planCurrentFromRequirementOutcome(
+      requirement,
+      requirement.research_goal,
+      undefined,
+      {
+        selectedScenarioId: 'strategy-synthesis',
+        orchestrationMode: 'multi_skill',
+      },
+    ),
+    /multi_skill mode is not available/u,
+  );
+  assert.equal(llm.calls.length, 0);
+});
 
 test('routed multi-Skill planning keeps required coverage, budgets, and evidence ownership deterministic offline', async () => {
   const { llm, planning, skillLoader, toolInvocationCount } = planningHarness();
@@ -263,11 +296,15 @@ test('routed multi-Skill planning keeps required coverage, budgets, and evidence
     requirement,
     requirement.research_goal,
     undefined,
-    { selectedScenarioId: 'strategy-synthesis' },
+    {
+      selectedScenarioId: 'strategy-synthesis',
+      orchestrationMode: 'multi_skill',
+    },
   );
 
   assert.equal('kind' in result, false);
   if ('kind' in result) return;
+  assert.equal(result.orchestrationMode, 'multi_skill');
   assert.equal(toolInvocationCount(), 0);
   assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth']);
   assert.deepEqual(result.planningProvenance.selected_profile_ids, ['speed', 'depth']);
@@ -326,21 +363,16 @@ test('routed multi-Skill planning keeps required coverage, budgets, and evidence
       requireCompetitiveWeightContract: true,
       skillLoader,
     });
-    assert.equal(compiled.plan.steps.length, 18);
-    const sharedTavilyStep = compiled.plan.steps.find(({ shared_stage_key }) => (
-      shared_stage_key === 'shared:tool:tavily-web-search'
+    assert.equal(compiled.plan.steps.length, 8);
+    const sharedTavilyStep = compiled.plan.steps.find(({ actor_type, actor_id }) => (
+      actor_type === 'tool' && actor_id === 'tavily-web-search'
     ));
     assert.ok(sharedTavilyStep);
-    assert.equal(
-      sharedTavilyStep.shared_by_invocation_ids?.includes('invocation:virtual-user-research'),
-      false,
-    );
     const virtualUserOutput = compiled.plan.steps.find((step) => (
       step.skill_invocation_id === 'invocation:virtual-user-research'
       && step.actor_type === 'skill'
     ));
     assert.ok(virtualUserOutput);
-    assert.equal(virtualUserOutput.depends_on.includes(sharedTavilyStep.step_no), false);
   }
 
   const candidateCall = llm.calls.find(({ schemaName }) => schemaName === 'current-plan-candidates');

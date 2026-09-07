@@ -1,3 +1,4 @@
+import Busboy from 'busboy';
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
@@ -6,6 +7,10 @@ import {
   type PlanProgress,
   type ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
+import {
+  type NativeFinalReport,
+  type NativeSkillResult,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
@@ -18,12 +23,17 @@ import {
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { EditorialSummaryPipelineError } from '../../../orchestrator-runtime/src/report/editorial-summary-pipeline.ts';
+import { EditorialSummaryStoreError } from '../../../orchestrator-runtime/src/report/editorial-summary-store.ts';
 import {
   HtmlBundleIntegrityError,
   HtmlBundleUnavailableError,
 } from '../../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
+import { DatasetInputGateError } from '../../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
+import { DocumentInputGateError } from '../../../orchestrator-runtime/src/control/document-input-gate-store.ts';
+import { VisualInputGateError } from '../../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import {
   InvalidScenarioSelectionError,
   planningGuidanceFromStored,
@@ -57,26 +67,76 @@ export interface ControlTasksRuntime {
   repository: ControlPlaneRepository;
   workflow: TaskWorkflowService;
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+  getFinalReport?(taskId: string, ownerUserId: string): Promise<{
+    artifact: { id: string };
+    report: NativeFinalReport;
+  } | null>;
+  getSkillResults?(taskId: string, ownerUserId: string): Promise<NativeSkillResult[] | null>;
+  readFinalReportHtml?(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null>;
+  readFinalReportZip?(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null>;
   readVisualAsset?(input: {
     taskId: string;
     assetId: string;
     ownerUserId: string;
   }): Promise<{
     artifact: { id: string };
-    manifestArtifact: { schemaVersion: string };
     bytes: Uint8Array;
-    manifest: unknown;
+    manifestArtifact?: { schemaVersion: string };
+    manifest?: unknown;
+    mediaType?: 'image/png' | 'image/jpeg' | 'image/webp';
+    inputAsset?: true;
   } | null>;
   readHtmlBundle?(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
   }): Promise<Uint8Array | null>;
-  readEditorialShowcaseHtml?(input: {
+  readEditorialSummaryHtml?(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadDataset?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+    metadata: {
+      rowMeaning: string;
+      timeRange: string;
+      fieldNotes: Record<string, string>;
+      units: Record<string, string>;
+      sampling: string;
+      piiConfirmedAbsent: boolean;
+    };
+  }): Promise<unknown>;
+  uploadDocument?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+  }): Promise<unknown>;
+  uploadVisual?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    files: Array<{ fileName: string; mediaType: string; bytes: Uint8Array }>;
+  }): Promise<unknown>;
   clarification?: ControlClarificationPort;
 }
 
@@ -181,6 +241,15 @@ function publicError(error: unknown): {
   status: number;
   body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
 } {
+  if (error instanceof DatasetInputGateError) {
+    return { status: 422, body: { error: 'CSV 文件格式无效或与当前计划不匹配', code: error.code } };
+  }
+  if (error instanceof DocumentInputGateError) {
+    return { status: 422, body: { error: '文档格式无效或与当前计划不匹配', code: error.code } };
+  }
+  if (error instanceof VisualInputGateError) {
+    return { status: 422, body: { error: '图片格式无效或与当前计划不匹配' } };
+  }
   if (error instanceof TaskWorkflowGateError) {
     return { status: 422, body: { error: error.message, unresolved: error.unresolved } };
   }
@@ -206,7 +275,7 @@ function publicError(error: unknown): {
   if (error instanceof ControlPlaneConflictError) {
     return { status: 409, body: { error: error.message } };
   }
-  return { status: 500, body: { error: 'control workflow failed' } };
+  return { status: 500, body: { error: '任务处理失败' } };
 }
 
 function responseError(res: Response, error: unknown): void {
@@ -455,6 +524,178 @@ async function runClarification(
   }
 }
 
+interface ParsedDatasetUpload {
+  fileName: string;
+  mediaType: string;
+  bytes: Buffer;
+  metadata: {
+    rowMeaning: string;
+    timeRange: string;
+    fieldNotes: Record<string, string>;
+    units: Record<string, string>;
+    sampling: string;
+    piiConfirmedAbsent: boolean;
+  };
+}
+
+function parseDatasetMetadata(value: string): ParsedDatasetUpload['metadata'] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new DatasetInputGateError('metadata must be valid JSON');
+  }
+  const candidate = record(parsed);
+  if (
+    !candidate
+    || typeof candidate.rowMeaning !== 'string'
+    || typeof candidate.timeRange !== 'string'
+    || typeof candidate.sampling !== 'string'
+    || typeof candidate.piiConfirmedAbsent !== 'boolean'
+    || !record(candidate.fieldNotes)
+    || !record(candidate.units)
+  ) throw new DatasetInputGateError('metadata fields are malformed');
+  const stringRecord = (value: Record<string, unknown>, field: string): Record<string, string> => {
+    if (Object.values(value).some((item) => typeof item !== 'string')) {
+      throw new DatasetInputGateError(`${field} must contain only string values`);
+    }
+    return value as Record<string, string>;
+  };
+  return {
+    rowMeaning: candidate.rowMeaning,
+    timeRange: candidate.timeRange,
+    fieldNotes: stringRecord(record(candidate.fieldNotes)!, 'fieldNotes'),
+    units: stringRecord(record(candidate.units)!, 'units'),
+    sampling: candidate.sampling,
+    piiConfirmedAbsent: candidate.piiConfirmedAbsent,
+  };
+}
+
+function readDatasetMultipart(req: Request): Promise<ParsedDatasetUpload> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 1, fields: 1, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(new DatasetInputGateError(error instanceof Error ? error.message : 'invalid multipart request'));
+      return;
+    }
+    let fileName: string | null = null;
+    let mediaType: string | null = null;
+    let fileSeen = false;
+    let fileTooLarge = false;
+    let metadataText: string | null = null;
+    const chunks: Buffer[] = [];
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file' || fileSeen) {
+        stream.resume();
+        reject(new DatasetInputGateError('multipart request must contain exactly one file field'));
+        return;
+      }
+      fileSeen = true;
+      fileName = info.filename;
+      mediaType = info.mimeType;
+      stream.on('limit', () => { fileTooLarge = true; });
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on('error', reject);
+    });
+    parser.on('field', (fieldName, value) => {
+      if (fieldName !== 'metadata' || metadataText !== null) {
+        reject(new DatasetInputGateError('multipart request must contain one metadata field'));
+        return;
+      }
+      metadataText = value;
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      try {
+        if (!fileSeen || !fileName || !mediaType || fileTooLarge) {
+          throw new DatasetInputGateError(fileTooLarge ? 'CSV byte size exceeds 10 MiB' : 'file field is required');
+        }
+        if (metadataText === null) throw new DatasetInputGateError('metadata field is required');
+        resolve({
+          fileName,
+          mediaType,
+          bytes: Buffer.concat(chunks),
+          metadata: parseDatasetMetadata(metadataText),
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.pipe(parser);
+  });
+}
+
+interface ParsedMaterialFiles {
+  files: Array<{ fileName: string; mediaType: string; bytes: Buffer }>;
+}
+
+function readMaterialFilesMultipart(
+  req: Request,
+  invalid: (message: string) => Error,
+): Promise<ParsedMaterialFiles> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 20, fields: 0, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(invalid(error instanceof Error ? error.message : 'invalid multipart request'));
+      return;
+    }
+    const files: Array<{ index: number; fileName: string; mediaType: string; chunks: Buffer[]; tooLarge: boolean }> = [];
+    let rejected = false;
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file') {
+        stream.resume();
+        rejected = true;
+        reject(invalid('multipart request only accepts file fields'));
+        return;
+      }
+      const file = {
+        index: files.length,
+        fileName: info.filename,
+        mediaType: info.mimeType,
+        chunks: [] as Buffer[],
+        tooLarge: false,
+      };
+      files.push(file);
+      stream.on('limit', () => { file.tooLarge = true; });
+      stream.on('data', (chunk: Buffer) => file.chunks.push(Buffer.from(chunk)));
+      stream.on('error', reject);
+    });
+    parser.on('field', () => {
+      rejected = true;
+      reject(invalid('multipart request does not accept text fields'));
+    });
+    parser.on('filesLimit', () => {
+      rejected = true;
+      reject(invalid('file count exceeds 20 files'));
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      if (rejected) return;
+      try {
+        if (files.length === 0) throw invalid('at least one file field is required');
+        const oversized = files.find(({ tooLarge }) => tooLarge);
+        if (oversized) throw invalid(`file ${oversized.fileName} exceeds 10 MiB`);
+        resolve({
+          files: files
+            .sort((left, right) => left.index - right.index)
+            .map(({ fileName, mediaType, chunks }) => ({
+              fileName,
+              mediaType,
+              bytes: Buffer.concat(chunks),
+            })),
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.pipe(parser);
+  });
+}
+
 export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
@@ -518,6 +759,111 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
+  router.get('/:id/skill-results', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getSkillResults) {
+      res.status(409).json({ error: 'Skill 报告不可用' });
+      return;
+    }
+    try {
+      const results = await runtime.getSkillResults(req.params.id, actor.userId);
+      if (!results) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.json({ results });
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getFinalReport) {
+      res.status(409).json({ error: '最终报告不可用' });
+      return;
+    }
+    try {
+      const result = await runtime.getFinalReport(req.params.id, actor.userId);
+      if (!result) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.json(result.report);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report.html', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.getFinalReport || !runtime.readFinalReportHtml) {
+      res.status(409).json({ error: '最终 HTML 报告不可用' });
+      return;
+    }
+    try {
+      const final = await runtime.getFinalReport(req.params.id, actor.userId);
+      if (!final) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      const html = await runtime.readFinalReportHtml({
+        taskId: req.params.id,
+        attemptId: final.report.attemptId,
+        ownerUserId: actor.userId,
+      });
+      if (!html) {
+        res.status(404).json({ error: '报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': 'inline; filename="report.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Type': 'text/html; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(html);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
+  router.get('/:id/final-report.zip', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
+    if (!runtime.readFinalReportZip) {
+      res.status(409).json({ error: '离线报告暂不可用' });
+      return;
+    }
+    try {
+      const bytes = await runtime.readFinalReportZip({
+        taskId: req.params.id,
+        ownerUserId: actor.userId,
+      });
+      if (!bytes) {
+        res.status(404).json({ error: '离线报告不存在' });
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('研究报告.zip')}`,
+        'Content-Type': 'application/zip',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.send(Buffer.from(bytes));
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
   router.get('/:id/assets/:assetId', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
@@ -533,27 +879,41 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
         assetId: req.params.assetId,
         ownerUserId: actor.userId,
       });
-      if (
-        !asset
-        || asset.artifact.id !== req.params.assetId
-      ) {
+      if (!asset || asset.artifact.id !== req.params.assetId) {
         hidden();
         return;
       }
-      assertVisualAssetManifestSchema(asset.manifest);
-      const manifest: VisualAssetManifest = asset.manifest;
-      if (
-        manifest.assetId !== req.params.assetId
-        || asset.manifestArtifact.schemaVersion !== manifest.version
-        || (manifest.exportPolicy !== 'allow' && manifest.exportPolicy !== 'mask')
-      ) {
-        hidden();
-        return;
+      let mediaType: string;
+      if (asset.inputAsset === true) {
+        if (
+          asset.mediaType !== 'image/png'
+          && asset.mediaType !== 'image/jpeg'
+          && asset.mediaType !== 'image/webp'
+        ) {
+          hidden();
+          return;
+        }
+        mediaType = asset.mediaType;
+      } else {
+        if (!asset.manifest || !asset.manifestArtifact) {
+          hidden();
+          return;
+        }
+        assertVisualAssetManifestSchema(asset.manifest);
+        const manifest: VisualAssetManifest = asset.manifest;
+        if (
+          manifest.assetId !== req.params.assetId
+          || asset.manifestArtifact.schemaVersion !== manifest.version
+        ) {
+          hidden();
+          return;
+        }
+        mediaType = manifest.mediaType;
       }
       res.set({
         'Cache-Control': 'private, no-store',
         'Content-Disposition': 'inline',
-        'Content-Type': manifest.mediaType,
+        'Content-Type': mediaType,
       });
       res.send(Buffer.from(asset.bytes));
     } catch {
@@ -599,16 +959,16 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
-  router.get('/:id/reports/:attemptId/editorial-showcase.html', async (req, res) => {
+  router.get('/:id/reports/:attemptId/editorial-summary.html', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
     if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
-    if (!runtime.readEditorialShowcaseHtml) {
-      res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+    if (!runtime.readEditorialSummaryHtml) {
+      res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
       return;
     }
     try {
-      const html = await runtime.readEditorialShowcaseHtml({
+      const html = await runtime.readEditorialSummaryHtml({
         taskId: req.params.id,
         attemptId: req.params.attemptId,
         ownerUserId: actor.userId,
@@ -619,19 +979,27 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       }
       res.set({
         'Cache-Control': 'private, no-store',
-        'Content-Disposition': 'inline; filename="editorial-showcase.html"',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Disposition': 'inline; filename="editorial-summary.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         'Content-Type': 'text/html; charset=utf-8',
         'X-Content-Type-Options': 'nosniff',
       });
       res.send(html);
     } catch (error) {
-      if (error instanceof HtmlBundleUnavailableError) {
-        res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+      if (error instanceof EditorialSummaryPipelineError) {
+        const unavailable = error.code === 'SUMMARY_MODEL_UNAVAILABLE';
+        res.status(409).json({
+          error: unavailable ? '编辑摘要模型不可用' : '编辑摘要生成失败',
+          code: unavailable ? 'editorial_summary_unavailable' : 'editorial_summary_generation_failed',
+        });
         return;
       }
-      if (error instanceof HtmlBundleIntegrityError) {
-        res.status(409).json({ error: 'Editorial Showcase 完整性校验失败', code: 'editorial_showcase_integrity' });
+      if (error instanceof EditorialSummaryStoreError) {
+        res.status(409).json({ error: '编辑摘要完整性校验失败', code: 'editorial_summary_integrity' });
+        return;
+      }
+      if (error instanceof HtmlBundleUnavailableError) {
+        res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
         return;
       }
       responseError(res, error);
@@ -787,6 +1155,117 @@ router.post('/:id/select', async (req, res) => {
   }
 });
 
+router.post('/:id/plans/:planVersionId/inputs/:role/dataset', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadDataset) {
+    res.status(503).json({ error: 'Dataset input is unavailable' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readDatasetMultipart(req);
+    const result = await runtime.uploadDataset({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      fileName: upload.fileName,
+      mediaType: upload.mediaType,
+      bytes: upload.bytes,
+      metadata: upload.metadata,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/document', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadDocument) {
+    res.status(503).json({ error: '文档上传暂不可用' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readMaterialFilesMultipart(
+      req,
+      (message) => new DocumentInputGateError(message),
+    );
+    const result = await runtime.uploadDocument({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      files: upload.files,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/visual', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadVisual) {
+    res.status(503).json({ error: '图片上传暂不可用' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readMaterialFilesMultipart(
+      req,
+      (message) => new VisualInputGateError(message),
+    );
+    const result = await runtime.uploadVisual({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      files: upload.files,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
 router.post('/:id/confirm', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
@@ -795,10 +1274,14 @@ router.post('/:id/confirm', async (req, res) => {
   const planVersionId = string(body?.planVersionId);
   const confirmationAnswers = record(body?.confirmationAnswers);
   const inputValues = record(body?.inputValues);
+  const waivedInputKeys = Array.isArray(body?.waivedInputKeys)
+    && body.waivedInputKeys.every((key) => typeof key === 'string' && key.trim())
+    ? body.waivedInputKeys as string[]
+    : body?.waivedInputKeys === undefined ? [] : null;
   if (!actor) return;
   if (!await ensureOwnedTask(runtime, req, res, actor)) return;
-  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputValues) {
-    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputValues 必填' });
+  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputValues || !waivedInputKeys) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputValues 必填，waivedInputKeys 必须是字符串数组' });
     return;
   }
   try {
@@ -810,6 +1293,7 @@ router.post('/:id/confirm', async (req, res) => {
       actor,
       confirmationAnswers,
       inputValues,
+      waivedInputKeys,
     }));
   } catch (error) {
     responseError(res, error);

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>行业市场分析工作流 · 框架图</title>
+<!-- 用途:对外介绍 / 新人 onboarding 的可视化"一页纸名片",非执行依据。
+     内容(阶段/Tab/五段/维度)以 工作流总览.md 与 阶段说明/ 为准;仅在结构级变动(改名/调序/增删段)后同步更新,视觉微调不必回改文档。
+     配色为全品类统一 token 的源头,见 SKILL.md / 阶段8「统一配色 token」。 -->
+<style>
+  :root{
+    --page:#f5f6f9;
+    --card:#ffffff;
+    --soft:#f6f7f9;
+    --ink:#1b1c1f;
+    --ink-2:#5f6672;
+    --ink-3:#9aa0ab;
+    --line:#edeef2;
+
+    /* 主色 —— 变量名保持不变(footer 图例与卡片标签的 inline style 引用) */
+    --insight:#3d63f5;          /* 行业洞察 · 蓝 */
+    --insight-soft:#eaf0fe;
+    --diagnose:#e0862a;         /* 体验诊断 · 橙 */
+    --diagnose-soft:#fbf0e1;
+    --strategy:#8b5cf6;         /* 设计策略 · 紫 */
+    --strategy-soft:#f2ecfd;
+    --glue:#8b95a5;             /* 流程环节 · 灰 */
+    --glue-soft:#eef0f3;
+    --philo:#e5484d;            /* 京东哲学 · 红 */
+    --philo-soft:#fdeeee;
+
+    --green:#1f9d55;
+    --green-soft:#e7f6ec;
+    --yellow-soft:#fdf7e6;
+    --yellow-line:#ecc94b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:var(--page);
+    color:var(--ink);
+    line-height:1.6;
+    padding:44px 24px 64px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .poster{
+    max-width:1480px;
+    margin:0 auto;
+    background:transparent;
+    padding:0;
+  }
+
+  /* ===== Hero ===== */
+  .hero{display:flex;justify-content:space-between;align-items:flex-end;gap:40px;padding:8px 4px 0;}
+  .hero-l{max-width:1060px;}
+  .kicker{font-size:13px;letter-spacing:.06em;color:var(--ink);font-weight:700;margin-bottom:14px;}
+  h1{font-size:33px;line-height:1.22;letter-spacing:-.5px;font-weight:800;color:var(--ink);}
+  h1 .accent{color:var(--insight);}
+  .subtitle{margin-top:16px;font-size:15px;color:var(--ink-2);max-width:none;line-height:1.75;}
+  .subtitle b{color:var(--ink);font-weight:700;}
+  .hero-r{flex-shrink:0;}
+  .formula{
+    display:inline-flex;align-items:center;gap:14px;background:var(--card);
+    border:none;border-radius:14px;padding:18px 26px;
+  }
+  .formula .f{text-align:center;}
+  .formula .f .n{font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-1px;}
+  .formula .f .l{font-size:11px;color:var(--ink-3);margin-top:7px;letter-spacing:.02em;line-height:1.4;}
+  .formula .x{font-size:16px;color:#d6dae1;font-weight:600;}
+
+  /* ===== 交付形式(三类产出)===== */
+  .deliver-top{margin-top:24px;background:var(--card);border-radius:18px;padding:26px 30px;}
+  .dt-head{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap;}
+  .dt-head .no{font-size:12px;font-weight:700;color:var(--insight);background:var(--insight-soft);border-radius:7px;padding:4px 11px;letter-spacing:.04em;}
+  .dt-head h2{font-size:21px;font-weight:800;letter-spacing:-.4px;color:var(--ink);}
+  .dt-head .s{font-size:12.5px;color:var(--ink-3);margin-left:auto;font-weight:500;}
+  .dt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .dcard{border-radius:14px;padding:18px 20px;background:var(--soft);}
+  .dcard .dt-t{font-size:15px;font-weight:800;color:var(--ink);margin-bottom:9px;}
+  .dcard .dt-tag{font-size:11px;font-weight:700;margin-bottom:9px;}
+  .dcard .dt-d{font-size:12.5px;color:var(--ink-2);line-height:1.65;}
+  .dcard.c1 .dt-tag{color:var(--glue);}
+  .dcard.c2 .dt-tag{color:var(--insight);}
+  .dcard.c3 .dt-tag{color:var(--green);}
+  .dt-note{margin-top:16px;padding:13px 18px;background:var(--yellow-soft);border-radius:10px;font-size:13px;color:var(--ink-2);line-height:1.6;}
+  .dt-note b{color:#9a7b1a;font-weight:800;}
+
+  /* ===== 通用 section ===== */
+  .section{margin-top:24px;background:var(--card);border-radius:18px;padding:30px 32px;}
+  .sec-head{display:flex;align-items:center;gap:12px;margin-bottom:22px;}
+  .sec-head .no{
+    font-size:12px;font-weight:700;color:var(--insight);
+    background:var(--insight-soft);border-radius:7px;padding:4px 11px;letter-spacing:.04em;
+  }
+  .sec-head h2{font-size:21px;font-weight:800;letter-spacing:-.4px;color:var(--ink);}
+  .sec-head .hint{font-size:12.5px;color:var(--ink-3);margin-left:auto;font-weight:500;}
+
+  /* ===== 主干:8 阶段流水线 ===== */
+  .pipe{display:flex;align-items:stretch;gap:0;}
+  .stage{
+    position:relative;flex:1;background:var(--soft);border:none;
+    border-radius:12px;padding:16px 15px 18px;
+    display:flex;flex-direction:column;min-width:0;min-height:296px;
+  }
+  .stage.mx{margin:0 9px;}
+  .arrow{align-self:center;flex:0 0 22px;display:flex;align-items:center;justify-content:center;color:#c8cdd6;}
+  .arrow svg{width:16px;height:16px;}
+
+  .stage .top{display:flex;align-items:center;gap:9px;margin-bottom:10px;margin-top:2px;height:28px;}
+  .stage .badge{
+    flex:0 0 auto;color:var(--ink);
+    font-weight:800;font-size:15px;display:flex;align-items:center;
+  }
+  .stage .name{font-size:14px;font-weight:800;letter-spacing:-.4px;line-height:1.3;color:var(--ink);}
+  .stage .goal{font-size:12.5px;color:var(--ink-2);line-height:1.55;height:74px;overflow:hidden;}
+  .stage .out{margin-top:12px;padding-top:12px;border-top:1px solid #e7e9ee;}
+  .stage .out .lab{font-size:10px;color:var(--ink-3);letter-spacing:.1em;font-weight:700;margin-bottom:5px;}
+  .stage .out .val{font-size:12px;color:var(--ink);font-weight:700;line-height:1.5;}
+  .stage .dims{margin-top:auto;padding-top:14px;display:flex;flex-wrap:wrap;gap:5px;}
+  .dchip{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:6px;background:#fff;color:var(--ink-2);box-shadow:inset 0 0 0 1px #e7e9ee;}
+  .stage .feed{
+    display:inline-flex;align-items:center;align-self:flex-start;height:21px;margin-bottom:10px;
+    font-size:10.5px;font-weight:700;padding:0 9px;border-radius:7px;white-space:nowrap;
+  }
+
+  /* 阶段配色 */
+  .s-insight .feed{background:var(--insight-soft);color:var(--insight);}
+  .s-diagnose .feed{background:var(--diagnose-soft);color:var(--diagnose);}
+  .s-strategy .feed{background:var(--strategy-soft);color:var(--strategy);}
+  .s-asset .feed{background:var(--green-soft);color:var(--green);}
+  .s-glue .feed{background:var(--glue-soft);color:var(--glue);}
+
+
+  /* ===== 交付物:5 Tab ===== */
+  .deliver{
+    margin-top:26px;
+    display:flex;align-items:center;gap:24px;
+  }
+  .deliver .tabs{display:flex;gap:12px;flex:1;}
+  .tab{flex:1;padding:0 14px;border-left:1px solid var(--line);}
+  .tab:first-child{border-left:none;padding-left:0;}
+  .tab .tt{font-size:13.5px;font-weight:800;color:var(--ink);}
+  .tab .td{font-size:11.5px;color:var(--ink-2);margin-top:6px;line-height:1.5;}
+  .tab.t1 .tt{color:var(--insight);}
+  .tab.t2 .tt{color:var(--diagnose);}
+  .tab.t3 .tt{color:var(--strategy);}
+  .tab.t4 .tt{color:var(--green);}
+  .tab.t5 .tt{color:var(--glue);}
+
+  /* ===== 哲学基座 ===== */
+  .base{
+    margin-top:24px;background:var(--card);
+    border:none;border-radius:18px;padding:26px 30px;
+  }
+  .base .b-top{display:flex;align-items:center;gap:13px;margin-bottom:16px;flex-wrap:wrap;}
+  .base .anchor{font-size:12px;font-weight:700;color:var(--philo);background:var(--philo-soft);border-radius:7px;padding:4px 11px;letter-spacing:.04em;}
+  .base .b-top .t{font-size:21px;font-weight:800;letter-spacing:-.4px;color:var(--ink);}
+  .base .b-top .s{font-size:12.5px;color:var(--ink-3);margin-left:auto;font-weight:500;}
+  .base .b-grid{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:20px;align-items:stretch;}
+  .base .bcol{padding:0 16px;border-left:1px solid var(--line);display:flex;flex-direction:column;}
+  .base .bcol:first-child{border-left:none;padding-left:0;}
+  .base .bcol .h{font-size:13.5px;font-weight:800;color:var(--philo);margin-bottom:9px;}
+  .base .bcol .c{font-size:12.5px;color:var(--ink-2);line-height:1.6;}
+  /* 底座 chip 化:10 维网格 + 三档小色块 */
+  .bchips{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+  .bchip{display:flex;align-items:center;gap:6px;background:var(--soft);border-radius:8px;padding:6px 10px;min-height:44px;min-width:0;}
+  .bchip .bk{font-size:10px;font-weight:800;color:var(--ink-3);flex:0 0 auto;}
+  .bchip .bn{font-size:11px;font-weight:600;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .bchip.hot{background:var(--diagnose-soft);}
+  .bchip.hot .bk,.bchip.hot .bn{color:var(--diagnose);}
+  .btiers{display:flex;gap:6px;}
+  .btier{flex:1;display:flex;align-items:center;gap:8px;background:var(--soft);border-radius:8px;padding:7px 12px;height:94px;min-width:0;}
+  .btier .bt{width:19px;height:19px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex:0 0 auto;}
+  .btier .bd{font-size:10.5px;color:var(--ink-2);line-height:1.35;}
+  .btier .bd b{display:block;font-size:11.5px;color:var(--ink);font-weight:700;}
+  .btier.l .bt{background:var(--green);}
+  .btier.m .bt{background:var(--insight);}
+  .btier.h .bt{background:var(--strategy);}
+  /* 第三列:平台基线纵向三块 */
+  .bstd{display:flex;flex-direction:column;gap:6px;height:94px;}
+  .bstd-item{flex:1;display:flex;align-items:center;gap:8px;background:var(--soft);border-radius:8px;padding:0 12px;min-width:0;}
+  .bstd-item .dot{width:6px;height:6px;border-radius:50%;background:var(--philo);flex:0 0 auto;}
+  .bstd-item .bn{font-size:11.5px;font-weight:700;color:var(--ink);flex:0 0 auto;}
+  .bstd-item .bs{font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  @media print{
+    body{background:#fff;padding:0;}
+    .poster{max-width:none;}
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-l">
+      <div class="kicker">京东体验设计团队 · 通用工作流</div>
+      <h1><span class="accent">垂类行业洞察</span>&#8202;skill</h1>
+      <div class="subtitle">
+        一套<b>可复用的品类行业分析框架</b>:任何频道优化需求进来,沿 <b>8 阶段</b>顺序推进,
+        覆盖 <b>10 大维度</b>、可选 <b>三档深度</b>,全程锚定<b>京东设计哲学</b>、<b style="white-space:nowrap">量化绝不编数</b>,<br>
+        最终<b>产出随场景伸缩</b>——小到对话里的一个判断,大到可上会的报告页。
+      </div>
+    </div>
+    <div class="hero-r">
+      <div class="formula">
+        <div class="f"><div class="n">10</div><div class="l">大维度<br>覆盖什么</div></div>
+        <div class="x">×</div>
+        <div class="f"><div class="n">8</div><div class="l">个阶段<br>怎么做出来</div></div>
+        <div class="x">×</div>
+        <div class="f"><div class="n">3</div><div class="l">档深度<br>做到多深</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 交付形式:三类产出 -->
+  <div class="deliver-top">
+    <div class="dt-head">
+      <span class="no">产出</span>
+      <h2>交付形式 · 随场景伸缩</h2>
+      <span class="s">不强制每次都出报告 —— 轻场景留在对话里就好</span>
+    </div>
+    <div class="dt-grid">
+      <div class="dcard c1">
+        <div class="dt-t">对话态</div>
+        <div class="dt-tag">最轻 · 不落文件</div>
+        <div class="dt-d">碰想法、拆一个竞品、问"这违反哪条设计原则"——直接在对话里给判断/对比/灰阶线框。内核不打折(锚定设计哲学、绝不编数),只是产出留在对话里。</div>
+      </div>
+      <div class="dcard c2">
+        <div class="dt-t">HTML 可交互报告页</div>
+        <div class="dt-tag">最重 · 上会/立项</div>
+        <div class="dt-d">自包含单文件、可离线投屏的 5 Tab 汇报页(行业洞察/品类差异资产/竞品/诊断/策略)。先产 `.md` 底稿,要更好读的版本再渲染 HTML。</div>
+      </div>
+      <div class="dcard c3">
+        <div class="dt-t">行业专家贡献者</div>
+        <div class="dt-tag">组合调用 · 不锁格式</div>
+        <div class="dt-d">和更专业的竞品分析/体验诊断 skill 拼联合产出时,只贡献「行业洞察 + 品类差异资产」两块结构化内容,格式服从主编译方——我们出"更懂垂类"的部分。</div>
+      </div>
+    </div>
+    <div class="dt-note"><b>产出不是终点,是讨论的起点</b>:任何一个观点都能继续深挖——直接说"这个点展开讲讲",就无缝转回对话态,带着行业专家视角陪你往下想。</div>
+    <div class="deliver">
+      <div class="tabs">
+        <div class="tab t1"><div class="tt">Tab 1 · 行业洞察</div><div class="td">市场 / 用户 / 供给 / 商业逻辑</div></div>
+        <div class="tab t4"><div class="tt">Tab 2 · 品类差异资产</div><div class="td">设计语言 + 五段:心智/视觉基因/文案/玩法/动效</div></div>
+        <div class="tab t5"><div class="tt">Tab 3 · 竞品分析</div><div class="td">选样 / 四要素 / 心智象限 · 6 板块</div></div>
+        <div class="tab t2"><div class="tt">Tab 4 · 体验诊断</div><div class="td">频道现状 / 四类问题 / 原则命中</div></div>
+        <div class="tab t3"><div class="tt">Tab 5 · 设计策略</div><div class="td">机会优先级 / 差异化定位 / KPI</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主干:8 阶段 -->
+  <div class="section">
+    <div class="sec-head">
+      <span class="no">主干</span>
+      <h2>8 阶段执行流程</h2>
+      <span class="hint">顶部色条 = 该阶段成果汇入交付页的哪个 Tab · 每分钟级即时产出,人主导取舍</span>
+    </div>
+
+    <div class="pipe">
+      <!-- 1 -->
+      <div class="stage s-glue">
+        <div class="feed">▸ 准备</div>
+        <div class="top"><div class="badge">1.</div><div class="name">澄清与档位</div></div>
+        <div class="goal">钉死范围:做什么品类、做多深、聚焦什么、素材在哪。10-30 分钟避免 90% 返工。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">运行计划(品类·档位·聚焦点)</div></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 2 -->
+      <div class="stage s-insight">
+        <div class="feed">▸ 行业洞察</div>
+        <div class="top"><div class="badge">2.</div><div class="name">外部数据调研</div></div>
+        <div class="goal">拉齐"外部世界":市场盘子多大、供给端谁强、竞品在做什么。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">数据摘录 · 竞品分组</div></div>
+        <div class="dims"><span class="dchip">A 宏观</span><span class="dchip">C 供给</span><span class="dchip">D 竞品</span><span class="dchip">J 商业</span></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 3 -->
+      <div class="stage s-diagnose">
+        <div class="feed">▸ 体验诊断</div>
+        <div class="top"><div class="badge">3.</div><div class="name">京东内部诊断</div></div>
+        <div class="goal">把频道拆成一张体验问题清单:现状、四类问题各卡在哪、KPI、舆情。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">京东内诊报告</div></div>
+        <div class="dims"><span class="dchip">E 京东</span><span class="dchip">J 商业</span></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 4 -->
+      <div class="stage s-glue">
+        <div class="feed">▸ 质检</div>
+        <div class="top"><div class="badge">4.</div><div class="name">交叉验证</div></div>
+        <div class="goal">质检关卡:双源印证的留、单源的标、矛盾的存疑。不过关,合成就建在流沙上。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">数据可信度台账</div></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 5 -->
+      <div class="stage s-strategy">
+        <div class="feed">▸ 设计策略</div>
+        <div class="top"><div class="badge">5.</div><div class="name">机会与策略合成</div></div>
+        <div class="goal">用户痛点 × 竞品做法 × 京东现状三方一撞:该做什么、凭什么、先做什么。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">Gap 矩阵 · 差异化定位 · 三档优先级</div></div>
+        <div class="dims"><span class="dchip">F 机会</span></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 6 -->
+      <div class="stage s-strategy">
+        <div class="feed">▸ 设计策略</div>
+        <div class="top"><div class="badge">6.</div><div class="name">设计语言推导</div></div>
+        <div class="goal">把"该做什么"翻译成"长什么样":平台规范(继承)+ 行业增量(补充)。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">哲学 · 色板 · 组件规范</div></div>
+        <div class="dims"><span class="dchip">G 设计</span></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 7 -->
+      <div class="stage s-asset">
+        <div class="feed">▸ 品类差异资产</div>
+        <div class="top"><div class="badge">7.</div><div class="name">品类差异资产</div></div>
+        <div class="goal">把设计语言延伸为可复用资产:该品类的视觉基因/文案语气/玩法/动效,每条带适配度+为什么+标杆。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">五段资产库(可更新)</div></div>
+        <div class="dims"><span class="dchip">G 设计</span></div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+
+      <!-- 8 -->
+      <div class="stage s-glue">
+        <div class="feed">▸ 装配</div>
+        <div class="top"><div class="badge">8.</div><div class="name">报告装配与自检</div></div>
+        <div class="goal">按 10 维度 + 资产库归位、补齐指标与方法论、过自检,渲染成 HTML 汇报页(5 Tab)。</div>
+        <div class="out"><div class="lab">关键产出</div><div class="val">HTML报告 · MD文档</div></div>
+        <div class="dims"><span class="dchip">H 指标</span><span class="dchip">I 方法</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 精简底座:覆盖什么 · 做多深 · 最高裁判 -->
+  <div class="base">
+    <div class="b-top">
+      <span class="anchor">底座</span>
+      <span class="t">覆盖什么 · 做多深 · 谁说了算</span>
+      <span class="s">细节见 `工作流总览.md` 与 `阶段说明/`</span>
+    </div>
+    <div class="b-grid">
+      <div class="bcol">
+        <div class="h">覆盖 10 维度</div>
+        <div class="bchips">
+          <div class="bchip"><span class="bk">A</span><span class="bn">宏观背景</span></div>
+          <div class="bchip"><span class="bk">B</span><span class="bn">用户洞察</span></div>
+          <div class="bchip"><span class="bk">C</span><span class="bn">供给格局</span></div>
+          <div class="bchip"><span class="bk">D</span><span class="bn">竞品参考</span></div>
+          <div class="bchip"><span class="bk">E</span><span class="bn">京东内诊</span></div>
+          <div class="bchip"><span class="bk">F</span><span class="bn">机会策略</span></div>
+          <div class="bchip"><span class="bk">G</span><span class="bn">设计落地</span></div>
+          <div class="bchip"><span class="bk">H</span><span class="bn">指标假设</span></div>
+          <div class="bchip"><span class="bk">I</span><span class="bn">研究方法</span></div>
+          <div class="bchip"><span class="bk">J</span><span class="bn">商业逻辑</span></div>
+        </div>
+      </div>
+      <div class="bcol">
+        <div class="h">三档深度 · 按需选</div>
+        <div class="btiers">
+          <div class="btier l"><span class="bt">轻</span><span class="bd"><b>摸底</b>1-2天</span></div>
+          <div class="btier m"><span class="bt">中</span><span class="bd"><b>立项</b>1周</span></div>
+          <div class="btier h"><span class="bt">重</span><span class="bd"><b>战略</b>2-3周</span></div>
+        </div>
+      </div>
+      <div class="bcol">
+        <div class="h">最高裁判 · 平台基线</div>
+        <div class="bstd">
+          <div class="bstd-item"><span class="dot"></span><span class="bn">设计哲学</span><span class="bs">智性设计 · 4价值观 · 6原则</span></div>
+          <div class="bstd-item"><span class="dot"></span><span class="bn">基础规范</span><span class="bs">色板 · 组件 · 字体 · 栅格</span></div>
+          <div class="bstd-item"><span class="dot"></span><span class="bn">动效原则</span><span class="bs">时长 · 曲线 · 节奏</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

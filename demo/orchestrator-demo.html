@@ -556,7 +556,7 @@
     var list = view === "capabilities" ? REGISTRY : CASES;
     var title = view === "capabilities" ? "能力库 · skill / tool 注册表" : "案例库 · 历史项目档案";
     var sub = view === "capabilities"
-      ? "配置即真相源:每个能力一份 manifest,存于 skill-registry.yaml,可 diff、可回滚。新增能力只加文件,不改主流程。"
+      ? "原版 Skill Package 是内容真相源；平台自动发现并仅维护权限与 Tool Binding。新增能力只需安装原包。"
       : "过往用研项目沉淀,支持语义检索,新任务起步时可先查相似做法。";
     var cards = list.map(function (c) {
       return '<div class="cap-card"><div class="top">' +

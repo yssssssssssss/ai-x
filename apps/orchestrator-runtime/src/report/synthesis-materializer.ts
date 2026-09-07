@@ -1,7 +1,7 @@
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type { EvidenceEntry } from '../../../../packages/api-contract/research-deliverable.ts';
 import { EvidenceService } from '../evidence/evidence-service.ts';
-import { containsBlockedSensitiveData, redactSensitiveValue } from '../runtime/redaction.ts';
+import { redactSensitiveValue } from '../runtime/redaction.ts';
 
 export type SynthesisSemanticRole = 'fact_source' | 'knowledge' | 'analysis' | 'inference' | 'review';
 export type SynthesisActorType = 'knowledge' | 'tool' | 'skill' | 'llm' | 'reviewer';
@@ -98,8 +98,6 @@ function isRealToolEvidence(entry: EvidenceEntry): boolean {
       || entry.evidenceClass === 'screenshot'
       || entry.evidenceClass === 'dataset'
     )
-    && entry.sensitivity !== 'sensitive'
-    && entry.redaction !== 'blocked'
     && entry.toolProof?.executionMode === 'real'
     && entry.toolProof.implementationId !== 'unknown'
     && entry.toolProof.redactedOutputHash.startsWith('sha256:');
@@ -116,18 +114,8 @@ function roleFor(
   return 'review';
 }
 
-function redactMaterialValue(value: unknown, key = ''): unknown {
-  if (/^(?:prompt|fullPrompt|systemPrompt)$/iu.test(key)) return '[REDACTED_PROMPT]';
-  if (Array.isArray(value)) return value.map((item) => redactMaterialValue(item, key));
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [
-        childKey,
-        redactMaterialValue(child, childKey),
-      ]),
-    );
-  }
-  return redactSensitiveValue(value, { pii: 'mask' }, key);
+function protectMaterialCredentials(value: unknown, key = ''): unknown {
+  return redactSensitiveValue(value, {}, key);
 }
 
 function assertValidStep(output: MaterializeStepOutput, input: MaterializeInput): void {
@@ -175,12 +163,6 @@ function assertArtifact(
     throw new SynthesisMaterializationError(
       'artifact_schema_mismatch',
       `Artifact ${artifact.id} has unexpected schema ${artifact.schemaVersion}`,
-    );
-  }
-  if (/^(?:sensitive|confidential|secret|blocked)$/iu.test(artifact.sensitivity)) {
-    throw new SynthesisMaterializationError(
-      'artifact_sensitive',
-      `Artifact ${artifact.id} has blocked sensitivity ${artifact.sensitivity}`,
     );
   }
 }
@@ -231,12 +213,6 @@ export class SynthesisMaterializer {
           })),
         };
       }
-      if (containsBlockedSensitiveData(materialValue)) {
-        throw new SynthesisMaterializationError(
-          'artifact_blocked',
-          `Artifact ${verified.artifact.id} contains blocked sensitive business data`,
-        );
-      }
       if (output.actorType !== 'tool') {
         await validator?.validateArtifact?.(verified.value, verified.artifact);
       }
@@ -247,7 +223,7 @@ export class SynthesisMaterializer {
         questionIds: [...(output.questionIds ?? [])],
         artifactId: verified.artifact.id,
         artifactContentSha256: verified.artifact.contentSha256!,
-        value: structuredClone(redactMaterialValue(materialValue)),
+        value: structuredClone(protectMaterialCredentials(materialValue)),
         semanticRole: role,
       });
     }

@@ -3,12 +3,34 @@ import {
   COMPETITIVE_WEIGHT_TITLE,
   extractCompetitiveScoringWeights,
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
+import type { NativeSkillInvocation } from '../../../../../packages/api-contract/native-skill-orchestration.ts';
 import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
-import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import type {
+  DatasetUpload,
+  DocumentUpload,
+  PlanResponse,
+  PlanStep,
+  PendingUpload,
+  VisualUpload,
+} from '../../api/client.ts';
 import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
 import { multiSkillPlanViewModel } from '../../multi-skill-view-model.ts';
 import { Header } from './Stage1Understand.tsx';
-import { buildPlanConfirmationPayload } from './stage2-plan-confirmation.ts';
+import {
+  buildPlanConfirmationPayload,
+  parseDatasetColumns,
+  reconcileDatasetColumnMetadata,
+} from './stage2-plan-confirmation.ts';
+
+const IMAGE_FILE_ACCEPT = '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp';
+
+function pendingInputLabel(input: PendingUpload): string {
+  return input.label;
+}
+
+function pendingInputQuestion(input: PendingUpload, fallback?: string): string {
+  return fallback ?? input.label;
+}
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
 // locked=true 时(已进入执行)隐藏确认按钮、禁用编辑。
@@ -21,7 +43,10 @@ export function Stage2Plan({
   onConfirm: (
     confirmationAnswers: Record<string, unknown>,
     inputValues: Record<string, unknown>,
-    uploads: Upload[],
+    visualUploads: VisualUpload[],
+    datasetUploads: DatasetUpload[],
+    documentUploads: DocumentUpload[],
+    waivedInputKeys: string[],
   ) => void;
   onRevise: (instruction: string) => void;
 }) {
@@ -34,31 +59,121 @@ export function Stage2Plan({
       ? invocation.resource_gaps.map((gap) => ({ ...gap, skillId: invocation.skill_id }))
       : []
   )) ?? [];
+  const nativeInvocations = (plan.plan.skill_invocations ?? []).filter(
+    (invocation): invocation is NativeSkillInvocation => 'run_spec' in invocation,
+  );
+  const nativeToolBindings = nativeInvocations.flatMap(({ skill_id: skillId, run_spec: runSpec }) => (
+    runSpec.tool_bindings.map((binding) => ({ ...binding, skillId }))
+  ));
+  const nativeKnowledge = nativeInvocations.flatMap(({ skill_id: skillId, run_spec: runSpec }) => (
+    runSpec.selected_references.map((reference) => ({ ...reference, skillId }))
+  ));
+  const nativeRequirementByKey = new Map(nativeInvocations.flatMap(({ run_spec: runSpec }) => (
+    runSpec.input_requirements.map((requirement) => [requirement.key, requirement] as const)
+  )));
   const portfolio = multiSkillPlanViewModel(plan.plan);
+  const orchestrationLabel = plan.plan.execution_contract_version === 'native-skill-execution-plan-v1'
+    ? plan.plan.mode === 'multi_skill' ? '多项能力协作' : '单项能力执行'
+    : plan.plan.execution_contract_version === 'current-execution-plan-v3'
+      ? '多项能力协作'
+      : '单项能力执行';
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
-  const [images, setImages] = useState<Record<string, string[]>>({});
+  const [images, setImages] = useState<Record<string, File[]>>({});
+  const [datasets, setDatasets] = useState<Record<string, DatasetUpload | undefined>>({});
+  const [documents, setDocuments] = useState<Record<string, File[]>>({});
+  const [datasetColumns, setDatasetColumns] = useState<Record<string, string[]>>({});
+  const [datasetHeaderErrors, setDatasetHeaderErrors] = useState<Record<string, string | undefined>>({});
   const [values, setValues] = useState<Record<string, string>>({});
+  const [waivedInputKeys, setWaivedInputKeys] = useState<string[]>([]);
   const [revisionInstruction, setRevisionInstruction] = useState('');
 
   function edit(key: string, value: string) {
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
   }
 
-  function readImage(file: File): Promise<string> {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(file);
+  function pickImages(pu: PendingUpload, files: File[]): void {
+    setImages((previous) => ({
+      ...previous,
+      [pu.role]: pu.multiple ? files : files.slice(0, 1),
+    }));
+  }
+
+  function pickDocuments(input: PendingUpload, files: File[]): void {
+    setDocuments((previous) => ({
+      ...previous,
+      [input.role]: input.multiple ? files : files.slice(0, 1),
+    }));
+  }
+
+  async function pickDataset(role: string, file: File | undefined): Promise<void> {
+    if (!file) {
+      setDatasets((previous) => ({ ...previous, [role]: undefined }));
+      setDatasetColumns((previous) => ({ ...previous, [role]: [] }));
+      setDatasetHeaderErrors((previous) => ({ ...previous, [role]: undefined }));
+      return;
+    }
+    let columns: string[];
+    try {
+      columns = parseDatasetColumns(await file.text());
+      setDatasetHeaderErrors((previous) => ({ ...previous, [role]: undefined }));
+    } catch (error) {
+      columns = [];
+      setDatasetHeaderErrors((previous) => ({
+        ...previous,
+        [role]: error instanceof Error ? error.message : '无法读取 CSV 表头',
+      }));
+    }
+    setDatasetColumns((previous) => ({ ...previous, [role]: columns }));
+    setDatasets((previous) => {
+      const metadata = reconcileDatasetColumnMetadata({
+        rowMeaning: previous[role]?.metadata.rowMeaning ?? '',
+        timeRange: previous[role]?.metadata.timeRange ?? '',
+        fieldNotes: previous[role]?.metadata.fieldNotes ?? {},
+        units: previous[role]?.metadata.units ?? {},
+        sampling: previous[role]?.metadata.sampling ?? '',
+        piiConfirmedAbsent: previous[role]?.metadata.piiConfirmedAbsent ?? false,
+      }, columns);
+      return { ...previous, [role]: { role, file, metadata } };
     });
   }
 
-  async function pickImages(pu: PendingUpload, files: File[]): Promise<void> {
-    const selected = pu.multiple ? files : files.slice(0, 1);
-    const dataUrls = (await Promise.all(selected.map(readImage))).filter(Boolean);
-    setImages((previous) => ({ ...previous, [pu.role]: dataUrls }));
+  function editDatasetMetadata(
+    role: string,
+    field: 'rowMeaning' | 'timeRange' | 'sampling' | 'piiConfirmedAbsent',
+    value: string | boolean,
+  ): void {
+    setDatasets((previous) => {
+      const current = previous[role];
+      if (!current) return previous;
+      return {
+        ...previous,
+        [role]: { ...current, metadata: { ...current.metadata, [field]: value } },
+      };
+    });
+  }
+
+  function editDatasetColumnMetadata(
+    role: string,
+    field: 'fieldNotes' | 'units',
+    column: string,
+    value: string,
+  ): void {
+    setDatasets((previous) => {
+      const current = previous[role];
+      if (!current) return previous;
+      return {
+        ...previous,
+        [role]: {
+          ...current,
+          metadata: {
+            ...current.metadata,
+            [field]: { ...current.metadata[field], [column]: value },
+          },
+        },
+      };
+    });
   }
 
   function confirm() {
@@ -68,14 +183,38 @@ export function Stage2Plan({
       pending,
       values,
       images,
+      datasets,
+      documents,
+      waivedInputKeys: effectiveWaivedInputKeys,
     });
     setConfirmed(true);
-    onConfirm(payload.confirmationAnswers, payload.inputValues, payload.uploads);
+    onConfirm(
+      payload.confirmationAnswers,
+      payload.inputValues,
+      payload.visualUploads,
+      payload.datasetUploads,
+      payload.documentUploads ?? [],
+      payload.waivedInputKeys ?? [],
+    );
   }
 
   const pending = plan.pendingUploads ?? [];
+  const hideLegacyDesignImage = pending.some(({ role, kind }) => role === 'jd_screenshots' && kind === 'visual');
+  const visiblePending = pending.filter(({ role }) => !(hideLegacyDesignImage && role === 'designImage'));
+  const implicitWaivedInputKeys = hideLegacyDesignImage
+    ? pending.filter(({ role }) => role === 'designImage').map(({ role }) => role)
+    : [];
+  const effectiveWaivedInputKeys = [...new Set([...waivedInputKeys, ...implicitWaivedInputKeys])];
+  const nativeInputs = plan.plan.resolved_inputs;
+  const pendingRequirementByKey = new Map(
+    nativeInputs?.pending.map((item) => [item.requirement.key, item]) ?? [],
+  );
+  const waivedSet = new Set(effectiveWaivedInputKeys);
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
-  const missingInputs = pending.filter((input) => {
+  const missingInputs = visiblePending.filter((input) => {
+    const requirement = pendingRequirementByKey.get(input.role)?.requirement;
+    if (requirement?.required === false && waivedSet.has(input.role)) return false;
+    if (input.kind === 'document') return (documents[input.role] ?? []).length === 0;
     if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
     if (input.kind === 'value') {
       const raw = values[input.role] ?? '';
@@ -83,12 +222,41 @@ export function Stage2Plan({
         ? raw.split('\n').every((item) => item.trim() === '')
         : raw.trim() === '';
     }
+    if (input.kind === 'dataset') {
+      const dataset = datasets[input.role];
+      return !dataset
+        || Boolean(datasetHeaderErrors[input.role])
+        || !dataset.metadata.rowMeaning.trim()
+        || !dataset.metadata.timeRange.trim()
+        || !dataset.metadata.sampling.trim();
+    }
     return true;
   });
 
+  function optionalWaiver(role: string) {
+    const item = pendingRequirementByKey.get(role);
+    if (item?.requirement.required !== false) return null;
+    return (
+      <label style={{ display: 'flex', gap: 7, alignItems: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+        <input
+          type="checkbox"
+          checked={waivedSet.has(role)}
+          disabled={locked || confirmed}
+          onChange={(event) => setWaivedInputKeys((previous) => event.target.checked
+            ? [...new Set([...previous, role])]
+            : previous.filter((key) => key !== role))}
+        />
+        暂时无法提供，继续执行并在报告中标记资料缺口
+      </label>
+    );
+  }
+
   return (
     <section className="stage-card">
-      <Header n="2" title="待执行计划" note={locked ? '计划内容已锁定' : '确认前不执行'} />
+      <Header n="2" title="补充信息并确认" note={locked ? '内容已锁定' : '一次提交本次分析所需信息'} />
+      <p style={{ margin: '-2px 0 12px', color: 'var(--text-faint)', fontSize: 12 }}>
+        运行模式：{orchestrationLabel}
+      </p>
 
       <MultiSkillPlanSummary plan={plan.plan} />
 
@@ -115,22 +283,37 @@ export function Stage2Plan({
         </div>
       )}
 
+      {nativeToolBindings.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
+          <strong>外部能力状态</strong>
+          <div>
+            已接入 {nativeToolBindings.filter(({ status }) => status === 'bound').length} 项
+            {nativeToolBindings.some(({ status }) => status !== 'bound')
+              ? `；尚未接入 ${nativeToolBindings.filter(({ status }) => status !== 'bound').length} 项，报告将标明相应资料缺口`
+              : ''}
+          </div>
+        </div>
+      )}
+
+      {nativeKnowledge.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
+          <strong>分析方法与知识</strong>
+          <div>已冻结 {nativeKnowledge.length} 份本次分析所需材料。</div>
+        </div>
+      )}
+
       {resourceGaps.length > 0 && (
         <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, color: 'var(--warn)', fontSize: 12 }}>
           <strong>知识资源缺口</strong>
-          {resourceGaps.map((gap) => (
-            <div key={`${gap.skillId}:${gap.query_id}`}>
-              {gap.skillId} · {gap.query_id}：已选 {gap.selected_items}，最低 {gap.min_items}。{gap.reason}
-            </div>
-          ))}
+          <div>部分可选知识材料暂不可用，报告将标明相应资料缺口。</div>
         </div>
       )}
 
       <div style={{ marginTop: 16 }}>
         <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>系统假设(可点击编辑)</div>
-        {assumptions.map((a) => (
+        {assumptions.map((a, index) => (
           <div key={a.key} style={{ display: 'flex', gap: 8, marginBottom: 6, fontSize: 13 }}>
-            <span style={{ color: 'var(--text-dim)', width: 120, flexShrink: 0 }}>{a.key}</span>
+            <span style={{ color: 'var(--text-dim)', width: 120, flexShrink: 0 }}>补充条件 {index + 1}</span>
             {a.editable && !locked ? (
               <input
                 value={a.value}
@@ -173,18 +356,35 @@ export function Stage2Plan({
         </div>
       )}
 
-      {pending.some((input) => input.kind === 'value') && !locked && (
+      {nativeInputs && nativeInputs.resolved.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入（必须填写）</div>
-          {pending.filter((input) => input.kind === 'value').map((input) => (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>已解析输入（可通过重新生成计划纠正）</div>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {nativeInputs.resolved.map((input) => (
+              <li key={input.key}>
+                {nativeRequirementByKey.get(input.key)?.label ?? '已提供输入'}
+                {' '}· {input.source === 'conversation' ? '来自当前需求' : input.source === 'upload' ? '来自上传材料' : '来自已授权数据'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {visiblePending.some((input) => input.kind === 'value') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入</div>
+          {visiblePending.filter((input) => input.kind === 'value').map((input) => (
             <label key={input.role} style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, fontSize: 13 }}>
               <span>
-                {input.label}
-                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {input.targets.map((target) => target.step_no).join('/')}</span>
+                {pendingInputQuestion(input, pendingRequirementByKey.get(input.role)?.requirement.question)}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                  {' '}· {pendingRequirementByKey.get(input.role)?.requirement.required === false ? '可选' : '必需'}
+                  {' '}· 将用于本次分析
+                </span>
               </span>
               {input.multiple ? (
                 <textarea
-                  disabled={locked || confirmed}
+                  disabled={locked || confirmed || waivedSet.has(input.role)}
                   value={values[input.role] ?? ''}
                   onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
                   placeholder="每行填写一个值"
@@ -193,40 +393,165 @@ export function Stage2Plan({
                 />
               ) : (
                 <input
-                  required
-                  disabled={locked || confirmed}
+                  required={pendingRequirementByKey.get(input.role)?.requirement.required !== false}
+                  disabled={locked || confirmed || waivedSet.has(input.role)}
                   value={values[input.role] ?? ''}
                   onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
                   placeholder="请输入"
                   style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13 }}
                 />
               )}
+              {optionalWaiver(input.role)}
             </label>
           ))}
         </div>
       )}
 
-      {pending.some((input) => input.kind === 'visual') && !locked && (
+      {visiblePending.some((input) => input.kind === 'document') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（必须上传；同一张图会自动用于所有需要它的步骤）</div>
-          {pending.filter((input) => input.kind === 'visual').map((pu) => (
-            <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                {pu.label}
-                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>
+            待上传业务材料（支持 Markdown 和 TXT）
+          </div>
+          {visiblePending.filter((input) => input.kind === 'document').map((documentInput) => (
+            <div key={documentInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+              <span style={{ fontSize: 13 }}>
+                {pendingInputQuestion(documentInput, pendingRequirementByKey.get(documentInput.role)?.requirement.question)}
+                {' '}· {pendingRequirementByKey.get(documentInput.role)?.requirement.required === false ? '可选' : '必需'}
               </span>
-              {(images[pu.role] ?? []).map((dataUrl, index) => (
-                <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-              ))}
               <input
                 type="file"
-                accept="image/*"
+                accept=".md,.txt,text/markdown,text/plain"
+                multiple={documentInput.multiple}
+                disabled={locked || confirmed || waivedSet.has(documentInput.role)}
+                onChange={(event) => pickDocuments(
+                  documentInput,
+                  Array.from(event.currentTarget.files ?? []),
+                )}
+              />
+              {(documents[documentInput.role] ?? []).length > 0 && (
+                <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  已选择：{documents[documentInput.role]!.map(({ name }) => name).join('、')}
+                </span>
+              )}
+              {optionalWaiver(documentInput.role)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {visiblePending.some((input) => input.kind === 'dataset') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传 CSV 数据</div>
+          {visiblePending.filter((input) => input.kind === 'dataset').map((datasetInput) => {
+            const selected = datasets[datasetInput.role];
+            return (
+              <div key={datasetInput.role} style={{ display: 'grid', gap: 7, marginBottom: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+                <span style={{ fontSize: 13 }}>
+                  {pendingInputQuestion(datasetInput, pendingRequirementByKey.get(datasetInput.role)?.requirement.question)}
+                  {' '}· {pendingRequirementByKey.get(datasetInput.role)?.requirement.required === false ? '可选' : '必需'}
+                </span>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  disabled={locked || confirmed || waivedSet.has(datasetInput.role)}
+                  onChange={(event) => {
+                    void pickDataset(datasetInput.role, event.currentTarget.files?.[0]);
+                  }}
+                />
+                <input
+                  value={selected?.metadata.rowMeaning ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'rowMeaning', event.target.value)}
+                  placeholder="一行代表什么，例如：一条用户研究记录"
+                />
+                <input
+                  value={selected?.metadata.timeRange ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'timeRange', event.target.value)}
+                  placeholder="数据时间范围，例如：2026-Q3"
+                />
+                <input
+                  value={selected?.metadata.sampling ?? ''}
+                  disabled={!selected || locked || confirmed}
+                  onChange={(event) => editDatasetMetadata(datasetInput.role, 'sampling', event.target.value)}
+                  placeholder="样本或采集方式"
+                />
+                {datasetHeaderErrors[datasetInput.role] ? (
+                  <span role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}>
+                    {datasetHeaderErrors[datasetInput.role]}
+                  </span>
+                ) : null}
+                {selected && (datasetColumns[datasetInput.role]?.length ?? 0) > 0 ? (
+                  <fieldset
+                    disabled={locked || confirmed}
+                    style={{ display: 'grid', gap: 8, margin: '3px 0', padding: 10, border: '1px solid var(--border-soft)', borderRadius: 7 }}
+                  >
+                    <legend style={{ padding: '0 5px', color: 'var(--text-faint)', fontSize: 12 }}>
+                      字段说明与单位（选填）
+                    </legend>
+                    {datasetColumns[datasetInput.role]!.map((column) => (
+                      <div
+                        key={column}
+                        className="dataset-field-row"
+                        style={{ gap: 7, alignItems: 'center' }}
+                      >
+                        <code style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--text-dim)', fontSize: 11 }}>{column}</code>
+                        <input
+                          value={selected.metadata.fieldNotes[column] ?? ''}
+                          onChange={(event) => editDatasetColumnMetadata(datasetInput.role, 'fieldNotes', column, event.target.value)}
+                          placeholder="字段含义"
+                          aria-label={`${column} 字段含义`}
+                        />
+                        <input
+                          value={selected.metadata.units[column] ?? ''}
+                          onChange={(event) => editDatasetColumnMetadata(datasetInput.role, 'units', column, event.target.value)}
+                          placeholder="单位"
+                          aria-label={`${column} 单位`}
+                        />
+                      </div>
+                    ))}
+                  </fieldset>
+                ) : null}
+                {optionalWaiver(datasetInput.role)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {visiblePending.some((input) => input.kind === 'visual') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片</div>
+          <p id="visual-upload-guidance" style={{ margin: '0 0 10px', color: 'var(--text-dim)', fontSize: 12 }}>
+            请从本机选择 JPG、PNG 或 WebP 图片；不支持用图片 URL 或本机文件路径代替上传。单张最大 10 MiB。
+          </p>
+          {visiblePending.filter((input) => input.kind === 'visual').map((pu) => (
+            <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
+              <span style={{ color: 'var(--text-dim)', flex: 1 }}>
+                {pendingInputQuestion(pu, pendingRequirementByKey.get(pu.role)?.requirement.question)}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                  {' '}· {pendingRequirementByKey.get(pu.role)?.requirement.required === false ? '可选' : '必需'}
+                  {' '}· {pu.multiple ? '可选择多张，最多 12 张' : '请选择 1 张'}
+                  {' '}· 同一图片会自动用于所有需要它的分析能力
+                </span>
+              </span>
+              {(images[pu.role] ?? []).length > 0 && (
+                <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  已选择 {images[pu.role]!.length} 张：{images[pu.role]!.map(({ name }) => name).join('、')}
+                </span>
+              )}
+              <input
+                type="file"
+                accept={IMAGE_FILE_ACCEPT}
                 multiple={pu.multiple}
+                aria-describedby="visual-upload-guidance"
+                disabled={locked || confirmed || waivedSet.has(pu.role)}
                 onChange={(event) => {
-                  void pickImages(pu, Array.from(event.currentTarget.files ?? []));
+                  pickImages(pu, Array.from(event.currentTarget.files ?? []));
                 }}
                 style={{ fontSize: 12, color: 'var(--text-dim)' }}
               />
+              {optionalWaiver(pu.role)}
             </div>
           ))}
         </div>
@@ -236,7 +561,7 @@ export function Stage2Plan({
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 18 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn-primary" onClick={confirm} disabled={revising || missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0}>
-              ✓ 确认计划
+              ✓ 确认并继续
             </button>
             <button
               className="btn-ghost"
@@ -259,7 +584,7 @@ export function Stage2Plan({
             <span role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>
               {missingAnswers.length > 0 && `请先回答全部确认项：${missingAnswers.map(({ question, key }) => question ?? key).join('、')}`}
               {missingAnswers.length > 0 && (missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) ? '；' : ''}
-              {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map((input) => input.label).join('、')}`}
+              {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map(pendingInputLabel).join('、')}`}
               {missingInputs.length > 0 && (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 ? '；' : ''}
               {(portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 && `计划仍有未覆盖需求：${portfolio!.uncoveredRequiredDemandIds.join('、')}`}
             </span>
@@ -267,7 +592,7 @@ export function Stage2Plan({
         </div>
       )}
       {(locked || confirmed) && (
-        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 计划已确认，内容已锁定</div>
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 信息已确认，正在按计划处理</div>
       )}
     </section>
   );
@@ -300,6 +625,13 @@ function formatSuggestion(value: unknown): string {
 
 function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
   const purpose = 'purpose' in step ? step.purpose : undefined;
+  const label = step.actor_type === 'skill'
+    ? '专业分析'
+    : step.actor_type === 'tool'
+      ? '资料处理'
+      : step.actor_type === 'reviewer'
+        ? '质量检查'
+        : step.actor_type === 'knowledge' ? '知识读取' : '内容生成';
   const cls =
     step.actor_type === 'skill' ? 'badge-skill'
     : step.actor_type === 'tool' ? 'badge-tool'
@@ -313,8 +645,7 @@ function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
         <div style={{ fontSize: 13 }}>{step.step_name}</div>
         {purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{purpose}</div>}
       </div>
-      <span className={`badge ${cls}`}>{step.actor_type.toUpperCase()}</span>
-      <code style={{ fontSize: 11, color: 'var(--text-faint)' }}>{step.actor_id}</code>
+      <span className={`badge ${cls}`}>{label}</span>
       {step.requires_approval && <span className="badge" style={{ background: 'rgba(251,191,36,.15)', color: 'var(--warn)' }}>需审批</span>}
     </div>
   );

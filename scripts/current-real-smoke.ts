@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { extname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import {
+  parseNativeFinalReport,
+  parseNativeSkillResult,
+} from '../packages/api-contract/native-skill-orchestration.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { closePool, loadEnv } from '../database/db.ts';
 import {
@@ -65,9 +69,55 @@ export interface SmokeReceiptInput extends VerifiedSmokeEvidenceSummary {
     verdict: 'pass';
   };
 }
-export interface SmokeReceipt extends SmokeReceiptInput {
-  evidenceCount: number;
+export interface EditorialSummarySmokeResult {
+  status: 'ready' | 'failed';
+  htmlSha256?: string;
+  failure?: string;
 }
+
+export interface JoyspaceSmokeReceipt {
+  status: 'available';
+  stepNo: number;
+  toolArtifactId: string;
+  knowledgeSnapshotArtifactId: string;
+  evidenceId: string;
+  o2Version: string;
+  webcliVersion: string;
+}
+
+export interface LegacySmokeReceipt extends SmokeReceiptInput {
+  evidenceCount: number;
+  editorialSummary?: EditorialSummarySmokeResult;
+  joyspace?: JoyspaceSmokeReceipt;
+}
+
+export interface NativeSmokeReceipt extends VerifiedSmokeEvidenceSummary {
+  contract: 'native';
+  scenarioId: string;
+  profile: string;
+  taskType: string;
+  deliverableType: string;
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  finalReportArtifactId: string;
+  skillResultArtifactIds: string[];
+  evidenceManifestArtifactId: string;
+  evidenceArtifactIds: string[];
+  toolReceipt: Record<string, unknown>;
+  counts: { evidence: number; findings: number; recommendations: number };
+  sources: string[];
+  provider: string;
+  requestedModel: string;
+  actualModel: string;
+  coreTool: string;
+  reportSealed: boolean;
+  synthesisCallCount: number;
+  evidenceCount: number;
+  visualAssetCount: number;
+}
+
+export type SmokeReceipt = NativeSmokeReceipt;
 
 export interface SemanticGoldScenario {
   id: string;
@@ -84,6 +134,7 @@ export interface SemanticGoldScenario {
   requireMultiSkill?: boolean;
   expectedContributorSkillIds?: string[];
   requiredToolIds?: string[];
+  requireJoyspace?: boolean;
   planningScenarioId?: string;
 }
 
@@ -118,6 +169,7 @@ interface SmokeEvidenceStep {
   state: string;
   outputArtifactId?: string | null;
   toolProvenance?: Record<string, unknown> | null;
+  skillProvenance?: Record<string, unknown> | null;
   failure?: Record<string, unknown> | null;
 }
 
@@ -232,6 +284,7 @@ export const CURRENT_REAL_SMOKE_PROFILES = [
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',
+  'industry_market_analysis',
 ] as const;
 
 export function assertRealSmokeConfig(env: RealSmokeConfig): void {
@@ -378,7 +431,7 @@ function uniqueHttpsUrls(values: readonly string[]): string[] {
   }))];
 }
 
-export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
+export function formatSmokeReceipt(input: SmokeReceiptInput): LegacySmokeReceipt {
 
   if (
     input.toolReceipt.actorId !== 'tavily-web-search'
@@ -547,6 +600,39 @@ function nonBlankString(value: unknown, field: string): string {
   return value;
 }
 
+export async function readEditorialSummaryWithOneRetry(
+  read: () => Promise<string | null>,
+): Promise<string | null> {
+  try {
+    return await read();
+  } catch {
+    return read();
+  }
+}
+
+export async function verifyEditorialSummaryForSmoke(
+  read: () => Promise<string | null>,
+): Promise<EditorialSummarySmokeResult> {
+  try {
+    const html = await readEditorialSummaryWithOneRetry(read);
+    if (
+      !html
+      || !/^<!doctype html>/iu.test(html.trim())
+      || !/<html\b[^>]*\blang=["'](?:zh-CN|en)["']/iu.test(html)
+      || !/data-summary-section-id=/u.test(html)
+      || !/data-source-ids=/u.test(html)
+      || /<(?:iframe|object|embed|form)\b/iu.test(html)
+      || /<(?:script|img|video|audio|source)\b[^>]*\bsrc\s*=\s*["']https?:\/\//iu.test(html)
+    ) throw new Error('Editorial Summary did not satisfy its binding, language, or offline contract');
+    return {
+      status: 'ready',
+      htmlSha256: `sha256:${createHash('sha256').update(html).digest('hex')}`,
+    };
+  } catch (error) {
+    return { status: 'failed', failure: safeSmokeErrorMessage(error) };
+  }
+}
+
 export function selectSmokeScenario(
   fixture: SemanticGoldFixture,
   profile: string,
@@ -654,9 +740,49 @@ function gapKeys(input: {
     keys.add(`capability:${capabilityId}:${code}`);
   });
 
+  const skillInvocations = plan.skill_invocations === undefined
+    ? []
+    : array(plan.skill_invocations, 'plan.skill_invocations');
+  skillInvocations.forEach((value, invocationIndex) => {
+    const invocation = record(value, `plan.skill_invocations[${invocationIndex}]`);
+    const invocationId = nonBlankString(invocation.invocation_id, 'Skill invocation id');
+    const resourceGaps = invocation.resource_gaps === undefined
+      ? []
+      : array(invocation.resource_gaps, `plan.skill_invocations[${invocationIndex}].resource_gaps`);
+    resourceGaps.forEach((gapValue, gapIndex) => {
+      const gap = record(
+        gapValue,
+        `plan.skill_invocations[${invocationIndex}].resource_gaps[${gapIndex}]`,
+      );
+      const queryId = nonBlankString(gap.query_id, 'Skill resource gap query id');
+      const minItems = finiteNumber(gap.min_items, 'Skill resource gap min_items');
+      const selectedItems = finiteNumber(gap.selected_items, 'Skill resource gap selected_items');
+      if (
+        !Number.isInteger(minItems)
+        || minItems < 1
+        || !Number.isInteger(selectedItems)
+        || selectedItems < 0
+        || gap.failure_policy !== 'gap'
+        || typeof gap.reason !== 'string'
+        || !gap.reason.trim()
+      ) {
+        throw new Error('Skill resource gap is malformed');
+      }
+      keys.add(`skill:${invocationId}:resource:${queryId}`);
+    });
+  });
+
   input.steps.forEach((step, index) => {
     const stepNo = finiteNumber(step.stepNo, `steps[${index}].stepNo`);
     if (!Number.isInteger(stepNo) || stepNo <= 0) throw new Error(`steps[${index}].stepNo is invalid`);
+    if (step.actorType === 'skill' && step.state === 'succeeded' && step.skillProvenance) {
+      const skillProvenance = record(step.skillProvenance, `steps[${index}].skillProvenance`);
+      if (skillProvenance.status === 'degraded') {
+        keys.add(`step:${stepNo}:skill:${step.actorId}:degraded`);
+      } else if (skillProvenance.status !== 'succeeded') {
+        throw new Error(`steps[${index}].skillProvenance.status is invalid`);
+      }
+    }
     const provenance = step.toolProvenance;
     if (provenance === null || provenance === undefined) {
       if (step.actorType === 'tool' && step.state === 'skipped') keys.add(`step:${stepNo}:legacy_skip`);
@@ -874,6 +1000,7 @@ const CONTROLLED_SMOKE_DECISION = [
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
   const answers: Record<string, string> = {
     outcome_mode: 'answer',
+    deliverable_intent: 'research_strategy_report',
     app_definition: '包含品牌自有 App、垂直宠物 App 和综合电商平台 App，分别给出策略。',
     product_scope: '覆盖干粮、湿粮、鲜粮、冻干和烘焙主粮，并明确共同点与差异。',
     brand_price_segment: '覆盖国产与进口、中端与高端价格带，优先新手与精养宠物主人。',
@@ -986,23 +1113,22 @@ export function assertMultiSkillSmokePlan(
   scenario: Pick<SemanticGoldScenario, 'requireMultiSkill' | 'expectedContributorSkillIds' | 'requiredToolIds'>,
 ): void {
   if (!scenario.requireMultiSkill) return;
-  if (plan.execution_contract_version !== 'current-execution-plan-v3') {
-    throw new Error('multi-Skill real smoke requires CurrentExecutionPlan v3');
+  if (plan.execution_contract_version !== 'native-skill-execution-plan-v1') {
+    throw new Error('multi-Skill real smoke requires NativeSkillExecutionPlan v1');
   }
   const invocations = array(plan.skill_invocations, 'plan.skill_invocations').map((value, index) => (
     record(value, `plan.skill_invocations[${index}]`)
   ));
   const contributors = invocations
-    .filter(({ role }) => role === 'contributor')
     .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'))
     .sort();
   const expectedContributors = [...(scenario.expectedContributorSkillIds ?? [])].sort();
   if (
-    invocations.filter(({ role }) => role === 'synthesizer').length !== 1
-    || contributors.length < 1
+    contributors.length < 1
+    || new Set(contributors).size !== contributors.length
     || expectedContributors.some((skillId) => !contributors.includes(skillId))
   ) {
-    throw new Error('multi-Skill real smoke has an invalid Contributor/Synthesizer inventory');
+    throw new Error('multi-Skill real smoke has an invalid Contributor inventory');
   }
   const steps = array(plan.steps, 'plan.steps').map((value, index) => record(value, `plan.steps[${index}]`));
   for (const toolId of scenario.requiredToolIds ?? []) {
@@ -1012,15 +1138,8 @@ export function assertMultiSkillSmokePlan(
   }
   if (
     (scenario.requiredToolIds ?? []).includes('tavily-web-search')
-    && !steps.some((step) => (
-      step.actor_id === 'tavily-web-search'
-      && typeof step.shared_stage_key === 'string'
-      && Array.isArray(step.shared_by_invocation_ids)
-      && step.shared_by_invocation_ids.length > 1
-    ))
-  ) throw new Error('multi-Skill real smoke requires one explicitly shared Tavily stage');
-  record(plan.portfolio_summary, 'plan.portfolio_summary');
-  array(plan.contribution_requirements, 'plan.contribution_requirements');
+    && steps.filter((step) => step.actor_id === 'tavily-web-search').length !== 1
+  ) throw new Error('multi-Skill real smoke requires exactly one Tavily stage');
 }
 
 export function selectSmokeCandidate<
@@ -1067,6 +1186,7 @@ async function executeRealSmoke(
     ownerUserId: seedUser.id,
     title: `Current real smoke: ${scenario.profile}`,
   });
+  const orchestrationMode = scenario.requireMultiSkill ? 'multi_skill' : 'single_skill';
   const created = await runtime.repository.createTask({
     conversationId: conversation.id,
     ownerUserId: seedUser.id,
@@ -1076,6 +1196,7 @@ async function executeRealSmoke(
     state: 'awaiting_clarification',
     sensitivity: scenario.sensitivity,
     piiDetected: scenario.piiDetected,
+    orchestrationMode,
   });
   reportProgress({ stage: 'requirement', message: 'task created; refining requirement', taskId: created.id });
   const refined = await runtime.requirementRefinement.understand({
@@ -1083,6 +1204,7 @@ async function executeRealSmoke(
     conversationId: conversation.id,
     ownerUserId: seedUser.id,
     originalInput: scenario.input,
+    orchestrationMode,
   });
   const finalized = await resolveSmokeRequirement(refined, (answers, selectedScenarioId) => (
     runtime.requirementRefinement.clarify({
@@ -1129,6 +1251,20 @@ async function executeRealSmoke(
     planVersionId: selectedCandidate.planVersionId,
   });
   const structuredTask = finalized.requirement;
+  const smokeInputValues = scenario.profile === 'design_audit'
+    ? { designImage: designSmokeInputValue(designImagePath) }
+    : {};
+  const nativePending = selectedCandidate.plan.execution_contract_version === 'native-skill-execution-plan-v1'
+    ? array(
+        record(selectedCandidate.plan.resolved_inputs, 'plan.resolved_inputs').pending,
+        'plan.resolved_inputs.pending',
+      ).map((value, index) => record(value, `plan.resolved_inputs.pending[${index}]`))
+    : [];
+  const waivedInputKeys = nativePending.flatMap((item, index) => {
+    const requirement = record(item.requirement, `plan.resolved_inputs.pending[${index}].requirement`);
+    const key = nonBlankString(requirement.key, `plan.resolved_inputs.pending[${index}].requirement.key`);
+    return requirement.required === false && !Object.hasOwn(smokeInputValues, key) ? [key] : [];
+  });
   let confirmed = await runtime.workflow.confirm({
     taskId,
     planVersionId: selected.planVersionId,
@@ -1136,9 +1272,8 @@ async function executeRealSmoke(
     idempotencyKey: `current-real-smoke:confirm:${scenario.profile}:${taskId}`,
     actor,
     confirmationAnswers: explicitSmokeConfirmationAnswers(structuredTask.clarification_questions),
-    inputValues: scenario.profile === 'design_audit'
-      ? { designImage: designSmokeInputValue(designImagePath) }
-      : {},
+    inputValues: smokeInputValues,
+    waivedInputKeys,
   });
   if (confirmed.state === 'awaiting_approval') {
     if (!mayAutoApproveSmoke(approvalMode)) {
@@ -1216,465 +1351,173 @@ async function executeRealSmoke(
     throw new Error(`real execution did not complete: ${execution.state}`);
   }
 
-  const attemptId = nonBlankString(execution.attemptId, 'attemptId');
-  const deliverableArtifactId = nonBlankString(execution.deliverableArtifactId, 'deliverableArtifactId');
-  const reportPackageArtifactId = nonBlankString(
-    execution.reportPackageArtifactId,
-    'reportPackageArtifactId',
-  );
-  const evidenceManifestArtifactId = nonBlankString(
-    execution.evidenceManifestArtifactId,
-    'evidenceManifestArtifactId',
-  );
-  const reportReviewArtifactId = nonBlankString(
-    execution.reportReviewArtifactId,
-    'reportReviewArtifactId',
-  );
-  const multiSkillArtifactIds = scenario.requireMultiSkill
-    ? {
-        crossSkillReviewArtifactId: nonBlankString(
-          execution.crossSkillReviewArtifactId,
-          'crossSkillReviewArtifactId',
-        ),
-        contributionLedgerArtifactId: nonBlankString(
-          execution.contributionLedgerArtifactId,
-          'contributionLedgerArtifactId',
-        ),
-        contributionSummaryArtifactId: nonBlankString(
-          execution.contributionSummaryArtifactId,
-          'contributionSummaryArtifactId',
-        ),
-      }
-    : null;
-  const reportContract = resolveSmokeReportContract({
-    deliverableType: scenario.expectedDeliverableType,
-    reportV3WriterEnabled: process.env.REPORT_V3_WRITER_ENABLED === 'true',
-    standaloneHtmlBundleV1Enabled: process.env.STANDALONE_HTML_BUNDLE_V1_ENABLED === 'true',
-    reportEditorialExperienceV1Enabled: process.env.REPORT_EDITORIAL_EXPERIENCE_V1_ENABLED === 'true',
-    reportEditorialShowcaseV1Enabled: process.env.REPORT_EDITORIAL_SHOWCASE_V1_ENABLED === 'true',
-  });
-  if (
-    (reportContract.reportPackageVersion === 'report-package-v2'
-      || reportContract.reportPackageVersion === 'report-package-v3')
-    && (
-      reportContract.standaloneHtmlStatus !== 'ready'
-      || reportContract.fixedPackageRoot !== true
-    )
-  ) {
-    throw new Error('Report Package smoke contract is internally inconsistent');
-  }
-  const canonicalPackageService = new ReportPackageV2ArtifactService(runtime.artifacts);
-  const verifiedShowcasePackage = reportContract.reportPackageVersion === 'report-package-v3'
-    ? await new ReportPackageV3ArtifactService({
-        artifacts: runtime.artifacts,
-        canonicalPackages: canonicalPackageService,
-      }).verify({
-        artifactId: reportPackageArtifactId,
-        taskId,
-        planVersionId: selected.planVersionId,
-        attemptId,
-      })
-    : null;
-  const verifiedReportPackage = verifiedShowcasePackage
-    ? await canonicalPackageService.verify({
-        artifactId: verifiedShowcasePackage.value.canonicalPackageArtifactId,
-        taskId,
-        planVersionId: selected.planVersionId,
-        attemptId,
-      })
-    : reportContract.reportPackageVersion === 'report-package-v2'
-      ? await canonicalPackageService.verify({
-          artifactId: reportPackageArtifactId,
-          taskId,
-          planVersionId: selected.planVersionId,
-          attemptId,
-        })
-      : await new ReportPackageArtifactService(runtime.artifacts).verify({
-          artifactId: reportPackageArtifactId,
-          attemptId,
-        });
-  const reportPackageDocumentArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
-    ? verifiedReportPackage.value.sourceReportDocumentArtifactId
-    : verifiedReportPackage.value.reportDocumentArtifactId;
-  const reportPackageBlueprintArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
-    ? verifiedReportPackage.value.layout.blueprintArtifactId
-    : verifiedReportPackage.value.reportLayoutBlueprintArtifactId;
-  if (
-    verifiedReportPackage.value.taskId !== taskId
-    || verifiedReportPackage.value.planVersionId !== selected.planVersionId
-    || verifiedReportPackage.value.deliverableArtifactId !== deliverableArtifactId
-    || verifiedReportPackage.value.evidenceManifestArtifactId !== evidenceManifestArtifactId
-    || verifiedReportPackage.value.reportReviewArtifactId !== reportReviewArtifactId
-    || (multiSkillArtifactIds && (
-      verifiedReportPackage.value.crossSkillReviewArtifactId !== multiSkillArtifactIds.crossSkillReviewArtifactId
-      || verifiedReportPackage.value.contributionLedgerArtifactId !== multiSkillArtifactIds.contributionLedgerArtifactId
-      || verifiedReportPackage.value.contributionSummaryArtifactId !== multiSkillArtifactIds.contributionSummaryArtifactId
-    ))
-    || (scenario.profile === 'research_synthesis' && !reportPackageBlueprintArtifactId)
-  ) {
-    throw new Error('Report Package does not match the executed task components');
-  }
-  if (
-    verifiedReportPackage.value.version === 'report-package-v2'
-    && verifiedReportPackage.value.standaloneHtml.status !== reportContract.standaloneHtmlStatus
-  ) {
-    throw new Error('Report Package v2 does not contain the required standalone HTML');
-  }
-  if (
-    reportContract.reportPackageVersion === 'report-package-v3'
-    && (
-      verifiedShowcasePackage?.value.showcase.status !== reportContract.showcaseStatus
-      || verifiedShowcasePackage.value.preferredHtml !== 'showcase'
-    )
-  ) {
-    throw new Error('Report Package v3 does not contain the required Editorial Showcase');
-  }
-  const delivered = record(
-    await runtime.getDeliverable(taskId, seedUser.id),
-    'deliverable response',
-  );
-  if (scenario.requireMultiSkill) {
-    record(delivered.crossSkillReview, 'deliverable response.crossSkillReview');
-    record(delivered.contributionLedger, 'deliverable response.contributionLedger');
-    record(delivered.contributionSummary, 'deliverable response.contributionSummary');
-  }
-  const deliverable = record(delivered.deliverable, 'deliverable');
-  const manifest = record(delivered.evidenceManifest, 'evidenceManifest');
-  const deliverableType = nonBlankString(deliverable.deliverableType, 'deliverable.deliverableType');
-  if (deliverableType !== scenario.expectedDeliverableType) {
-    throw new Error(`real smoke delivered the wrong report type for ${scenario.profile}`);
-  }
-  for (const [field, expected] of [
-    ['taskId', taskId],
-    ['planVersionId', selected.planVersionId],
-    ['attemptId', attemptId],
-  ] as const) {
-    if (nonBlankString(manifest[field], `evidenceManifest.${field}`) !== expected) {
-      throw new Error(`evidence manifest ${field} does not match execution identity`);
-    }
-  }
-  if (nonBlankString(deliverable.taskId, 'deliverable.taskId') !== taskId) {
-    throw new Error('deliverable.taskId does not match the executed task');
-  }
-  if (nonBlankString(deliverable.planVersionId, 'deliverable.planVersionId') !== selected.planVersionId) {
-    throw new Error('deliverable.planVersionId does not match the selected plan');
-  }
-  if (nonBlankString(deliverable.attemptId, 'deliverable.attemptId') !== attemptId) {
-    throw new Error('deliverable.attemptId does not match the execution attempt');
-  }
-  if (
-    nonBlankString(deliverable.evidenceManifestArtifactId, 'deliverable.evidenceManifestArtifactId')
-    !== evidenceManifestArtifactId
-  ) {
-    throw new Error('deliverable evidence manifest does not match the execution receipt');
-  }
-  if (scenario.profile === 'research_synthesis') {
-    const payload = record(deliverable.payload, 'deliverable.payload');
-    const directAnswers = array(payload.directAnswers, 'deliverable.payload.directAnswers').map((value, index) => record(value, `directAnswers[${index}]`));
-    if (directAnswers.length === 0 || directAnswers.some((answer) => (
-      !nonBlankString(answer.questionId, 'directAnswer.questionId')
-      || !nonBlankString(answer.answer, 'directAnswer.answer')
-      || typeof answer.confidence !== 'number'
-      || !Array.isArray(answer.evidenceIds)
-      || typeof answer.validationNeeded !== 'string'
-    ))) throw new Error('research strategy direct answers are incomplete');
-    if (payload.schemaVersion !== 'research-strategy-content-v2') {
-      throw new Error('research strategy requires open content payload v2');
-    }
-    const contentBlocks = array(payload.contentBlocks, 'deliverable.payload.contentBlocks').map((value, index) => record(value, `contentBlocks[${index}]`));
-    const blocksByKind = new Map(contentBlocks.map((block) => [nonBlankString(block.kind, 'contentBlock.kind'), block]));
-    const strategyMap = blocksByKind.get('strategy_map');
-    const mindModel = blocksByKind.get('mind_model');
-    if (!strategyMap || array(strategyMap.cells, 'strategyMap.cells').length === 0 || !mindModel || array(mindModel.nodes, 'mindModel.nodes').length === 0) {
-      throw new Error('research strategy map or mind model is empty');
-    }
-    const principles = blocksByKind.get('design_principles');
-    if (!principles || array(principles.items, 'designPrinciples.items').length < 5) {
-      throw new Error('research strategy requires at least five design principles for the Gold scenario');
-    }
-    const opportunities = blocksByKind.get('opportunity_backlog');
-    if (!opportunities || array(opportunities.items, 'opportunityBacklog.items').length === 0) {
-      throw new Error('research strategy opportunities are empty');
-    }
-    const actionBlocks = contentBlocks.filter((block) => block.kind === 'prioritized_actions' || block.kind === 'action_plan');
-    const priorities = new Set(actionBlocks.flatMap((block, blockIndex) => (
-      array(block.items, `actionBlocks[${blockIndex}].items`).map((value, index) => (
-        nonBlankString(record(value, `actionItems[${index}]`).priority, `actionItems[${index}].priority`)
-      ))
-    )));
-    for (const priority of ['P0', 'P1', 'P2']) if (!priorities.has(priority)) throw new Error(`research strategy is missing ${priority} action`);
-    const reportDocument = record(delivered.reportDocument, 'reportDocument');
-    if (reportDocument.version !== reportContract.reportDocumentVersion) {
-      throw new Error(`research strategy requires ${reportContract.reportDocumentVersion}`);
-    }
-    if (reportDocument.layoutMode !== 'model' && reportDocument.layoutMode !== 'fallback') {
-      throw new Error('research strategy requires an explicit model or fallback layout mode');
-    }
-    const answerReview = record(delivered.reportReview, 'reportReview');
-    if (answerReview.version !== 'report-review-v2') throw new Error('research strategy requires ReportReview v2');
-    if (reportPackageDocumentArtifactId === undefined) {
-      throw new Error('research strategy Report Package is missing its ReportDocument');
-    }
-    if (verifiedReportPackage.value.version === 'report-package-v2') {
-      const packageHtml = verifiedReportPackage.value.standaloneHtml;
-      if (packageHtml.status !== 'ready') {
-        throw new Error('Report Package v2 does not contain the required standalone HTML');
-      }
-      const deliveredPackage = record(delivered.reportPackage, 'reportPackage');
-      if (
-        deliveredPackage.version !== verifiedReportPackage.value.version
-        || deliveredPackage.reportPublicationId !== verifiedReportPackage.value.reportPublicationId
-        || delivered.reportDocumentContentSha256
-          !== verifiedReportPackage.value.sourceReportDocumentContentSha256
-      ) {
-        throw new Error('Report Package v2 is not fixed to the delivered ReportDocument publication');
-      }
-      const deliveredHtml = record(deliveredPackage.standaloneHtml, 'reportPackage.standaloneHtml');
-      if (
-        deliveredHtml.status !== 'ready'
-        || deliveredHtml.artifactId !== packageHtml.artifactId
-        || deliveredHtml.rendererVersion !== packageHtml.rendererVersion
-      ) {
-        throw new Error('delivered Report Package does not preserve standalone HTML identity');
-      }
-    }
-  }
-
-  const steps = await runtime.repository.listExecutionSteps(attemptId);
-  requireActorCoverage(steps, selectedCandidate.plan.steps);
-  const realToolStep = steps.find((step) => {
-    const provenance = step.toolProvenance;
-    return step.actorType === 'tool'
-      && step.actorId === 'tavily-web-search'
-      && step.state === 'succeeded'
-      && provenance?.executionMode === 'real'
-      && provenance.declaredAdapterType === 'tavily'
-      && provenance.resolvedAdapterType === 'tavily'
-      && typeof provenance.implementationId === 'string'
-      && provenance.implementationId !== 'unknown';
-  });
-  if (!realToolStep?.toolProvenance) throw new Error('execution has no qualifying real Tavily Tool provenance');
-  if (scenario.requireMultiSkill) {
-    for (const toolId of scenario.requiredToolIds ?? []) {
-      const toolStep = steps.find((step) => (
-        step.actorType === 'tool'
-        && step.actorId === toolId
-        && step.state === 'succeeded'
-        && step.toolProvenance?.executionMode === 'real'
-        && typeof step.toolProvenance.implementationId === 'string'
-        && step.toolProvenance.implementationId !== 'unknown'
-      ));
-      if (!toolStep) throw new Error(`multi-Skill real smoke has no real ${toolId} receipt`);
-    }
-    const plan = selectedCandidate.plan as unknown as Record<string, unknown>;
-    const contributorSkillIds = array(plan.skill_invocations, 'plan.skill_invocations')
-      .map((value, index) => record(value, `plan.skill_invocations[${index}]`))
-      .filter(({ role }) => role === 'contributor')
-      .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'));
-    for (const skillId of contributorSkillIds) {
-      const outputStep = [...steps].reverse().find((step) => (
-        step.actorType === 'skill'
-        && step.actorId === skillId
-        && step.state === 'succeeded'
-        && typeof step.outputArtifactId === 'string'
-      ));
-      const artifact = outputStep?.outputArtifactId
-        ? await runtime.repository.getArtifact(outputStep.outputArtifactId)
-        : null;
-      if (!artifact || artifact.state !== 'SEALED' || artifact.kind !== 'research_contribution') {
-        throw new Error(`multi-Skill Contributor ${skillId} has no SEALED Research Contribution`);
-      }
-    }
-  }
-
-  const configuredModel = nonBlankString(process.env.LLM_MODEL_NAME, 'LLM_MODEL_NAME');
-  const expectedActualModel = nonBlankString(
-    process.env.LLM_EXPECTED_ACTUAL_MODEL,
-    'LLM_EXPECTED_ACTUAL_MODEL',
-  );
-  const modelRoutes = parseModelRoutes(
-    process.env.LLM_MODEL_ROUTES,
-    configuredModel,
-    expectedActualModel,
-  );
-  const modelCalls = await runtime.repository.listModelCalls(attemptId);
-  const requiredModelCalls = modelCalls.filter((call) => call.stage !== 'report_layout' || call.status === 'succeeded');
-  assertGatewayModelReceipts({ modelRoutes, modelCalls: requiredModelCalls });
-  if (scenario.profile === 'research_synthesis' && modelCalls.some(({ stage }) => stage === 'deliverable')) {
-    throw new Error('research strategy execution must not rewrite the reviewed Skill output in a deliverable LLM stage');
-  }
-  const representativeModelCall = requiredModelCalls[0]!;
-
-  const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
-    record(entry, `evidenceManifest.entries[${index}]`)
-  ));
-  const realEvidenceEntries = entries.filter((entry) => {
-    const proof = entry.toolProof;
-    return entry.toolId === 'tavily-web-search'
-      && proof !== null
-      && typeof proof === 'object'
-      && !Array.isArray(proof)
-      && (proof as Record<string, unknown>).executionMode === 'real';
-  });
-  if (realEvidenceEntries.length === 0) throw new Error('evidence manifest has no real Tool evidence');
-
-  const evidenceArtifactIds = [...new Set(realEvidenceEntries.map((entry, index) => (
-    nonBlankString(entry.artifactId, `evidenceManifest.entries[${index}].artifactId`)
-  )))];
-  const sources = uniqueHttpsUrls(realEvidenceEntries.map((entry, index) => (
-    nonBlankString(entry.sourceUrl, `evidenceManifest.entries[${index}].sourceUrl`)
-  )));
-  if (sources.length === 0) throw new Error('evidence manifest has no HTTPS source');
-
-  await Promise.all([
-    runtime.artifacts.verifySealed(deliverableArtifactId),
-    runtime.artifacts.verifySealed(evidenceManifestArtifactId),
-    runtime.artifacts.verifySealed(reportReviewArtifactId),
-    ...(multiSkillArtifactIds
-      ? Object.values(multiSkillArtifactIds).map((artifactId) => runtime.artifacts.verifySealed(artifactId))
-      : []),
-    ...evidenceArtifactIds.map((artifactId) => runtime.artifacts.verifySealed(artifactId)),
-  ]);
-
-  const findingGraph = record(deliverable.findingGraph, 'deliverable.findingGraph');
-  const findings = array(findingGraph.findings, 'deliverable.findingGraph.findings');
-  const recommendations = array(deliverable.recommendations, 'deliverable.recommendations');
-  const review = record(delivered.reportReview, 'reportReview');
-  if (nonBlankString(review.verdict, 'reportReview.verdict') !== 'pass') {
-    throw new Error('real smoke requires a passed automated Review Artifact');
-  }
-  const automatedReview = verifyAutomatedReviewArtifactReceipt({
-    artifactId: reportReviewArtifactId,
-    automated: true,
-    verdict: review.verdict,
-  });
-  const visualAssetCount = 'visualAssetManifests' in delivered && Array.isArray(delivered.visualAssetManifests)
-    ? delivered.visualAssetManifests.length
-    : 0;
-  const gapArtifactIds = [...new Set(steps.flatMap((step) => (
-    step.state === 'succeeded'
-    && step.toolProvenance?.gapSummary !== undefined
-    && typeof step.outputArtifactId === 'string'
-      ? [step.outputArtifactId]
-      : []
-  )))];
-  const gapArtifacts = await Promise.all(gapArtifactIds.map(async (artifactId) => {
-    const artifact = await runtime.artifacts.readVerifiedJson<unknown>(artifactId);
-    return [artifactId, artifact.value] as const;
-  }));
-  verifySmokeGapSummaryHashes({
-    steps,
-    toolOutputsByArtifactId: Object.fromEntries(gapArtifacts),
-  });
-  const initialEvidence = summarizeSmokeEvidence({
-    plan: selectedCandidate.plan,
-    steps,
-    delivered,
-  });
-  await Promise.all([
-    ...initialEvidence.toolArtifactIds,
-    ...initialEvidence.visualAssetIds,
-    ...initialEvidence.visualAssetManifestIds,
-  ].map((artifactId) => runtime.artifacts.verifySealed(artifactId)));
-  if (initialEvidence.browserCaptureCount > 0) {
-    const browserStep = steps.find((step) => (
-      step.actorType === 'tool'
-      && step.actorId === 'playwright-page-capture'
-      && step.state === 'succeeded'
-    ));
-    const browserArtifactId = nonBlankString(
-      browserStep?.outputArtifactId,
-      'Playwright Tool Artifact id',
+  if (execution.finalReportArtifactId) {
+    const attemptId = nonBlankString(execution.attemptId, 'attemptId');
+    const finalReportArtifactId = nonBlankString(
+      execution.finalReportArtifactId,
+      'finalReportArtifactId',
     );
-    const browserArtifact = await runtime.artifacts.readVerifiedJson<unknown>(browserArtifactId);
-    const browserOutput = record(
-      record(browserArtifact.value, 'Playwright Tool Artifact').output,
-      'Playwright Tool Artifact.output',
+    const evidenceManifestArtifactId = nonBlankString(
+      execution.evidenceManifestArtifactId,
+      'evidenceManifestArtifactId',
     );
+    const verifiedFinal = await runtime.artifacts.readVerifiedJson<unknown>(finalReportArtifactId);
+    const finalReport = parseNativeFinalReport(verifiedFinal.value);
     if (
-      browserOutput.security_profile !== 'browser-controls-v1'
-      || array(browserOutput.captures, 'Playwright Tool Artifact.output.captures').length
-        < initialEvidence.browserCaptureCount
-    ) {
-      throw new Error('Playwright Tool Artifact does not prove the browser-controls-v1 capture');
+      verifiedFinal.artifact.state !== 'SEALED'
+      || verifiedFinal.artifact.kind !== 'final_report'
+      || finalReport.taskId !== taskId
+      || finalReport.planVersionId !== selected.planVersionId
+      || finalReport.attemptId !== attemptId
+    ) throw new Error('native NativeFinalReport binding is invalid');
+    const allArtifacts = await runtime.repository.listArtifactsForAttempt({
+      taskId,
+      planVersionId: selected.planVersionId,
+      attemptId,
+    });
+    const forbiddenKinds = new Set([
+      'deliverable', 'report_review', 'report_document', 'report_package',
+      'cross_skill_review', 'contribution_ledger', 'contribution_summary',
+    ]);
+    if (allArtifacts.some(({ kind }) => forbiddenKinds.has(kind))) {
+      throw new Error('native smoke wrote a legacy report Artifact');
     }
+    const skillResultArtifacts = allArtifacts
+      .filter(({ kind, state, schemaVersion }) => (
+        kind === 'skill_result' && state === 'SEALED' && schemaVersion === 'native-skill-result-v1'
+      ))
+      .sort((left, right) => left.storageUri.localeCompare(right.storageUri));
+    const skillResults = await Promise.all(skillResultArtifacts.map(async (artifact) => (
+      parseNativeSkillResult((await runtime.artifacts.readVerifiedJson<unknown>(artifact.id)).value)
+    )));
+    if (
+      skillResults.length !== finalReport.skillResults.length
+      || finalReport.skillResults.some((reference) => !skillResults.some((report) => (
+        report.invocationId === reference.invocationId && report.skillId === reference.skillId
+      )))
+    ) throw new Error('native smoke NativeSkillResult inventory is invalid');
+    const verifiedEvidence = await runtime.artifacts.readVerifiedJson<unknown>(
+      evidenceManifestArtifactId,
+    );
+    const evidenceManifest = record(verifiedEvidence.value, 'evidenceManifest');
+    const evidenceEntries = array(evidenceManifest.entries, 'evidenceManifest.entries')
+      .map((entry, index) => record(entry, `evidenceManifest.entries[${index}]`));
+    const steps = await runtime.repository.listExecutionSteps(attemptId);
+    requireActorCoverage(steps, selectedCandidate.plan.steps);
+    const tavilyStep = steps.find(({ actorId, state }) => (
+      actorId === 'tavily-web-search' && state === 'succeeded'
+    ));
+    if (!tavilyStep?.toolProvenance) throw new Error('native smoke has no Tavily receipt');
+    const modelCalls = await runtime.repository.listModelCalls(attemptId);
+    const synthesisCallCount = modelCalls.filter(({ stage, status }) => (
+      (stage === 'native_multi_synthesis' || stage === 'native_default_report') && status === 'succeeded'
+    )).length;
+    let singlePolicyKind: string | null = null;
+    if (finalReport.mode === 'single_skill') {
+      const planRecord = record(selectedCandidate.plan, 'plan');
+      const invocation = record(array(planRecord.skill_invocations, 'plan.skill_invocations')[0], 'plan.skill_invocations[0]');
+      const runSpec = record(invocation.run_spec, 'plan.skill_invocations[0].run_spec');
+      const policy = record(runSpec.report_policy, 'plan.skill_invocations[0].run_spec.report_policy');
+      singlePolicyKind = nonBlankString(policy.kind, 'report policy kind');
+    }
+    const expectedReportCalls = finalReport.mode === 'multi_skill'
+      || singlePolicyKind === 'default_llm'
+      ? 1
+      : 0;
+    if (synthesisCallCount !== expectedReportCalls) {
+      throw new Error('native smoke report-writer call count is invalid');
+    }
+    const history = await runtime.getFinalReport(taskId, seedUser.id);
+    if (!history || history.artifact.id !== finalReportArtifactId) {
+      throw new Error('native smoke historical reread failed');
+    }
+    const visualAssetIds = allArtifacts
+      .filter(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED')
+      .map(({ id }) => id)
+      .sort();
+    const visualManifestArtifacts = allArtifacts
+      .filter(({ kind, state }) => kind === 'visual_asset_manifest' && state === 'SEALED')
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const visualAssetManifestIds = visualManifestArtifacts.map(({ id }) => id);
+    const visualManifests = await Promise.all(visualManifestArtifacts.map(async (artifact) => (
+      record((await runtime.artifacts.readVerifiedJson<unknown>(artifact.id)).value, `visual manifest ${artifact.id}`)
+    )));
+    const browserCaptureIds: string[] = [];
+    const browserCaptureHosts: string[] = [];
+    const chartRenderIds: string[] = [];
+    for (const manifest of visualManifests) {
+      const assetId = nonBlankString(manifest.assetId, 'visual manifest assetId');
+      const source = record(manifest.source, `visual manifest ${assetId}.source`);
+      if (source.kind === 'browser_capture') {
+        browserCaptureIds.push(assetId);
+        const sourceUrl = canonicalHttpsUrl(nonBlankString(source.sourcePageUrl, 'browser source URL'));
+        if (!sourceUrl) throw new Error(`browser capture ${assetId} has an invalid source URL`);
+        browserCaptureHosts.push(new URL(sourceUrl).hostname);
+      } else if (source.kind === 'chart_render') {
+        chartRenderIds.push(assetId);
+      }
+    }
+    const browserToolVerified = steps.some(({ actorId, state, toolProvenance }) => (
+      actorId === 'playwright-page-capture'
+      && state === 'succeeded'
+      && toolProvenance?.executionMode === 'real'
+      && toolProvenance?.implementationId === 'playwright-page-capture-v1'
+    ));
+    const screenshotEvidenceIds = evidenceEntries
+      .filter(({ kind }) => kind === 'screenshot')
+      .map(({ id }) => nonBlankString(id, 'screenshot evidence id'))
+      .sort();
+    const sources = uniqueHttpsUrls(finalReport.sources.flatMap(({ url }) => url ? [url] : []));
+    const firstModelCall = modelCalls.find(({ status }) => status === 'succeeded');
+    const receipt: NativeSmokeReceipt = {
+      contract: 'native',
+      scenarioId: scenario.id,
+      profile: scenario.profile,
+      taskType: scenario.taskType,
+      deliverableType: scenario.expectedDeliverableType,
+      taskId,
+      planVersionId: selected.planVersionId,
+      attemptId,
+      finalReportArtifactId,
+      skillResultArtifactIds: skillResultArtifacts.map(({ id }) => id),
+      evidenceManifestArtifactId,
+      evidenceArtifactIds: evidenceEntries.map(({ artifactId }) => nonBlankString(artifactId, 'evidence artifact id')),
+      toolReceipt: { actorId: tavilyStep.actorId, ...tavilyStep.toolProvenance },
+      counts: {
+        evidence: evidenceEntries.length,
+        findings: Math.max(1, skillResults.length),
+        recommendations: 1,
+      },
+      sources,
+      provider: firstModelCall?.provider ?? 'unknown',
+      requestedModel: firstModelCall?.requestedModel ?? 'unknown',
+      actualModel: firstModelCall?.actualModel ?? 'unknown',
+      coreTool: 'tavily-web-search',
+      reportSealed: true,
+      synthesisCallCount,
+      evidenceCount: evidenceEntries.length,
+      visualAssetCount: visualAssetIds.length,
+      gapCount: execution.gapCount ?? finalReport.gaps.length,
+      toolArtifactIds: steps.flatMap(({ actorType, state, outputArtifactId }) => (
+        actorType === 'tool' && state === 'succeeded' && outputArtifactId ? [outputArtifactId] : []
+      )),
+      visualAssetIds,
+      visualAssetManifestIds,
+      browserCaptureCount: browserCaptureIds.length,
+      browserCaptureIds: browserCaptureIds.sort(),
+      browserCaptureHosts: [...new Set(browserCaptureHosts)].sort(),
+      screenshotEvidenceCount: screenshotEvidenceIds.length,
+      screenshotEvidenceIds,
+      chartRenderCount: chartRenderIds.length,
+      chartRenderIds: chartRenderIds.sort(),
+      browserToolVerified,
+      historyRereadVerified: true,
+    };
+    reportProgress({ stage: 'completed', message: 'native smoke completed', taskId, attemptId });
+    return receipt;
   }
-  const [rereadPlan, rereadSteps, rereadDelivered, rereadTask, rereadReportPackage] = await Promise.all([
-    runtime.repository.getActivePlan(taskId),
-    runtime.repository.listExecutionSteps(attemptId),
-    runtime.getDeliverable(taskId, seedUser.id),
-    runtime.repository.getTaskDetail(taskId),
-    runtime.repository.findSealedArtifact({ taskId, attemptId, kind: 'report_package' }),
-  ]);
-  if (
-    !rereadPlan
-    || rereadPlan.planVersionId !== selected.planVersionId
-    || !rereadDelivered
-    || !rereadTask
-    || rereadTask.activePlanVersionId !== selected.planVersionId
-    || rereadTask.currentAttemptId !== attemptId
-    || rereadReportPackage?.id !== reportPackageArtifactId
-  ) {
-    throw new Error('historical reread did not preserve task, plan, attempt, and Report Package identity');
-  }
-  const verifiedEvidence = verifySmokeHistoryReread({
-    executionGapCount: finiteNumber(execution.gapCount, 'execution.gapCount'),
-    initial: initialEvidence,
-    reread: summarizeSmokeEvidence({
-      plan: rereadPlan.plan,
-      steps: rereadSteps,
-      delivered: rereadDelivered,
-    }),
-    requireBrowserEvidence,
-  });
-  const expectedTaskState = verifiedEvidence.gapCount > 0 ? 'completed_with_gaps' : 'completed';
-  if (rereadTask.state !== expectedTaskState) {
-    throw new Error('historical task state does not match its gapCount');
-  }
-  const provenance = realToolStep.toolProvenance;
-  reportProgress({
-    stage: 'completed',
-    message: 'real smoke completed and verified',
-    taskId,
-    attemptId,
-  });
-  return formatSmokeReceipt({
-    scenarioId: scenario.id,
-    profile: scenario.profile,
-    taskType: finalized.requirement.task_type,
-    deliverableType,
-    taskId,
-    planVersionId: selected.planVersionId,
-    attemptId,
-    reportPackageId: reportPackageArtifactId,
-    visualAssetCount,
-    ...verifiedEvidence,
-    provider: 'gateway',
-    requestedModel: representativeModelCall.requestedModel,
-    actualModel: representativeModelCall.actualModel,
-    coreTool: 'tavily-web-search',
-    packageSealed: verifiedReportPackage.artifact.state === 'SEALED',
-    review: automatedReview,
-    deliverableArtifactId,
-    evidenceManifestArtifactId,
-    evidenceArtifactIds,
-    toolReceipt: {
-      actorId: realToolStep.actorId,
-      declaredAdapterType: provenance.declaredAdapterType,
-      resolvedAdapterType: provenance.resolvedAdapterType,
-      implementationId: provenance.implementationId,
-      executionMode: provenance.executionMode,
-      endpointHost: provenance.endpointHost ?? null,
-      status: 'ok',
-      latencyMs: realToolStep.latencyMs,
-    },
-    counts: {
-      evidence: sources.length,
-      findings: findings.length,
-      recommendations: recommendations.length,
-    },
-    sources,
-  });
+
+  throw new Error('native execution completed without a NativeFinalReport Artifact');
 }
 
 function requireBrowserEvidence(value: string | undefined): boolean {
@@ -1703,13 +1546,8 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
     }
     const scenario = selectSmokeScenario(fixture, profile, input.scenarioId);
-    if (scenario.requireMultiSkill) {
-      if (process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED !== 'true') {
-        throw new Error('multi-Skill real smoke requires MULTI_SKILL_PORTFOLIO_WRITER_ENABLED=true');
-      }
-      if (typeof process.env.VIRTUAL_USER_BASE_URL !== 'string' || !process.env.VIRTUAL_USER_BASE_URL.trim()) {
-        throw new Error('multi-Skill real smoke requires VIRTUAL_USER_BASE_URL');
-      }
+    if (scenario.requireMultiSkill && process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED !== 'true') {
+      throw new Error('multi-Skill real smoke requires MULTI_SKILL_PORTFOLIO_WRITER_ENABLED=true');
     }
     const browserEvidenceRequired = requireBrowserEvidence(
       process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE,
@@ -1746,9 +1584,13 @@ export function safeSmokeErrorMessage(error: unknown): string {
 
 async function main(): Promise<void> {
   try {
-    const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
-      ?? 'tests/fixtures/current-semantic-gold.json';
     const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
+    const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
+      ?? (profile === 'research_synthesis'
+        ? 'tests/fixtures/research-synthesis-real-smoke.json'
+        : profile === 'industry_market_analysis'
+          ? 'tests/fixtures/industry-real-smoke.json'
+          : 'tests/fixtures/current-semantic-gold.json');
     const scenarioId = nonBlankString(process.env.CURRENT_SMOKE_SCENARIO, 'CURRENT_SMOKE_SCENARIO');
     console.log(JSON.stringify(await runCurrentRealSmoke({
       fixturePath,

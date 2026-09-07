@@ -312,7 +312,7 @@ function renderSourceRegister(
 ): string {
   const selected = manifest.entries.filter(({ id }) => component.evidenceIds.includes(id));
   const rows = selected.length > 0
-    ? selected.map((entry) => `<div class="source-row"><span class="source-id">${escapeText(entry.id)}</span><span>${escapeText(entry.evidenceClass)}</span><span>${escapeText(entry.redaction === 'none' ? (entry.sourceUrl ?? `${entry.kind} · ${entry.jsonPointer}`) : `${entry.kind} · ${entry.redaction}`)}</span></div>`).join('')
+    ? selected.map((entry) => `<div class="source-row"><span class="source-id">${escapeText(entry.id)}</span><span>${escapeText(entry.evidenceClass)}</span><span>${escapeText(entry.sourceUrl ?? `${entry.kind} · ${entry.jsonPointer}`)}</span></div>`).join('')
     : '<p>无已绑定 Evidence。</p>';
   return `<div class="showcase-narrative-list">${unitRows(units)}</div><div class="showcase-source-register">${rows}</div>`;
 }
@@ -458,15 +458,8 @@ function assertBindings(
   const simulationIds = new Set(evidenceManifest.entries
     .filter(({ evidenceClass }) => evidenceClass === 'simulation')
     .map(({ id }) => id));
-  const blockedEvidenceIds = new Set(evidenceManifest.entries
-    .filter(({ redaction }) => redaction === 'blocked')
-    .map(({ id }) => id));
   for (const section of spec.sections) {
     for (const component of section.components) {
-      const blockedEvidence = component.evidenceIds.filter((evidenceId) => blockedEvidenceIds.has(evidenceId));
-      if (blockedEvidence.length > 0) {
-        throw new Error(`Blocked Evidence ${blockedEvidence.join(', ')} cannot be rendered in Showcase`);
-      }
       const simulationEvidence = component.evidenceIds.filter((evidenceId) => simulationIds.has(evidenceId));
       if (
         simulationEvidence.length > 0

@@ -19,15 +19,12 @@ import {
   configureFsSafeNative,
   root as openFsSafeRoot,
 } from '@openclaw/fs-safe';
-import {
-  loadSkillRegistry,
-  type SkillRegistryEntry,
-} from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import type { SkillCapability } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import {
   buildRuntime,
   type AgentRuntime,
 } from '../../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
-import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
+import { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { loadEvaluationCases } from './case-loader.ts';
 import {
   addContentOverlayToKnowledge,
@@ -94,7 +91,7 @@ export interface EvaluationRunOptions {
 }
 
 interface EvaluationSkillLoader {
-  listActiveSkills(): SkillRegistryEntry[];
+  listActiveSkills(): SkillCapability[];
   loadSkillBody?(skillId: string): { body: string; hash: string; path: string };
 }
 
@@ -114,10 +111,10 @@ type MakeDirectory = (
 interface EvaluationKbDependencies {
   loadKnowledgeSnapshot?: () => KnowledgeSnapshotResult;
   loadSkillKnowledgeMappings?: (
-    activeSkills: SkillRegistryEntry[],
+    activeSkills: SkillCapability[],
   ) => Map<string, SkillKnowledgeMapping>;
   loadGoldSourceSelections?: (
-    activeSkills: SkillRegistryEntry[],
+    activeSkills: SkillCapability[],
   ) => Map<string, GoldSourceSelection>;
   loadGoldKnowledgeContext?: (
     skillId: string,
@@ -379,7 +376,7 @@ interface PreparedKbRun {
 function prepareKbRun(
   mode: KBMode,
   snapshotId: string | undefined,
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: SkillCapability[],
   dependencies: EvaluationKbDependencies | undefined,
 ): PreparedKbRun | undefined {
   if (mode === 'none') return undefined;
@@ -725,9 +722,9 @@ function failedRecord(
 }
 
 function selectedSkills(
-  activeSkills: SkillRegistryEntry[],
+  activeSkills: SkillCapability[],
   skillId: string | undefined,
-): SkillRegistryEntry[] {
+): SkillCapability[] {
   if (!skillId) return activeSkills;
   const selected = activeSkills.find((skill) => skill.id === skillId);
   if (selected) return [selected];
@@ -1304,7 +1301,7 @@ export function dryRunContentEvaluation(options: EvaluationRunOptions): ContentE
   const kbMode = assertKbMode(options.kbMode);
   const preparedContent = prepareContentOverlay(options, kbMode);
   if (!preparedContent) throw new Error('--dry-run requires --content-overlay');
-  const activeSkills = loadSkillRegistry().skills.filter(({ status }) => status === 'active');
+  const activeSkills = new SkillLoader().listActiveSkills();
   const selected = selectedSkills(activeSkills, options.skillId);
   const snapshot = loadKnowledgeSnapshot().snapshot;
   if (options.kbSnapshotId && options.kbSnapshotId !== snapshot.snapshot_id) {

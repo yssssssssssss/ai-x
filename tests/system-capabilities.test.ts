@@ -26,11 +26,9 @@ test('system capabilities expose live contract and registry identities without l
     const response = await fetch(`http://127.0.0.1:${port}/api/system/capabilities`);
     assert.equal(response.status, 200);
     const body = await response.json() as Record<string, unknown>;
-    assert.deepEqual(body.planContractVersions, [
-      'current-execution-plan-v1',
-      'current-execution-plan-v2',
-      'current-execution-plan-v3',
-    ]);
+    assert.deepEqual(body.planContractVersions, ['native-skill-execution-plan-v1']);
+    assert.deepEqual(body.skillResultVersions, ['native-skill-result-v1']);
+    assert.deepEqual(body.finalReportVersions, ['native-final-report-v1']);
     assert.equal(body.multiSkillPlanWriterEnabled, false);
     assert.equal(body.reportV3WriterEnabled, false);
     assert.equal(body.reportEditorialPlannerV1Enabled, false);
@@ -67,8 +65,8 @@ test('system capabilities expose live contract and registry identities without l
       compositionMode: 'portfolio',
       synthesizerSkillId: 'research-strategy-synthesis',
     });
-    assert.ok((body.compiledSkills as string[]).includes('generate-research-plan'));
-    assert.ok((body.compiledSkills as string[]).includes('research-strategy-synthesis'));
+    assert.ok((body.installedSkills as string[]).includes('generate-research-plan'));
+    assert.ok((body.installedSkills as string[]).includes('research-strategy-synthesis'));
     const build = body.build as Record<string, unknown>;
     assert.match(String(build.id), /\S/u);
     assert.match(String(build.configurationHash), /^sha256:[a-f0-9]{64}$/u);

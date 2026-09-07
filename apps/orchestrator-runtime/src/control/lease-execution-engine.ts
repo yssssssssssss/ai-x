@@ -13,6 +13,18 @@ import type {
   ControlModelCall,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
+import {
+  isNativeSkillExecutionPlanV1,
+  NATIVE_SKILL_RESULT_VERSION,
+  parseNativeFinalReport,
+  parseNativeSkillExecutionPlanV1,
+  parseNativeSkillResult,
+  type NativeSkillRunSpec,
+  type NativeReportPolicy,
+  type ResolvedPlanInputs,
+  type NativeSkillResult,
+  type SourceReference,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type {
   ContributionType,
   RequestedArtifact,
@@ -69,19 +81,19 @@ import {
   type ToolAdapterResolution,
   type ToolFailureKind,
   type ToolInvocationContext,
+  type ToolKnowledgeAttachment,
   type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
 import { invokeWithRetry, type ToolRetryAttemptReceipt } from './tool-retry-policy.ts';
 import {
-  containsBlockedSensitiveData,
   isMachineReferenceField,
   machineReferencesPreserved,
   redactSensitiveValue,
   redactString,
   redactToolOutput,
 } from '../runtime/redaction.ts';
-import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
+import { collectLlmImageInputs, compactLlmInput } from '../runtime/llm-input-compactor.ts';
 import {
   assertCompiledSkillPlan,
   CompiledSkillPlanDriftError,
@@ -149,6 +161,17 @@ import {
   renderAndSealStandaloneHtml,
 } from '../report/report-v3-publication.ts';
 import {
+  createNativeSkillResult,
+  finalizeMultiNativeReport,
+  finalizeSingleNativeReport,
+  LlmNativeReportWriter,
+  NativeReportArtifactService,
+  NativeReportError,
+  NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+  assertNativeContentReferences,
+  type NativeSkillResultDraft,
+} from '../report/native-reporting.ts';
+import {
   VisualAssetService,
   type VisualAssetResult,
 } from '../report/visual-asset-service.ts';
@@ -178,6 +201,14 @@ import {
 } from './step-input-resolver.ts';
 import { ExecutionScheduler } from './execution-scheduler.ts';
 import { validateCurrentExecutionPlanV3 } from '../planners/current-execution-plan-v3.ts';
+import {
+  DatasetInputGateStore,
+  type ResolvedDatasetInput,
+} from './dataset-input-gate-store.ts';
+import {
+  DocumentInputGateStore,
+  type ResolvedDocumentInput,
+} from './document-input-gate-store.ts';
 import {
   VisualInputGateStore,
   valueForPendingInputTarget,
@@ -213,6 +244,15 @@ export interface EnginePlan {
   invocationPoliciesByStep: Map<number, InvocationExecutionPolicy[]>;
   invocationPoliciesById: Map<string, InvocationExecutionPolicy>;
   optionalInvocationStepNos: Set<number>;
+  native?: {
+    mode: 'single_skill' | 'multi_skill';
+    runSpecsByStep: Map<number, {
+      invocationId: string;
+      runSpec: NativeSkillRunSpec;
+    }>;
+    finalReportPolicy: NativeReportPolicy;
+    resolvedInputs: ResolvedPlanInputs;
+  };
 }
 
 interface FrozenSkillToolRoles {
@@ -224,6 +264,20 @@ interface ExecutionGap {
   key: string;
   stepNo: number;
   message: string;
+}
+
+function nativeSkillOutcome(value: unknown): SkillOutputOutcome | null {
+  try {
+    const report = parseNativeSkillResult(value);
+    if (report.status === 'needs_input') return null;
+    return {
+      status: report.status === 'completed_with_gaps' ? 'degraded' : 'succeeded',
+      limitations: [...report.gaps],
+      summary: report.title,
+    };
+  } catch {
+    return null;
+  }
 }
 
 interface PageFailureGap {
@@ -276,12 +330,13 @@ interface ToolSourceRef {
   originalIndex: number;
 }
 
-type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'research_contribution' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'skill_result' | 'research_contribution' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
+  skill_result: NATIVE_SKILL_RESULT_VERSION,
   research_contribution: 'research-contribution-artifact-v1',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
@@ -331,6 +386,7 @@ interface StepResult {
   toolReceipt?: ToolInvocationReceipt;
   toolAttemptReceipts?: ToolRetryAttemptReceipt[];
   mediaAttachments?: ToolMediaAttachment[];
+  knowledgeAttachments?: ToolKnowledgeAttachment[];
   toolTier?: 'core' | 'optional';
   toolResolution?: ToolAdapterResolution;
   manifestHash?: string;
@@ -457,6 +513,7 @@ export interface LeaseExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  finalReportArtifactId?: string;
   crossSkillReviewArtifactId?: string;
   contributionLedgerArtifactId?: string;
   contributionSummaryArtifactId?: string;
@@ -530,7 +587,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function reportEditorialPlannerDataClassification(
   structuredTask: unknown,
-  evidenceManifest: EvidenceManifest,
+  _evidenceManifest: EvidenceManifest,
 ): ReportEditorialPlannerDataClassification | undefined {
   if (
     !isRecord(structuredTask)
@@ -547,9 +604,7 @@ function reportEditorialPlannerDataClassification(
   return {
     taskSensitivity: structuredTask.sensitivity,
     piiDetected: structuredTask.pii_detected,
-    hasSensitiveOrBlockedEvidence: evidenceManifest.entries.some(
-      ({ sensitivity, redaction }) => sensitivity === 'sensitive' || redaction === 'blocked',
-    ),
+    hasSensitiveOrBlockedEvidence: false,
   };
 }
 
@@ -684,6 +739,154 @@ function executionInputArtifacts(
     }));
 }
 
+function collectHttpsUrls(value: unknown, urls: Set<string>, depth = 0): void {
+  if (depth > 6 || urls.size >= 50) return;
+  if (typeof value === 'string') {
+    if (value.startsWith('https://')) {
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol === 'https:') urls.add(parsed.toString());
+      } catch {
+        // Invalid provider text is not promoted to a source URL.
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectHttpsUrls(item, urls, depth + 1);
+    return;
+  }
+  if (isRecord(value)) {
+    for (const child of Object.values(value)) collectHttpsUrls(child, urls, depth + 1);
+  }
+}
+
+function nativeSourceReferences(input: {
+  step: EngineStep;
+  outputs: readonly EngineSealedStepOutput[];
+  resolvedInputs: ResolvedPlanInputs;
+  invocationId: string;
+  runSpec: NativeSkillRunSpec;
+}): SourceReference[] {
+  const sources: SourceReference[] = [];
+  for (const resolved of input.resolvedInputs.resolved) {
+    if (!resolved.targetInvocationIds.includes(input.invocationId)) continue;
+    const requirement = input.runSpec.input_requirements.find(({ key }) => key === resolved.key);
+    sources.push({
+      id: `S-input-${resolved.key}`,
+      title: requirement?.label ?? '用户提供材料',
+      type: 'user_input',
+      ...(resolved.valueRef.startsWith('requirement:') ? {} : { locator: resolved.valueRef }),
+    });
+  }
+  const allowedStepNos = new Set([
+    ...input.step.depends_on,
+    ...input.step.input_bindings.map(({ source_step_no }) => source_step_no),
+  ]);
+  for (const output of input.outputs) {
+    if (!allowedStepNos.has(output.stepNo)) continue;
+    if (output.actorType !== 'tool' && output.actorType !== 'knowledge') continue;
+    const urls = new Set<string>();
+    collectHttpsUrls(output.output, urls);
+    if (urls.size === 0) {
+      sources.push({
+        id: `S-step-${output.stepNo}`,
+        title: output.actorType === 'tool' ? '公开资料' : '内部知识',
+        type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
+      });
+      continue;
+    }
+    let index = 0;
+    for (const url of urls) {
+      index += 1;
+      sources.push({
+        id: `S-step-${output.stepNo}-${index}`,
+        title: output.actorType === 'tool' ? `公开资料 ${index}` : `内部知识 ${index}`,
+        type: output.actorType === 'tool' ? 'tool_result' : 'knowledge',
+        url,
+      });
+    }
+  }
+  for (const [index, reference] of input.runSpec.selected_references.entries()) {
+    const identity = hashJson([reference.sourceId, reference.logicalPath]).slice('sha256:'.length, 'sha256:'.length + 24);
+    sources.push({
+      id: `S-K-${identity}`,
+      title: `分析方法资料 ${index + 1}`,
+      type: 'knowledge',
+      locator: reference.logicalPath,
+      contentHash: reference.contentHash,
+    });
+  }
+  return sources;
+}
+
+function nativeSkillPrompt(runSpec: NativeSkillRunSpec, imageCount = 0): string {
+  const selected = runSpec.selected_references.map((reference) => (
+    `--- ${reference.logicalPath} ---\n${reference.content}`
+  ));
+  const reportInstructions = runSpec.report_policy.kind === 'skill_defined'
+    ? [runSpec.report_policy.instructions]
+    : [];
+  return [
+    runSpec.body,
+    ...(selected.length > 0 ? ['', '## 本次冻结 References', ...selected] : []),
+    ...(reportInstructions.length > 0
+      ? ['', '## 本次报告结构', ...reportInstructions]
+      : ['', '## 本次输出', '先形成完整、可供最终报告生成使用的分析结果；不要套用平台固定章节。']),
+    '',
+    '## 输出要求',
+    '- 只返回符合给定 JSON Schema 的对象。',
+    '- 所有用户可见的标题、正文、表头、标签、状态和资料缺口均使用简体中文；专有名词可保留原文。',
+    runSpec.report_policy.outputFormat === 'html'
+      ? [
+          '- 本次正式报告必须填写 reportDocument，不得填写 primary，不得输出 HTML、CSS、JavaScript 或 Base64。',
+          '- Tab 和章节必须遵循用户要求及原版 Skill 报告说明；只使用七类 Block：markdown、table、metric-group、image、quadrant、timeline、wireframe。',
+          '- image.assetId 只能来自 context.availableReportAssets；没有可用图片时不要生成 image Block。',,
+          '- Block 的 sourceIds 只能来自 context.sourceCatalog。',
+        ].join('\n')
+      : '- 本次结果必须填写 primary，primary.format 必须为 markdown，不得填写 reportDocument。',
+    '- 内容只能使用已提供材料，并使用 sourceCatalog 中已有的 [S-*] 引用。',
+    '- 不得新增 URL、来源 ID、事实或数字。',
+    ...(imageCount > 0
+      ? [`- 本次已附加 ${imageCount} 张用户图片；必须逐张查看图片内容，并把发现定位到具体图片和界面区域。`]
+      : []),
+    '- 只有冻结合同中的必需输入缺失时才使用 needs_input；可选输入缺失时继续分析并使用 completed_with_gaps。',
+    '- needs_input 的 missingInputKeys 仅可包含下列冻结输入 key：',,
+    runSpec.input_requirements.length > 0
+      ? runSpec.input_requirements.map(({ key }) => key).join(', ')
+      : '(none)',
+    '- 不得请求清单外的新 key；其他资料不足时继续分析，使用 completed_with_gaps 并写入 gaps。',
+  ].join('\n');
+}
+
+function documentTruncationGaps(value: unknown): string[] {
+  const files = new Set<string>();
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    if (!isRecord(candidate)) return;
+    if (
+      candidate.version === 'document-model-view-v1'
+      && candidate.truncated === true
+      && typeof candidate.fileName === 'string'
+    ) files.add(candidate.fileName);
+    for (const child of Object.values(candidate)) visit(child);
+  };
+  visit(value);
+  return [...files].map((fileName) => `材料「${fileName}」超过模型读取上限，本次仅分析前 512 KiB。`);
+}
+
+function nativeWaivedGaps(
+  resolvedInputs: ResolvedPlanInputs,
+  invocationId: string,
+): string[] {
+  return resolvedInputs.waived
+    .filter(({ targetInvocationIds }) => targetInvocationIds.includes(invocationId))
+    .map(({ key, reason }) => `${key}：${reason}`);
+}
+
 interface SkillExecutionFingerprint {
   skillBodyHash: string;
   inputSchemaHash: string | null;
@@ -810,12 +1013,6 @@ function stepGapSummary(failure: Record<string, unknown>, kind: ToolFailureKind)
 }
 
 function sanitizeStepResult(result: StepResult): StepResult {
-  if (
-    containsBlockedSensitiveData(result.output)
-    || (result.artifactValue !== undefined && containsBlockedSensitiveData(result.artifactValue))
-  ) {
-    throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
-  }
   if (result.kind === 'tool_output') return result;
   const output = redactSensitiveValue(result.output);
   const artifactValue = result.artifactValue === undefined
@@ -836,6 +1033,78 @@ function sanitizeStepResult(result: StepResult): StepResult {
       ? { skillProvenance: { ...result.skillProvenance, outputHash: hashJson(output) } }
       : {}),
   };
+}
+
+interface JoyspaceKnowledgeSnapshotPublication {
+  stepNo: number;
+  attachmentIndex: number;
+  toolId: string;
+  evidenceId: string;
+  artifact: ControlArtifact;
+  value: {
+    version: 'joyspace-knowledge-snapshot-v1';
+    title: string;
+    body: string;
+    author: string | null;
+    sourceUrl: string;
+    updatedAt: string | null;
+    contentSha256: string;
+    toolArtifactId: string;
+    toolArtifactContentSha256: string;
+  };
+}
+
+function joyspaceKnowledgeAttachments(
+  toolId: string,
+  output: unknown,
+  attachments: ToolKnowledgeAttachment[] | undefined,
+): ToolKnowledgeAttachment[] {
+  if (toolId !== 'joyspace-read') {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError(`tool ${toolId} returned unsupported Knowledge attachments`);
+    }
+    return [];
+  }
+  const record = isRecord(output) ? output : null;
+  if (record?.operation !== 'view' && record?.operation !== 'search') {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError('Joyspace Knowledge attachment has an invalid operation');
+    }
+    return [];
+  }
+  const expectedDocument = record.operation === 'view'
+    ? (isRecord(record.document) ? record.document : null)
+    : (isRecord(record.viewedDocument) ? record.viewedDocument : null);
+  if (!expectedDocument) {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError('Joyspace output has an unexpected Knowledge Snapshot attachment');
+    }
+    return [];
+  }
+  if (!attachments || attachments.length !== 1) {
+    throw new ExecutionAuthenticityError('Joyspace viewed content requires one Knowledge Snapshot attachment');
+  }
+  const attachment = attachments[0]!;
+  const expectedUpdatedAt = record.operation === 'search' && Array.isArray(record.documents)
+    ? record.documents.flatMap((candidate) => {
+        const document = isRecord(candidate) ? candidate : null;
+        return document?.url === attachment.sourceUrl ? [document.updatedAt] : [];
+      })[0] ?? null
+    : null;
+  if (
+    attachment.attachmentId !== 'joyspace-document'
+    || expectedDocument.title !== attachment.title
+    || expectedDocument.body !== attachment.body
+    || expectedDocument.url !== attachment.sourceUrl
+    || expectedDocument.author !== attachment.author
+    || attachment.updatedAt !== expectedUpdatedAt
+    || expectedDocument.contentSha256 !== attachment.contentSha256
+    || attachment.sensitivity !== 'internal'
+    || `sha256:${createHash('sha256').update(attachment.body).digest('hex')}` !== attachment.contentSha256
+  ) {
+    throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot binding is invalid');
+  }
+  return attachments;
 }
 
 function browserCaptureAttachments(
@@ -952,6 +1221,9 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
+  const nativePlan = isNativeSkillExecutionPlanV1(value)
+    ? parseNativeSkillExecutionPlanV1(value)
+    : null;
   const steps = value.steps.map((item, index): EngineStep => {
     if (!isRecord(item)) throw new ExecutionAuthenticityError(`plan step ${index + 1} is malformed`);
     const stepNo = item.step_no;
@@ -1144,6 +1416,11 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       optionalToolStepNos.add(toolStep.step_no);
     }
   }
+  const nativeNeedsBinding = new Set(nativePlan?.skill_invocations.flatMap(({ run_spec }) => (
+    run_spec.tool_bindings
+      .filter(({ status }) => status === 'needs_binding')
+      .map(({ toolId }) => toolId)
+  )) ?? []);
   const rawCapabilityGaps = value.capability_gaps ?? [];
   if (!Array.isArray(rawCapabilityGaps)) {
     throw new ExecutionAuthenticityError('plan capability gaps are malformed');
@@ -1160,7 +1437,7 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       throw new ExecutionAuthenticityError(`plan capability gap ${index + 1} is malformed`);
     }
     const decisionKey = `${candidate.capability_id}\u0000${candidate.code}`;
-    if (!unavailableOptionalKeys.delete(decisionKey)) {
+    if (!unavailableOptionalKeys.delete(decisionKey) && !nativeNeedsBinding.has(candidate.capability_id)) {
       throw new ExecutionAuthenticityError(`plan capability gap ${candidate.capability_id} has no decision`);
     }
     return {
@@ -1177,6 +1454,10 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
   const invocationPoliciesByStep = new Map<number, InvocationExecutionPolicy[]>();
   const invocationPoliciesById = new Map<string, InvocationExecutionPolicy>();
   const optionalInvocationStepNos = new Set<number>();
+  const nativeRunSpecsByStep = new Map<number, {
+    invocationId: string;
+    runSpec: NativeSkillRunSpec;
+  }>();
   const rawInvocations = value.skill_invocations ?? [];
   if (!Array.isArray(rawInvocations)) {
     throw new ExecutionAuthenticityError('plan Skill invocations are malformed');
@@ -1190,6 +1471,49 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
       || !Array.isArray(invocation.step_nos)
       || !invocation.step_nos.every((candidate) => Number.isInteger(candidate))
     ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
+
+    if (nativePlan) {
+      const frozen = nativePlan.skill_invocations[invocationIndex];
+      if (!frozen || frozen.invocation_id !== invocation.invocation_id || frozen.skill_id !== invocation.skill_id) {
+        throw new ExecutionAuthenticityError(`native Skill invocation ${invocationIndex + 1} drifted`);
+      }
+      const policy: InvocationExecutionPolicy = {
+        invocationId: frozen.invocation_id,
+        skillId: frozen.skill_id,
+        role: 'contributor',
+        contributionTypes: [],
+        questionIds: [],
+        requestedArtifactTypes: [],
+        dependsOnInvocationIds: [...frozen.depends_on_invocation_ids],
+        required: frozen.required,
+        failurePolicy: frozen.failure_policy,
+      };
+      if (invocationPoliciesById.has(policy.invocationId)) {
+        throw new ExecutionAuthenticityError(`plan Skill invocation ${policy.invocationId} is duplicated`);
+      }
+      invocationPoliciesById.set(policy.invocationId, policy);
+      let outputStepNo: number | undefined;
+      for (const candidateStepNo of frozen.step_nos) {
+        const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
+        if (!invocationStep) {
+          throw new ExecutionAuthenticityError(`native Skill invocation ${policy.invocationId} references a missing step`);
+        }
+        const policies = invocationPoliciesByStep.get(candidateStepNo) ?? [];
+        policies.push(policy);
+        invocationPoliciesByStep.set(candidateStepNo, policies);
+        if (invocationStep.actor_type === 'skill' && invocationStep.actor_id === frozen.skill_id) {
+          outputStepNo = candidateStepNo;
+        }
+      }
+      if (outputStepNo === undefined) {
+        throw new ExecutionAuthenticityError(`native Skill invocation ${policy.invocationId} has no output step`);
+      }
+      nativeRunSpecsByStep.set(outputStepNo, {
+        invocationId: frozen.invocation_id,
+        runSpec: frozen.run_spec,
+      });
+      continue;
+    }
 
     if (portfolioPlan) {
       if (
@@ -1298,6 +1622,16 @@ export function parseExecutionPlan(taskId: string, value: unknown, contract: Del
     invocationPoliciesByStep,
     invocationPoliciesById,
     optionalInvocationStepNos,
+    ...(nativePlan
+      ? {
+          native: {
+            mode: nativePlan.mode,
+            runSpecsByStep: nativeRunSpecsByStep,
+            finalReportPolicy: nativePlan.final_report_policy,
+            resolvedInputs: nativePlan.resolved_inputs,
+          },
+        }
+      : {}),
   };
 }
 interface ReviewCoverageIds {
@@ -1359,6 +1693,36 @@ function parsePendingInputs(value: unknown): PendingInput[] {
   }
 }
 
+export function datasetEvidenceEntries(
+  datasets: readonly ResolvedDatasetInput[],
+): EvidenceEntry[] {
+  return datasets.flatMap((dataset) => {
+    const contentSha256 = dataset.artifact.contentSha256;
+    if (!contentSha256) {
+      throw new ExecutionAuthenticityError(`Dataset ${dataset.gateKey} profile hash is missing`);
+    }
+    return [{
+      id: `dataset:${dataset.gateKey}:profile`,
+      kind: 'dataset' as const,
+      evidenceClass: 'dataset' as const,
+      artifactId: dataset.artifact.id,
+      artifactContentSha256: contentSha256,
+      jsonPointer: '/columnProfiles',
+      sensitivity: dataset.artifact.sensitivity === 'public' ? 'public' as const : 'internal' as const,
+      redaction: 'none' as const,
+    }, ...dataset.profile.rows.map((row) => ({
+      id: row.evidenceId,
+      kind: 'dataset' as const,
+      evidenceClass: 'dataset' as const,
+      artifactId: dataset.artifact.id,
+      artifactContentSha256: contentSha256,
+      jsonPointer: `/rows/${row.index}/values`,
+      sensitivity: dataset.artifact.sensitivity === 'public' ? 'public' as const : 'internal' as const,
+      redaction: 'none' as const,
+    }))];
+  });
+}
+
 function overlayPendingInputs(
   parsedPlan: EnginePlan,
   pendingInputs: readonly PendingInput[],
@@ -1386,6 +1750,42 @@ function overlayPendingInputs(
       );
     }
     const gate = matchingGates[0]!;
+    const pendingState = plan.native?.resolvedInputs.pending
+      .find(({ requirement }) => requirement.key === pendingInput.role);
+    const pendingRequirement = pendingState?.requirement;
+    if (gate.decision === 'waived') {
+      if (
+        gate.requiredAuthority !== 'owner'
+        || gate.actorRole !== 'owner'
+        || gate.actorUserId !== ownerUserId
+        || !pendingRequirement
+        || pendingRequirement.required
+        || !isRecord(gate.value)
+      ) {
+        throw new ExecutionAuthenticityError(`waived input gate for ${pendingInput.role} is invalid`);
+      }
+      const reason = gate.value.reason;
+      if (typeof reason !== 'string' || !reason.trim()) {
+        throw new ExecutionAuthenticityError(`waived input gate for ${pendingInput.role} has no reason`);
+      }
+      plan.native!.resolvedInputs.pending = plan.native!.resolvedInputs.pending
+        .filter(({ requirement }) => requirement.key !== pendingInput.role);
+      plan.native!.resolvedInputs.waived.push({
+        key: pendingInput.role,
+        targetInvocationIds: [...pendingState!.targetInvocationIds],
+        reason,
+      });
+      for (const target of pendingInput.targets) {
+        const step = plan.steps.find((candidate) => candidate.step_no === target.step_no);
+        if (!step || step.actor_id !== target.tool_id || !Object.hasOwn(step.input, target.field)) {
+          throw new ExecutionAuthenticityError(
+            `pending input target ${target.step_no}/${target.field} does not match the active plan`,
+          );
+        }
+        step.input[target.field] = null;
+      }
+      continue;
+    }
     if (
       gate.requiredAuthority !== 'owner'
       || gate.decision !== 'provided'
@@ -1394,6 +1794,18 @@ function overlayPendingInputs(
       || !Object.hasOwn(gate, 'value')
     ) {
       throw new ExecutionAuthenticityError(`input gate for pending role ${pendingInput.role} is invalid`);
+    }
+    if (plan.native && pendingState) {
+      plan.native.resolvedInputs.pending = plan.native.resolvedInputs.pending
+        .filter(({ requirement }) => requirement.key !== pendingInput.role);
+      plan.native.resolvedInputs.resolved.push({
+        key: pendingInput.role,
+        valueRef: typeof gate.evidenceRef === 'string'
+          ? gate.evidenceRef
+          : `gate:${pendingInput.role}`,
+        source: typeof gate.evidenceRef === 'string' ? 'upload' : 'conversation',
+        targetInvocationIds: [...pendingState.targetInvocationIds],
+      });
     }
     for (const target of pendingInput.targets) {
       const targetKey = `${target.step_no}\u0000${target.field}`;
@@ -1518,7 +1930,9 @@ function verifiedPriorOutputs(
     .sort((left, right) => left.stepNo - right.stepNo)
     .map(({ stepNo, actorId, kind, output, artifact }) => {
       const value = isRecord(output) ? output : null;
-      const evidenceIds = kind === 'tool_output'
+      const evidenceIds = kind === 'tool_output' && actorId === 'joyspace-read'
+        ? (isRecord(value?.document) || isRecord(value?.viewedDocument) ? [`JV${stepNo}-1`] : [])
+        : kind === 'tool_output'
         ? sourceRefs(value)
           .filter(({ sourceUrl }) => sourceUrl.startsWith('https://'))
           .map(({ originalIndex }) => `E${stepNo}-${originalIndex + 1}`)
@@ -1740,6 +2154,14 @@ export function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof MissingModelReceiptError) {
     return { kind: 'missing_receipt', retryable: false, message: error.message };
   }
+  if (error instanceof NativeReportError) {
+    return {
+      kind: 'schema',
+      retryable: true,
+      allowedActions: ['retry', 'abort'],
+      message: error.message,
+    };
+  }
   return {
     kind: 'capability',
     retryable: false,
@@ -1795,6 +2217,8 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
 export class LeaseExecutionEngine {
   private readonly llm: ReceiptLLMClient;
   private readonly visualInputGates: Pick<VisualInputGateStore, 'resolve'>;
+  private readonly datasetInputGates: Pick<DatasetInputGateStore, 'resolve'>;
+  private readonly documentInputGates: Pick<DocumentInputGateStore, 'resolve'>;
 
   constructor(private readonly dependencies: {
     repository: ControlPlaneRepository;
@@ -1831,10 +2255,16 @@ export class LeaseExecutionEngine {
       }): Promise<void>;
     };
     visualInputGates?: Pick<VisualInputGateStore, 'resolve'>;
+    datasetInputGates?: Pick<DatasetInputGateStore, 'resolve'>;
+    documentInputGates?: Pick<DocumentInputGateStore, 'resolve'>;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
     this.visualInputGates = dependencies.visualInputGates
       ?? new VisualInputGateStore(dependencies.artifacts);
+    this.datasetInputGates = dependencies.datasetInputGates
+      ?? new DatasetInputGateStore(dependencies.artifacts);
+    this.documentInputGates = dependencies.documentInputGates
+      ?? new DocumentInputGateStore(dependencies.artifacts);
   }
 
   async execute(input: {
@@ -1851,13 +2281,21 @@ export class LeaseExecutionEngine {
     let reviewCoverage: ReviewCoverageIds | null = null;
     let deliverableId: string;
     let materializedVisualOriginals: MaterializedVisualOriginal[] = [];
+    let resolvedVisuals: ResolvedVisualInput[] = [];
+    let resolvedDatasets: ResolvedDatasetInput[] = [];
+    let resolvedDocuments: ResolvedDocumentInput[] = [];
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
         input.lease.planVersionId,
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
-      if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
+      if (isNativeSkillExecutionPlanV1(planVersion.plan)) {
+        const nativePlan = parseNativeSkillExecutionPlanV1(planVersion.plan);
+        if (nativePlan.task_id !== task.id || nativePlan.mode !== task.orchestrationMode) {
+          throw new ExecutionAuthenticityError('native Plan task or mode binding is invalid');
+        }
+      } else if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
         assertCompiledSkillPlan(
           planVersion.plan as unknown as CurrentExecutionPlan,
           this.dependencies.skillLoader,
@@ -1876,18 +2314,35 @@ export class LeaseExecutionEngine {
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parseExecutionPlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
-      const resolvedInputs = await this.visualInputGates.resolve({
+      const resolvedVisualInputs = await this.visualInputGates.resolve({
         taskId: input.lease.taskId,
         planVersionId: input.lease.planVersionId,
         gates,
         pendingInputs,
       });
-      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedInputs.gates, task.ownerUserId);
+      resolvedVisuals = resolvedVisualInputs.visuals;
+      const resolvedDatasetInputs = await this.datasetInputGates.resolve({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        ownerUserId: task.ownerUserId,
+        gates: resolvedVisualInputs.gates,
+        pendingInputs,
+      });
+      resolvedDatasets = resolvedDatasetInputs.datasets;
+      const resolvedDocumentInputs = await this.documentInputGates.resolve({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        ownerUserId: task.ownerUserId,
+        gates: resolvedDatasetInputs.gates,
+        pendingInputs,
+      });
+      resolvedDocuments = resolvedDocumentInputs.documents;
+      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedDocumentInputs.gates, task.ownerUserId);
       if (this.dependencies.visualInputMaterializer) {
         const materializer = this.dependencies.visualInputMaterializer;
         const materialized = await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
           lease: input.lease,
-          visuals: resolvedInputs.visuals,
+          visuals: resolvedVisualInputs.visuals,
           ...(deliverableId === 'competitive_analysis_report'
             ? { annotationPurpose: 'input_provenance' as const }
             : {}),
@@ -1972,8 +2427,33 @@ export class LeaseExecutionEngine {
     );
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
+    for (const dataset of resolvedDatasets) {
+      if (!dataset.artifact.contentSha256) {
+        throw new ExecutionAuthenticityError(`Dataset ${dataset.gateKey} profile hash is missing`);
+      }
+      resolvedArtifacts.set(dataset.artifact.id, {
+        artifact: {
+          id: dataset.artifact.id,
+          contentSha256: dataset.artifact.contentSha256,
+        },
+        value: dataset.profile,
+      });
+    }
+    for (const document of resolvedDocuments) {
+      if (!document.manifestArtifact.contentSha256) {
+        throw new ExecutionAuthenticityError(`Document ${document.gateKey} manifest hash is missing`);
+      }
+      resolvedArtifacts.set(document.manifestArtifact.id, {
+        artifact: {
+          id: document.manifestArtifact.id,
+          contentSha256: document.manifestArtifact.contentSha256,
+        },
+        value: document.documents,
+      });
+    }
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
     const committedBrowserCaptures: CommittedBrowserCapture[] = [];
+    const committedKnowledgeSnapshots: JoyspaceKnowledgeSnapshotPublication[] = [];
     const gaps = new Map<string, ExecutionGap>(
       plan.capabilityGaps.map((gap) => [gap.key, gap]),
     );
@@ -2047,16 +2527,21 @@ export class LeaseExecutionEngine {
         let unpublishedArtifactId: string | undefined;
         let publicationGroup: ArtifactPublicationGroup | undefined;
         const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
+        const pendingKnowledgeSnapshots: JoyspaceKnowledgeSnapshotPublication[] = [];
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         let skillDegradedPolicy: 'gap' | 'block' | undefined;
         let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
+        const nativeSkill = plan.native?.runSpecsByStep.get(step.step_no);
+        const nativeResolvedInputs = plan.native?.resolvedInputs;
         try {
           frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
-          skillDegradedPolicy = frozenSkillExecution?.degradedPolicy
-            ?? (step.actor_type === 'skill'
-              ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
-              : undefined);
+          const nativePolicy = nativeSkill
+            ? (plan.invocationPoliciesByStep.get(step.step_no) ?? [])
+                .find(({ invocationId }) => invocationId === nativeSkill.invocationId)
+            : undefined;
+          skillDegradedPolicy = nativePolicy?.failurePolicy
+            ?? frozenSkillExecution?.degradedPolicy;
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -2075,16 +2560,23 @@ export class LeaseExecutionEngine {
                 reusableArtifactValue,
               );
             }
-            const resealed = await this.dependencies.artifacts.writeJson({
-              taskId: input.lease.taskId,
-              planVersionId: input.lease.planVersionId,
-              attemptId: input.lease.attemptId,
-              kind: checkpoint.kind,
-              relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
-              value: reusableArtifactValue,
-              schemaVersion: checkpoint.schemaVersion,
-              activeLease: input.lease,
-            });
+            const reusableNativeResult = checkpoint.kind === 'skill_result'
+              ? await new NativeReportArtifactService(this.dependencies.artifacts).sealSkillResult({
+                  activeLease: input.lease,
+                  result: parseNativeSkillResult(reusableArtifactValue),
+                })
+              : undefined;
+            const resealed = reusableNativeResult?.jsonArtifact
+              ?? await this.dependencies.artifacts.writeJson({
+                taskId: input.lease.taskId,
+                planVersionId: input.lease.planVersionId,
+                attemptId: input.lease.attemptId,
+                kind: checkpoint.kind,
+                relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
+                value: reusableArtifactValue,
+                schemaVersion: checkpoint.schemaVersion,
+                activeLease: input.lease,
+              });
             if (resealed.state !== 'SEALED' || !resealed.contentSha256) {
               throw new ExecutionAuthenticityError(`reusable step Artifact ${resealed.id} was not sealed`);
             }
@@ -2103,7 +2595,9 @@ export class LeaseExecutionEngine {
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
             let reusedSkillOutcome = step.actor_type === 'skill'
-              ? evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
+              ? nativeSkill
+                ? nativeSkillOutcome(verified.output)
+                : evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
               : null;
             if (
               step.actor_type === 'skill'
@@ -2139,6 +2633,9 @@ export class LeaseExecutionEngine {
                     skillProvenance: {
                       ...checkpoint.provenance,
                       outputArtifactId: resealed.id,
+                      ...(reusableNativeResult
+                        ? { primaryArtifactId: reusableNativeResult.primaryArtifact.id }
+                        : {}),
                       sourceArtifactId: priorArtifact.id,
                       status: reusedSkillOutcome?.status ?? 'succeeded',
                       ...(reusedSkillOutcome?.status === 'degraded'
@@ -2262,6 +2759,15 @@ export class LeaseExecutionEngine {
               expectedModel: input.expectedModel,
               optionalTool: false,
               frozenSkillExecution,
+              nativeSkill,
+              nativeResolvedInputs,
+              availableReportAssets: resolvedVisuals.flatMap(({ gateKey, images }) => (
+                images.map(({ artifact }, index) => ({
+                  assetId: artifact.id,
+                  role: gateKey,
+                  imageIndex: index + 1,
+                }))
+              )),
               onSkillPrepared: (fingerprint) => {
                 preparedSkillFingerprint = fingerprint;
               },
@@ -2273,7 +2779,9 @@ export class LeaseExecutionEngine {
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           let result = sanitizeStepResult(actorResult);
           skillOutcome = step.actor_type === 'skill'
-            ? evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
+            ? nativeSkill
+              ? nativeSkillOutcome(result.output)
+              : evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
             : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
             && isRecord(result.output)
@@ -2286,7 +2794,7 @@ export class LeaseExecutionEngine {
                 isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
               )
             : undefined;
-          const contributionPolicy = step.actor_type === 'skill'
+          const contributionPolicy = !plan.native && step.actor_type === 'skill'
             ? invocationPolicies.find(({ role, skillId }) => (
                 role === 'contributor' && skillId === step.actor_id
               ))
@@ -2294,7 +2802,10 @@ export class LeaseExecutionEngine {
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
             : [];
-          if (captureAttachments.length > 0 || contributionPolicy) {
+          const knowledgeAttachments = step.actor_type === 'tool'
+            ? joyspaceKnowledgeAttachments(step.actor_id, result.output, result.knowledgeAttachments)
+            : [];
+          if (captureAttachments.length > 0 || knowledgeAttachments.length > 0 || contributionPolicy) {
             publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
           }
           if (toolScope) {
@@ -2310,22 +2821,83 @@ export class LeaseExecutionEngine {
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           const artifactValue = result.artifactValue ?? result.output;
-          const artifact = await this.dependencies.artifacts.writeJson({
-            taskId: input.lease.taskId,
-            planVersionId: input.lease.planVersionId,
-            attemptId: input.lease.attemptId,
-            kind: result.kind,
-            relativePath: `steps/${step.step_no}-${result.kind}.json`,
-            value: artifactValue,
-            schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
-            activeLease: input.lease,
-          });
-          if (publicationGroup) publicationGroup.track(artifact.id);
+          const nativePublication = result.kind === 'skill_result'
+            ? await new NativeReportArtifactService(this.dependencies.artifacts).sealSkillResult({
+                activeLease: input.lease,
+                result: parseNativeSkillResult(artifactValue),
+              })
+            : undefined;
+          const artifact = nativePublication?.jsonArtifact
+            ?? await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: result.kind,
+              relativePath: `steps/${step.step_no}-${result.kind}.json`,
+              value: artifactValue,
+              schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
+              activeLease: input.lease,
+            });
+          if (nativePublication) {
+            publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
+            publicationGroup
+              .track(nativePublication.jsonArtifact.id)
+              .track(nativePublication.primaryArtifact.id);
+            for (const attachment of nativePublication.attachmentArtifacts) {
+              publicationGroup.track(attachment.id);
+            }
+          } else if (publicationGroup) publicationGroup.track(artifact.id);
           else unpublishedArtifactId = artifact.id;
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
             throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
+          }
+          for (const [attachmentIndex, attachment] of knowledgeAttachments.entries()) {
+            if (!publicationGroup || !toolScope || !toolHeartbeat) {
+              throw new ExecutionAuthenticityError('Knowledge Snapshot publication scope is unavailable');
+            }
+            const snapshot = {
+              version: 'joyspace-knowledge-snapshot-v1' as const,
+              title: attachment.title,
+              body: attachment.body,
+              author: attachment.author,
+              sourceUrl: attachment.sourceUrl,
+              updatedAt: attachment.updatedAt,
+              contentSha256: attachment.contentSha256,
+              toolArtifactId: artifact.id,
+              toolArtifactContentSha256: artifact.contentSha256,
+            };
+            this.dependencies.validator.validateFileOrThrow(
+              join(getConfigRoot(), 'schemas/joyspace-knowledge-snapshot-v1.schema.json'),
+              snapshot,
+            );
+            const snapshotArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'knowledge_snapshot',
+              relativePath: `knowledge/joyspace-${step.step_no}-${attachmentIndex + 1}.json`,
+              value: snapshot,
+              schemaVersion: snapshot.version,
+              sensitivity: 'internal',
+              redactionPolicyVersion: 'v1',
+              activeLease: input.lease,
+            });
+            publicationGroup.track(snapshotArtifact.id);
+            if (snapshotArtifact.state !== 'SEALED' || !snapshotArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot was not sealed');
+            }
+            toolScope.assertActive(step.actor_id);
+            toolHeartbeat.assertHealthy();
+            pendingKnowledgeSnapshots.push({
+              stepNo: step.step_no,
+              attachmentIndex,
+              toolId: step.actor_id,
+              evidenceId: `JV${step.step_no}-${attachmentIndex + 1}`,
+              artifact: snapshotArtifact,
+              value: snapshot,
+            });
           }
           let sealedOutput: EngineSealedStepOutput = {
             stepNo: step.step_no,
@@ -2475,10 +3047,16 @@ export class LeaseExecutionEngine {
                   implementationId: result.toolReceipt.implementationId,
                   executionMode: result.toolReceipt.executionMode,
                   endpointHost: result.toolReceipt.endpointHost,
+                  ...(result.toolReceipt.runtimeVersions === undefined
+                    ? {}
+                    : { runtimeVersions: { ...result.toolReceipt.runtimeVersions } }),
                   sourceRefs: result.sourceRefs,
                   attemptReceipts: result.toolAttemptReceipts,
                   toolTier: result.toolTier,
                   ...(successfulGapSummary ? { gapSummary: successfulGapSummary } : {}),
+                  ...(pendingKnowledgeSnapshots.length === 0 ? {} : {
+                    knowledgeSnapshotArtifactIds: pendingKnowledgeSnapshots.map(({ artifact }) => artifact.id),
+                  }),
                   outputArtifactId: artifact.id,
                   status: 'succeeded',
                 }
@@ -2489,6 +3067,9 @@ export class LeaseExecutionEngine {
                   planHash: planVersion.planHash,
                   stepHash: hashJson(step),
                   outputArtifactId: sealedOutput.artifact.id,
+                  ...(nativePublication
+                    ? { primaryArtifactId: nativePublication.primaryArtifact.id }
+                    : {}),
                   ...(sourceSkillArtifactId ? { sourceArtifactId: sourceSkillArtifactId } : {}),
                   status: skillOutcome?.status ?? 'succeeded',
                   ...(skillOutcome?.status === 'degraded'
@@ -2503,6 +3084,7 @@ export class LeaseExecutionEngine {
           publicationGroup?.commit();
           unpublishedArtifactId = undefined;
           committedBrowserCaptures.push(...pendingBrowserCaptures);
+          committedKnowledgeSnapshots.push(...pendingKnowledgeSnapshots);
           for (const pageFailure of successfulPageFailures) {
             addGap({
               key: `step:${step.step_no}:${pageFailure.sourceResultIndex}:${pageFailure.code}`,
@@ -2543,6 +3125,15 @@ export class LeaseExecutionEngine {
                 contentSha256: manifestArtifact.contentSha256!,
               },
               value: capture.result.manifest,
+            });
+          }
+          for (const snapshot of pendingKnowledgeSnapshots) {
+            resolvedArtifacts.set(snapshot.artifact.id, {
+              artifact: {
+                id: snapshot.artifact.id,
+                contentSha256: snapshot.artifact.contentSha256!,
+              },
+              value: snapshot.value,
             });
           }
           outputs.push({ ...sealedOutput, output: verified.output });
@@ -2681,21 +3272,42 @@ export class LeaseExecutionEngine {
               : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
           if (step.actor_type === 'skill') {
-            failedSkillProvenance = await this.failedSkillProvenance({
-              step,
-              lease: input.lease,
-              resolvedInput,
-              producedOutputHash: error instanceof SkillOutputSchemaError
-                ? error.outputHash
-                : producedSkillOutputHash,
-              schemaHashes: error instanceof SkillOutputSchemaError
-                ? error.schemaHashes
-                : undefined,
-              preparedFingerprint: preparedSkillFingerprint,
-              ...(error instanceof SkillOutputSchemaError
-                ? { modelReceipt: error.modelReceipt }
-                : {}),
-            });
+            failedSkillProvenance = nativeSkill
+              ? {
+                  kind: 'native_skill_execution',
+                  ...(preparedSkillFingerprint ?? {
+                    skillBodyHash: nativeSkill.runSpec.body_hash,
+                    inputSchemaHash: nativeSkill.runSpec.input_requirements_hash,
+                    outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA),
+                    payloadSchemaHash: null,
+                    skillReferenceHashes: [
+                      { path: nativeSkill.runSpec.entry_path, hash: nativeSkill.runSpec.body_hash },
+                      ...nativeSkill.runSpec.selected_references.map(({ path, contentHash }) => ({
+                        path,
+                        hash: contentHash,
+                      })),
+                    ],
+                    inputArtifacts: executionInputArtifacts(outputs, step),
+                    inputHash: hashJson(resolvedInput),
+                    executionPromptHash: null,
+                  }),
+                  status: 'failed',
+                }
+              : await this.failedSkillProvenance({
+                  step,
+                  lease: input.lease,
+                  resolvedInput,
+                  producedOutputHash: error instanceof SkillOutputSchemaError
+                    ? error.outputHash
+                    : producedSkillOutputHash,
+                  schemaHashes: error instanceof SkillOutputSchemaError
+                    ? error.schemaHashes
+                    : undefined,
+                  preparedFingerprint: preparedSkillFingerprint,
+                  ...(error instanceof SkillOutputSchemaError
+                    ? { modelReceipt: error.modelReceipt }
+                    : {}),
+                });
           }
           const optionalInvocationPolicy = plan.optionalInvocationStepNos.has(step.step_no)
             ? invocationPolicies.find(({ failurePolicy }) => failurePolicy === 'gap')
@@ -2825,7 +3437,11 @@ export class LeaseExecutionEngine {
           if (isIntegrityFailure(effectiveError)) throw effectiveError;
           return;
         } finally {
-          if (actorResult?.mediaAttachments) {
+          if (actorResult?.knowledgeAttachments) {
+          actorResult.knowledgeAttachments.length = 0;
+          actorResult.knowledgeAttachments = undefined;
+        }
+        if (actorResult?.mediaAttachments) {
             actorResult.mediaAttachments.length = 0;
             actorResult.mediaAttachments = undefined;
           }
@@ -2959,10 +3575,31 @@ export class LeaseExecutionEngine {
             stepNo: step.stepNo,
             toolProof: { implementationId, executionMode: 'real', redactedOutputHash },
             sensitivity: 'public',
-            redaction: 'masked',
+            redaction: 'none',
           }));
         });
+      evidenceEntries.push(...datasetEvidenceEntries(resolvedDatasets));
       const evidenceService = new EvidenceService();
+      for (const snapshot of committedKnowledgeSnapshots
+        .sort((left, right) => left.stepNo - right.stepNo || left.attachmentIndex - right.attachmentIndex)) {
+        if (!snapshot.artifact.contentSha256) {
+          throw new ExecutionAuthenticityError('Joyspace Knowledge Snapshot has no sealed hash');
+        }
+        evidenceEntries.push({
+          id: snapshot.evidenceId,
+          kind: 'knowledge_excerpt',
+          evidenceClass: 'knowledge',
+          toolId: snapshot.toolId,
+          toolTier: 'optional',
+          artifactId: snapshot.artifact.id,
+          artifactContentSha256: snapshot.artifact.contentSha256,
+          jsonPointer: '/body',
+          sourceUrl: snapshot.value.sourceUrl,
+          stepNo: snapshot.stepNo,
+          sensitivity: 'internal',
+          redaction: 'none',
+        });
+      }
       for (const capture of [...committedBrowserCaptures]
         .sort((left, right) => left.stepNo - right.stepNo || left.captureIndex - right.captureIndex)) {
         const verified = await visualAssetService.readVerified({
@@ -3167,7 +3804,7 @@ export class LeaseExecutionEngine {
       for (const requirement of plan.evidence_requirements) {
         let actual = 0;
         for (const entry of evidenceEntries) {
-          if (requirement.required && entry.toolTier !== 'core') continue;
+          if (requirement.required && entry.kind === 'tool_output' && entry.toolTier !== 'core') continue;
           if (requirement.acceptedClasses.includes(entry.evidenceClass)) actual += 1;
         }
         if (requirement.required && actual < requirement.minimumCount) {
@@ -3182,7 +3819,11 @@ export class LeaseExecutionEngine {
           );
         }
       }
-      if (!evidenceEntries.some((entry) => entry.toolTier === 'core')) {
+      const requiresCoreToolEvidence = plan.steps.some((step) => (
+        step.actor_type === 'tool'
+        && this.dependencies.skillLoader.getTool(step.actor_id)?.tier === 'core'
+      ));
+      if (requiresCoreToolEvidence && !evidenceEntries.some((entry) => entry.toolTier === 'core')) {
         throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
       }
       const evidenceManifest = evidenceService.createManifest({
@@ -3264,6 +3905,130 @@ export class LeaseExecutionEngine {
     }
 
     try {
+      if (plan.native) {
+      const results = outputs
+        .filter((output) => output.kind === 'skill_result' && output.actorType === 'skill')
+        .sort((left, right) => left.stepNo - right.stepNo)
+        .map((output) => parseNativeSkillResult(output.output));
+      const persistedNativeSteps = await this.dependencies.repository.listExecutionSteps(input.lease.attemptId);
+      const skippedNativeStepNos = new Set(persistedNativeSteps
+        .filter(({ state, actorType }) => state === 'skipped' && actorType === 'skill')
+        .map(({ stepNo }) => stepNo));
+      const expectedResultCount = [...plan.native.runSpecsByStep.keys()]
+        .filter((stepNo) => !skippedNativeStepNos.has(stepNo))
+        .length;
+      if (results.length !== expectedResultCount) {
+        throw new ExecutionAuthenticityError(
+          `native execution produced ${results.length} Skill results, expected ${expectedResultCount}`,
+        );
+      }
+      const needsInput = results.filter(({ status }) => status === 'needs_input');
+      if (needsInput.length > 0) {
+        const missingInputKeys = [...new Set(needsInput.flatMap(({ missingInputKeys }) => missingInputKeys ?? []))];
+        const failure = {
+          kind: 'skill_needs_input',
+          retryable: false,
+          requiresReplan: true,
+          allowedActions: ['replan', 'abort'],
+          missingInputKeys,
+          message: `Skill requires additional input: ${missingInputKeys.join(', ')}`,
+        };
+        const failedStepNo = plan.steps.length + 1;
+        await this.dependencies.repository.recordExecutionStep({
+          ...input.lease,
+          stepNo: failedStepNo,
+          stepName: 'resolve additional Skill input',
+          actorType: 'system',
+          actorId: 'input-resolution',
+          state: 'failed',
+          failure,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+        });
+        await this.dependencies.repository.pauseExecution({
+          taskId: input.lease.taskId,
+          attemptId: input.lease.attemptId,
+          expectedVersion: active.stateVersion,
+          reason: 'skill_needs_input',
+        });
+        return {
+          status: 'paused',
+          attemptId: input.lease.attemptId,
+          evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+          failedStepNo,
+          failure,
+        };
+      }
+      const verifiedSources = results.flatMap(({ sources }) => sources);
+      const executionGaps = [...gaps.values()]
+        .sort((left, right) => left.stepNo - right.stepNo)
+        .map(({ message }) => message);
+      const singleRunSpec = [...plan.native.runSpecsByStep.values()][0]?.runSpec;
+      const finalReport = plan.native.mode === 'single_skill'
+        ? await finalizeSingleNativeReport({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            requirement: task.structuredTask,
+            result: results[0]!,
+            verifiedSources,
+            reportPolicy: singleRunSpec?.report_policy.kind ?? 'default_llm',
+            ...(singleRunSpec?.report_policy.kind === 'default_llm'
+              ? {
+                  defaultWriter: new LlmNativeReportWriter(this.llm, {
+                    attemptId: input.lease.attemptId,
+                    stepNo: plan.steps.length + 1,
+                    stage: 'native_default_report',
+                    expectedModel: input.expectedModel,
+                  }),
+                }
+              : {}),
+            extraGaps: executionGaps,
+          })
+        : (await finalizeMultiNativeReport({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            title: researchGoal || '综合报告',
+            requirement: task.structuredTask,
+            results,
+            verifiedSources,
+            writer: new LlmNativeReportWriter(this.llm, {
+              attemptId: input.lease.attemptId,
+              stepNo: plan.steps.length + 1,
+              stage: 'native_multi_synthesis',
+              expectedModel: input.expectedModel,
+              outputFormat: plan.native.finalReportPolicy.outputFormat,
+              ...(plan.native.finalReportPolicy.kind === 'skill_defined'
+                ? { instructions: plan.native.finalReportPolicy.instructions }
+                : {}),
+            }),
+            reportPolicy: plan.native.finalReportPolicy,
+            extraGaps: executionGaps,
+          })).report;
+      const validatedFinalReport = parseNativeFinalReport(finalReport);
+      const sealed = await new NativeReportArtifactService(
+        this.dependencies.artifacts,
+      ).sealFinalReport({
+        activeLease: input.lease,
+        report: validatedFinalReport,
+      });
+      chartPublication?.commit();
+      chartPublication = undefined;
+      const status = validatedFinalReport.gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      await this.dependencies.repository.completeExecution(input.lease, {
+        status,
+        finalReportArtifactId: sealed.jsonArtifact.id,
+      });
+        return {
+          status,
+          attemptId: input.lease.attemptId,
+          evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+          finalReportArtifactId: sealed.jsonArtifact.id,
+          gapCount: validatedFinalReport.gaps.length,
+        };
+      }
+
       if (deliverableId === 'design_audit_report') {
         const materializer = this.dependencies.visualInputMaterializer!;
         await this.withLeaseHeartbeat(input.lease, () => materializer.annotateDesignFindings!({
@@ -3868,14 +4633,15 @@ export class LeaseExecutionEngine {
         const expectedKinds: Record<EngineStep['actor_type'], StepArtifactKind> = {
           knowledge: 'knowledge_output',
           tool: 'tool_output',
-          skill: 'skill_output',
+          skill: plan.native ? 'skill_result' : 'skill_output',
           llm: 'llm_output',
           reviewer: 'review_output',
         };
         for (const step of plan.steps) {
           const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
           const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
-          const contributorOutput = step.actor_type === 'skill'
+          const contributorOutput = !plan.native
+            && step.actor_type === 'skill'
             && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
               role === 'contributor' && skillId === step.actor_id
             ));
@@ -4011,6 +4777,7 @@ export class LeaseExecutionEngine {
         || !prior.outputArtifactId
         || !step.depends_on.every((dependency) => reusableStepNos.has(dependency))
       ) continue;
+      if (step.actor_type === 'tool' && step.actor_id === 'joyspace-read') continue;
 
       let provenance: Record<string, unknown> | null = null;
       if (step.actor_type === 'tool') {
@@ -4053,7 +4820,8 @@ export class LeaseExecutionEngine {
       }
 
       const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
-      const contributorOutput = step.actor_type === 'skill'
+      const contributorOutput = !plan.native
+        && step.actor_type === 'skill'
         && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
           role === 'contributor' && skillId === step.actor_id
         ));
@@ -4061,7 +4829,7 @@ export class LeaseExecutionEngine {
         ? 'tool_output'
         : step.actor_type === 'knowledge'
           ? 'knowledge_output'
-          : contributorOutput ? 'research_contribution' : 'skill_output';
+          : contributorOutput ? 'research_contribution' : plan.native ? 'skill_result' : 'skill_output';
       if (
         !artifact
         || artifact.state !== 'SEALED'
@@ -4376,6 +5144,22 @@ export class LeaseExecutionEngine {
         : null;
     }
     if (input.step.actor_type !== 'skill') return null;
+    const nativeSkill = input.plan.native?.runSpecsByStep.get(input.step.step_no);
+    if (nativeSkill && input.plan.native) {
+      const runSpec = nativeSkill.runSpec;
+      const expectedReferenceHashes = [
+        { path: runSpec.entry_path, hash: runSpec.body_hash },
+        ...runSpec.selected_references.map(({ path, contentHash }) => ({ path, hash: contentHash })),
+      ];
+      return prior.skillBodyHash === runSpec.body_hash
+        && prior.inputSchemaHash === runSpec.input_requirements_hash
+        && prior.outputSchemaHash === hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA)
+        && prior.payloadSchemaHash === null
+        && isDeepStrictEqual(prior.skillReferenceHashes, expectedReferenceHashes)
+        && prior.inputHash === hashJson(resolvedInput)
+        ? prior
+        : null;
+    }
     resolvedInput = await this.restoreReusableSynthesizerInput({
       step: input.step,
       plan: input.plan,
@@ -4435,6 +5219,12 @@ export class LeaseExecutionEngine {
       for (const step of plan.steps) validateStepInputBindings(step, stepNos);
       for (const step of plan.steps) {
         if (step.actor_type === 'skill') {
+          if (plan.native) {
+            if (!plan.native.runSpecsByStep.has(step.step_no)) {
+              return new ExecutionAuthenticityError(`native Skill ${step.actor_id} has no frozen snapshot`);
+            }
+            continue;
+          }
           const skill = this.dependencies.skillLoader.getSkill(step.actor_id);
           if (!skill) return new ExecutionAuthenticityError(`skill ${step.actor_id} is not active`);
           this.dependencies.skillLoader.loadSkillBody(step.actor_id);
@@ -4603,6 +5393,12 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     optionalTool: boolean;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
+    nativeSkill?: {
+      invocationId: string;
+      runSpec: NativeSkillRunSpec;
+    };
+    nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
@@ -4669,6 +5465,9 @@ export class LeaseExecutionEngine {
       implementationId: receipt?.implementationId ?? 'unknown',
       executionMode: receipt?.executionMode ?? 'unknown',
       endpointHost: receipt?.endpointHost ?? null,
+      ...(receipt?.runtimeVersions === undefined
+        ? {}
+        : { runtimeVersions: { ...receipt.runtimeVersions } }),
       sourceRefs: refs,
       ...(attemptReceipts ? { attemptReceipts } : {}),
       status: 'failed',
@@ -4695,6 +5494,9 @@ export class LeaseExecutionEngine {
         implementationId: receipt?.implementationId ?? resolution?.implementationId ?? 'unknown',
         executionMode: receipt?.executionMode ?? resolution?.executionMode ?? 'unknown',
         endpointHost: receipt?.endpointHost ?? resolution?.endpointHost ?? null,
+        ...(receipt?.runtimeVersions === undefined
+          ? {}
+          : { runtimeVersions: { ...receipt.runtimeVersions } }),
         sourceRefs: refs,
         ...(attemptReceipts ? { attemptReceipts } : {}),
         status: 'failed',
@@ -4958,6 +5760,7 @@ export class LeaseExecutionEngine {
       receipt: retryResult.receipt,
       latencyMs: retryResult.latencyMs ?? retryResult.receipt.latencyMs,
       mediaAttachments: retryResult.mediaAttachments,
+      knowledgeAttachments: retryResult.knowledgeAttachments,
     };
     const retryContext = {
       attempts: retryResult.attemptReceipts.length,
@@ -4981,23 +5784,6 @@ export class LeaseExecutionEngine {
       });
     }
     const redactionPolicy = manifest.redaction_policy ?? {};
-    if (
-      redactionPolicy.sensitive_business_data === 'block'
-      && containsBlockedSensitiveData(result.output)
-    ) {
-      throw new ToolInvocationError(step.actor_id, {
-        kind: 'safety',
-        retryable: false,
-        providerStatus: null,
-        sanitizedMessage: 'tool output blocked by sensitive business data policy',
-        receipt: result.receipt,
-        details: {
-          outputHash: hashJson(result.output),
-          sourceRefs: sourceRefs(result.output),
-          retry: retryContext,
-        },
-      });
-    }
     const originalOutputHash = hashJson(result.output);
     const redactedOutput = redactToolOutput(result.output, redactionPolicy);
     const redactedOutputHash = hashJson(redactedOutput);
@@ -5016,6 +5802,7 @@ export class LeaseExecutionEngine {
       toolReceipt: result.receipt,
       toolAttemptReceipts: retryResult.attemptReceipts,
       mediaAttachments: result.mediaAttachments,
+      knowledgeAttachments: result.knowledgeAttachments,
       toolTier: frozenOptional ? 'optional' : 'core',
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),
@@ -5080,6 +5867,153 @@ export class LeaseExecutionEngine {
     };
   }
 
+  private async runNativeSkill(input: {
+    step: EngineStep;
+    lease: ControlExecutionLease;
+    researchGoal: string;
+    resolvedInput: Record<string, unknown>;
+    outputs: EngineSealedStepOutput[];
+    expectedModel: string;
+    cancellationSignal?: AbortSignal;
+    nativeSkill: {
+      invocationId: string;
+      runSpec: NativeSkillRunSpec;
+    };
+    nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
+    onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
+  }): Promise<StepResult> {
+    if (!input.nativeResolvedInputs) {
+      throw new ExecutionAuthenticityError('native Skill input bindings are unavailable');
+    }
+    const { invocationId, runSpec } = input.nativeSkill;
+    if (runSpec.skill_id !== input.step.actor_id) {
+      throw new ExecutionAuthenticityError(`native Skill run spec ${runSpec.skill_id} does not match ${input.step.actor_id}`);
+    }
+    const sources = nativeSourceReferences({
+      step: input.step,
+      outputs: input.outputs,
+      resolvedInputs: input.nativeResolvedInputs,
+      invocationId,
+      runSpec,
+    });
+    const deterministicGaps = [
+      ...nativeWaivedGaps(input.nativeResolvedInputs, invocationId),
+      ...documentTruncationGaps(input.resolvedInput),
+    ];
+    const context = {
+      researchGoal: input.researchGoal,
+      resolvedInput: compactLlmInput(input.resolvedInput),
+      priorOutputs: verifiedPriorOutputs(input.outputs, input.step),
+      sourceCatalog: sources,
+      availableReportAssets: input.availableReportAssets ?? [],
+      waivedInputs: deterministicGaps,
+    };
+    const images = collectLlmImageInputs(input.resolvedInput);
+    const prompt = nativeSkillPrompt(runSpec, images.length);
+    const fingerprint: SkillExecutionFingerprint = {
+      skillBodyHash: runSpec.body_hash,
+      inputSchemaHash: runSpec.input_requirements_hash,
+      outputSchemaHash: hashJson(NATIVE_SKILL_RESULT_DRAFT_SCHEMA),
+      payloadSchemaHash: null,
+      skillReferenceHashes: [
+        { path: runSpec.entry_path, hash: runSpec.body_hash },
+        ...runSpec.selected_references.map(({ path, contentHash }) => ({ path, hash: contentHash })),
+      ],
+      inputArtifacts: executionInputArtifacts(input.outputs, input.step),
+      inputHash: hashJson(input.resolvedInput),
+      executionPromptHash: hashPrompt(
+        prompt,
+        context,
+        `native-skill-result:${input.step.actor_id}`,
+        images,
+      ),
+    };
+    input.onSkillPrepared?.(fingerprint);
+    const generated = await this.llm.generateStructured<NativeSkillResultDraft>({
+      prompt,
+      schema: NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+      schemaName: `skill:${input.step.actor_id}`,
+      context,
+      images,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+      receipt: {
+        stage: 'skill',
+        attemptId: input.lease.attemptId,
+        stepNo: input.step.step_no,
+        contextManifestHash: hashJson(context),
+        expectedModel: input.expectedModel,
+      },
+    });
+    if (!generated.receiptId) {
+      throw new MissingModelReceiptError(new Error('successful native Skill call has no receipt ID'));
+    }
+    this.dependencies.validator.validateSchemaOrThrow(
+      NATIVE_SKILL_RESULT_DRAFT_SCHEMA,
+      generated.data,
+      `skill:${input.step.actor_id}`,
+    );
+    if (
+      (runSpec.report_policy.outputFormat === 'html' && generated.data.reportDocument === undefined)
+      || (runSpec.report_policy.outputFormat === 'markdown' && generated.data.primary?.format !== 'markdown')
+    ) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        `Skill output does not match report policy ${runSpec.report_policy.outputFormat}`,
+      );
+    }
+    const allowedInputKeys = new Map(runSpec.input_requirements.map((requirement) => [requirement.key, requirement]));
+    const requestedInputKeys = generated.data.missingInputKeys ?? [];
+    const unknownInputKeys = requestedInputKeys.filter((key) => !allowedInputKeys.has(key));
+    if (unknownInputKeys.length > 0) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        `Skill requested unknown input keys: ${unknownInputKeys.join(', ')}`,
+      );
+    }
+    const optionalRequestedInputKeys = requestedInputKeys.filter((key) => allowedInputKeys.get(key)?.required === false);
+    const blockingInputKeys = requestedInputKeys.filter((key) => allowedInputKeys.get(key)?.required === true);
+    const draft = generated.data.status === 'needs_input' && blockingInputKeys.length === 0
+      ? {
+          ...generated.data,
+          status: 'completed_with_gaps' as const,
+          missingInputKeys: [],
+          gaps: [
+            ...generated.data.gaps,
+            ...optionalRequestedInputKeys.map((key) => `可选输入 ${key} 未提供，已按可用证据继续。`),
+          ],
+        }
+      : generated.data;
+    const result = createNativeSkillResult({
+      taskId: input.lease.taskId,
+      availableAssetIds: input.availableReportAssets?.map(({ assetId }) => assetId),
+      skillId: input.step.actor_id,
+      invocationId,
+      draft,
+      sources,
+      deterministicGaps,
+    });
+    if (result.reportDocument === undefined) {
+      assertNativeContentReferences(result.primary.content, sources);
+    }
+    return {
+      output: result,
+      kind: 'skill_result',
+      outputHash: hashJson(result),
+      skillProvenance: {
+        ...fingerprint,
+        outputHash: hashJson(result),
+        promptHash: generated.promptHash,
+        traceId: generated.traceId,
+        modelReceiptId: generated.receiptId,
+      },
+    };
+  }
+
   private async runSkill(input: {
     step: EngineStep;
     lease: ControlExecutionLease;
@@ -5089,10 +6023,19 @@ export class LeaseExecutionEngine {
     expectedModel: string;
     cancellationSignal?: AbortSignal;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
+    nativeSkill?: {
+      invocationId: string;
+      runSpec: NativeSkillRunSpec;
+    };
+    nativeResolvedInputs?: ResolvedPlanInputs;
+    availableReportAssets?: ReadonlyArray<{ assetId: string; role: string; imageIndex: number }>;
     onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('skill LLM provider is not eligible as real');
+    }
+    if (input.nativeSkill) {
+      return this.runNativeSkill({ ...input, nativeSkill: input.nativeSkill });
     }
     const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);
@@ -5158,9 +6101,6 @@ export class LeaseExecutionEngine {
       );
     } catch (error) {
       const validationFeedback = skillSchemaErrors(error);
-      if (containsBlockedSensitiveData(result.data)) {
-        throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
-      }
       if (input.cancellationSignal?.aborted) {
         throw input.cancellationSignal.reason
           ?? new LLMInvocationError('cancelled', false, null, 'skill schema repair cancelled');

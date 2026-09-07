@@ -115,7 +115,7 @@ test('skill-runner: skill 不存在时抛错', async () => {
   await assert.rejects(() => runner.run(step, makeCtx()), /ghost/);
 });
 
-test('skill-runner:使用 effective output schema 校验统一 Skill 输出', async () => {
+test('skill-runner:使用 effective output schema 校验统一 Skill 输出并约束输出语言', async () => {
   const outputSchema = { type: 'object', required: ['version'] };
   const skillLoader = {
     getSkill: (id: string) => (id === 's1' ? { id: 's1', name: 'S1', output_schema: 'envelope.json' } : null),
@@ -123,13 +123,17 @@ test('skill-runner:使用 effective output schema 校验统一 Skill 输出', as
     loadSkillSchemas: () => ({ output: outputSchema }),
   } as unknown as SkillLoader;
 
+  let structuredPrompt = '';
   const llm = {
-    generateStructured: async () => ({
-      data: {
-        version: 'skill-output-v2', status: 'succeeded', summary: 'done', limitations: [],
-      },
-      tokens: { prompt: 10, completion: 20, total: 30 },
-    }),
+    generateStructured: async (options: { prompt: string }) => {
+      structuredPrompt = options.prompt;
+      return {
+        data: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'done', limitations: [],
+        },
+        tokens: { prompt: 10, completion: 20, total: 30 },
+      };
+    },
     generateText: async () => ({ text: '', tokens: { prompt: 0, completion: 0, total: 0 } }),
   } as unknown as LLMClient;
 
@@ -153,15 +157,21 @@ test('skill-runner:使用 effective output schema 校验统一 Skill 输出', as
     });
     assert.equal(artifact.skillOutcome.status, 'succeeded');
     assert.equal(artifact.tokens?.total, 30);
+    assert.match(structuredPrompt, /same primary language as the research goal/u);
+    assert.match(structuredPrompt, /Simplified Chinese/u);
   }
 });
 
 // ---- LlmActorRunner ---------------------------------------------------
 
-test('llm-runner: artifact 是 llm_note、output 形如 {note}', async () => {
+test('llm-runner: artifact 是 llm_note、output 形如 {note}，并约束输出语言', async () => {
+  let prompt = '';
   const llm = {
     generateStructured: async () => ({ data: {}, tokens: { prompt: 0, completion: 0, total: 0 } }),
-    generateText: async () => ({ text: '简明小结', tokens: { prompt: 3, completion: 5, total: 8 } }),
+    generateText: async (options: { prompt: string }) => {
+      prompt = options.prompt;
+      return { text: '简明小结', tokens: { prompt: 3, completion: 5, total: 8 } };
+    },
   } as unknown as LLMClient;
 
   const runner = new LlmActorRunner(llm);
@@ -172,15 +182,20 @@ test('llm-runner: artifact 是 llm_note、output 形如 {note}', async () => {
   if (artifact.kind === 'llm_note') {
     assert.deepEqual(artifact.output, { note: '简明小结' });
     assert.equal(artifact.tokens?.total, 8);
+    assert.match(prompt, /与 research_goal 相同的主要语言/u);
   }
 });
 
 // ---- ReviewerActorRunner ---------------------------------------------
 
-test('reviewer-runner: artifact 是 review_note(不进 toolOutputs)', async () => {
+test('reviewer-runner: artifact 是 review_note(不进 toolOutputs)，并检查语言一致性', async () => {
+  let prompt = '';
   const llm = {
     generateStructured: async () => ({ data: {}, tokens: { prompt: 0, completion: 0, total: 0 } }),
-    generateText: async () => ({ text: '未标注来源', tokens: { prompt: 4, completion: 2, total: 6 } }),
+    generateText: async (options: { prompt: string }) => {
+      prompt = options.prompt;
+      return { text: '未标注来源', tokens: { prompt: 4, completion: 2, total: 6 } };
+    },
   } as unknown as LLMClient;
 
   const runner = new ReviewerActorRunner(llm);
@@ -191,5 +206,6 @@ test('reviewer-runner: artifact 是 review_note(不进 toolOutputs)', async () =
   if (artifact.kind === 'review_note') {
     assert.equal(artifact.review, '未标注来源');
     assert.equal(artifact.tokens?.total, 6);
+    assert.match(prompt, /与 research_goal 相同的主要语言/u);
   }
 });

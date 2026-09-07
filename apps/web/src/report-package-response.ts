@@ -354,9 +354,6 @@ function assertExactVisualManifests(
   const seen = new Set<string>();
   for (const candidate of value.visualAssetManifests) {
     assertVisualAssetManifest(candidate, binding);
-    if (candidate.exportPolicy === 'block') {
-      throw new Error(`visual Asset ${candidate.assetId} is blocked by its export policy`);
-    }
     if (!references.has(candidate.assetId) || seen.has(candidate.assetId)) {
       throw new Error('multimodal visual Asset Manifest set does not match ReportDocument references');
     }

@@ -1,7 +1,7 @@
 import { parseFrontmatter } from './frontmatter.ts';
 import {
   SKILL_RESULT_ENVELOPE_SCHEMA,
-  type SkillRegistryEntry,
+  type SkillCapability,
 } from '../runtime/config-loader.ts';
 
 export type KnowledgeStatus = 'approved' | 'draft' | 'candidate' | 'deprecated';
@@ -25,17 +25,17 @@ function knowledgeStatus(value: unknown): KnowledgeStatus {
   if (value === 'approved' || value === 'draft' || value === 'candidate' || value === 'deprecated') return value;
   throw new Error(`Knowledge entry has invalid or missing status: ${String(value)}`);
 }
-function toRegistryStatus(s: unknown): SkillRegistryEntry['status'] {
+function toRegistryStatus(s: unknown): SkillCapability['status'] {
   const status = knowledgeStatus(s);
   return status === 'approved' ? 'active' : status === 'deprecated' ? 'deprecated' : 'draft';
 }
 
 export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
   knowledge: KnowledgeIndexItem[];
-  skills: SkillRegistryEntry[];
+  skills: SkillCapability[];
 } {
   const knowledge: KnowledgeIndexItem[] = [];
-  const skills: SkillRegistryEntry[] = [];
+  const skills: SkillCapability[] = [];
 
   for (const { relPath, md } of entries) {
     const { frontmatter: fm } = parseFrontmatter(md);
@@ -47,7 +47,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
       const composition = fm.composition !== null
         && typeof fm.composition === 'object'
         && !Array.isArray(fm.composition)
-        ? fm.composition as SkillRegistryEntry['composition']
+        ? fm.composition as SkillCapability['composition']
         : undefined;
       skills.push({
         id: fm.name as string,
@@ -56,7 +56,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         entry: `knowledge-base/${relPath}`,
         when_to_use: (fm.description as string) ?? '',
         owner: (fm.owner as string) ?? '用研团队',
-        risk_level: (fm.risk_level as SkillRegistryEntry['risk_level']) ?? 'low',
+        risk_level: (fm.risk_level as SkillCapability['risk_level']) ?? 'low',
         task_types: (fm.task_types as string[]) ?? [],
         output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
         ...(fm.execution_mode === 'compiled' || fm.execution_mode === 'legacy_single_call'

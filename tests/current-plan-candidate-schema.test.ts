@@ -68,6 +68,65 @@ test('candidate profile type and candidate schema share the same controlled IDs'
   assert.deepEqual(schema.$defs?.candidateProfile?.enum, [...CANDIDATE_PROFILES]);
 });
 
+test('default MockLLMClient supplies current local-planning fixtures', async () => {
+  const llm = new MockLLMClient();
+  const requirement = await llm.generateStructured<Record<string, unknown>>({
+    prompt: 'understand local test task',
+    schema: {},
+    schemaName: 'research-task-v2',
+    context: {},
+  });
+  assert.equal(requirement.data.version, 'research-task-v2');
+  assert.deepEqual(new SchemaValidator().validate('research-task-v2', requirement.data), []);
+
+  const problemGraph = await llm.generateStructured<{
+    questions: Array<{ id: string; acceptance_criteria: string[] }>;
+  }>({
+    prompt: 'build local test problem graph',
+    schema: {},
+    schemaName: 'problem-graph',
+    context: {
+      task: requirement.data,
+      evidencePolicy: [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  });
+  assert.deepEqual(new SchemaValidator().validate('problem-graph', problemGraph.data), []);
+
+  const profileSpecs = [
+    { id: 'speed', display_name: '快速判断', dimensions: { scope: 'minimum' } },
+    { id: 'depth', display_name: '深度研究', dimensions: { scope: 'balanced' } },
+    { id: 'breadth', display_name: '广度扫描', dimensions: { scope: 'expanded' } },
+    { id: 'decision', display_name: '决策收敛', dimensions: { scope: 'decision' } },
+  ];
+  const generated = await llm.generateStructured<{
+    candidates: Array<{ id: string; steps: Array<Record<string, unknown>> }>;
+  }>({
+    prompt: 'build local test candidates',
+    schema: {},
+    schemaName: 'current-plan-candidates',
+    context: {
+      planning_input: '分析京东众筹',
+      requirement: requirement.data,
+      problem_graph: problemGraph.data,
+      profile_specs: profileSpecs,
+      skills: [{ id: 'competitive-analysis' }],
+    },
+  });
+  assert.deepEqual(generated.data.candidates.map(({ id }) => id), profileSpecs.map(({ id }) => id));
+  assert.ok(generated.data.candidates.every(({ steps }) => (
+    steps.length === 1
+    && steps[0]?.actor_type === 'skill'
+    && steps[0]?.actor_id === 'competitive-analysis'
+    && Array.isArray(steps[0]?.question_ids)
+    && Array.isArray(steps[0]?.expected_outputs)
+  )));
+});
+
 test('Current candidates accept two to four homogeneous controlled profiles in persisted order', () => {
   for (const ids of [
     ['speed', 'depth'],

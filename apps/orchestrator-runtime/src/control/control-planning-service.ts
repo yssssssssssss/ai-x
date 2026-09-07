@@ -1,13 +1,18 @@
 import type {
   ControlPlanCandidatesResponse,
   ControlTaskResponse,
+  OrchestrationModeV1,
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  NativeSkillExecutionPlanV1,
+  ReadableExecutionPlan,
+} from '../../../../packages/api-contract/native-skill-orchestration.ts';
+import { isNativeSkillExecutionPlanV1 } from '../../../../packages/api-contract/native-skill-orchestration.ts';
 import type {
   CurrentExecutionPlan,
   CurrentExecutionPlanV3,
   PendingInput,
-  ReadableCurrentExecutionPlan,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
@@ -18,27 +23,34 @@ import {
   resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningResult,
 } from '../planners/research-planning-service.ts';
-import { PlanCompiler } from '../planners/plan-compiler.ts';
+import {
+  assertSingleSkillExecutionPlan,
+  compileNativeSkillExecutionPlan,
+  PlanCompiler,
+} from '../planners/plan-compiler.ts';
+import { SkillLoader } from '../runtime/skill-loader.ts';
 import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
 type ProvisionalExecutionPlan =
-  | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: '' })
-  | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: '' });
+  | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string })
+  | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: string })
+  | (Omit<NativeSkillExecutionPlanV1, 'task_id'> & { task_id?: string });
 
 interface PersistedPlanVersion {
   id: string;
   taskId: string;
   version: number;
   candidateId: PlanCandidate['id'];
-  plan: ReadableCurrentExecutionPlan;
+  plan: ReadableExecutionPlan;
   planHash: string;
   pendingInputs: PendingInput[];
 }
 
 export interface ControlPlanningDependencies {
+  skillLoader?: SkillLoader;
   planning: {
     plan(
-      input: { originalInput: string },
+      input: { originalInput: string; orchestrationMode: OrchestrationModeV1 },
       onProgress?: (event: PlanProgress) => void,
     ): Promise<CurrentResearchPlanningResult>;
   };
@@ -49,6 +61,7 @@ export interface ControlPlanningDependencies {
       originalInput: string;
       taskType: string | null;
       structuredTask: unknown;
+      orchestrationMode?: OrchestrationModeV1;
       candidates: Array<{
         candidateId: PlanCandidate['id'];
         plan: ProvisionalExecutionPlan;
@@ -81,6 +94,7 @@ export interface ControlPlanningDependencies {
       expectedStateVersion: number;
       taskType: string;
       structuredTask: CurrentResearchPlanningResult['structuredTask'];
+      orchestrationMode: OrchestrationModeV1;
       activatedNodes: string[];
       clarificationRecovery?: ClarificationRecoveryContext;
       candidates: Array<{
@@ -117,7 +131,10 @@ export class ControlPlanningService {
 
   constructor(private readonly dependencies: ControlPlanningDependencies) {}
 
-  private prepareCandidates(planningResult: CurrentResearchPlanningResult): Array<{
+  private prepareCandidates(
+    planningResult: CurrentResearchPlanningResult,
+    orchestrationMode: OrchestrationModeV1,
+  ): Array<{
     candidateId: PlanCandidate['id'];
     plan: ProvisionalExecutionPlan;
     pendingInputs: PendingInput[];
@@ -166,6 +183,9 @@ export class ControlPlanningService {
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            ...(this.dependencies.skillLoader
+              ? { skillLoader: this.dependencies.skillLoader }
+              : {}),
           })
         : this.compiler.compile({
             candidate,
@@ -178,11 +198,25 @@ export class ControlPlanningService {
             activated_nodes: planningResult.activatedNodes,
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
+            ...(this.dependencies.skillLoader
+              ? { skillLoader: this.dependencies.skillLoader }
+              : {}),
           });
+      if (orchestrationMode === 'single_skill') {
+        assertSingleSkillExecutionPlan(compiled.plan);
+      }
+      const native = compileNativeSkillExecutionPlan({
+        plan: compiled.plan,
+        mode: orchestrationMode,
+        task: planningResult.structuredTask,
+        ...(this.dependencies.skillLoader
+          ? { skillLoader: this.dependencies.skillLoader }
+          : {}),
+      });
       return {
         candidateId: candidate.id,
-        plan: compiled.plan,
-        pendingInputs: compiled.pending_inputs,
+        plan: { ...native.plan, task_id: '' },
+        pendingInputs: native.pendingInputs,
       };
     });
   }
@@ -205,14 +239,20 @@ export class ControlPlanningService {
         rationale: candidate.rationale,
         tradeoffs: candidate.tradeoffs,
         planHash: stored.planHash,
-        plan: stored.plan as CurrentExecutionPlan,
+        plan: stored.plan,
         pendingInputs: stored.pendingInputs,
+        ...(isNativeSkillExecutionPlanV1(stored.plan)
+          ? { resolvedInputs: stored.plan.resolved_inputs }
+          : {}),
       };
     });
     return {
       kind: 'current',
       conversationId,
-      task: persisted.task,
+      task: {
+        ...persisted.task,
+        orchestrationMode: planningResult.orchestrationMode ?? persisted.task.orchestrationMode ?? null,
+      },
       structuredTask: planningResult.structuredTask ?? planningResult.task,
       activatedNodes: planningResult.activatedNodes,
       candidates,
@@ -236,18 +276,23 @@ export class ControlPlanningService {
     if (!input.conversationId) onConversation?.(conversation.id);
 
     const planningResult = await this.dependencies.planning.plan(
-      { originalInput: input.originalInput },
+      { originalInput: input.originalInput, orchestrationMode: input.orchestrationMode },
       onProgress,
     );
+    const boundPlanningResult: CurrentResearchPlanningResult = {
+      ...planningResult,
+      orchestrationMode: input.orchestrationMode,
+    };
     const persisted = await this.dependencies.repository.createTaskWithCandidates({
       conversationId: conversation.id,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
-      taskType: planningResult.task.task_type,
-      structuredTask: planningResult.structuredTask ?? planningResult.task,
-      candidates: this.prepareCandidates(planningResult),
+      taskType: boundPlanningResult.task.task_type,
+      structuredTask: boundPlanningResult.structuredTask ?? boundPlanningResult.task,
+      orchestrationMode: input.orchestrationMode,
+      candidates: this.prepareCandidates(boundPlanningResult, input.orchestrationMode),
     });
-    return this.responseFromPersisted(conversation.id, planningResult, persisted);
+    return this.responseFromPersisted(conversation.id, boundPlanningResult, persisted);
   }
 
   async planExistingTask(
@@ -257,16 +302,27 @@ export class ControlPlanningService {
       ownerUserId: string;
       expectedStateVersion: number;
       originalInput: string;
+      orchestrationMode?: OrchestrationModeV1;
       commandReservation?: ClarificationCommandReservation;
       clarificationRecovery?: ClarificationRecoveryContext;
     },
     planningResult: CurrentResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse> {
+    const orchestrationMode = planningResult.orchestrationMode
+      ?? input.orchestrationMode
+      ?? 'single_skill';
+    if (
+      input.orchestrationMode !== undefined
+      && planningResult.orchestrationMode !== undefined
+      && input.orchestrationMode !== planningResult.orchestrationMode
+    ) {
+      throw new Error('Task orchestration mode does not match the planned execution contract');
+    }
     const conversation = await this.dependencies.conversations.requireOwned({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
-    const preparedCandidates = this.prepareCandidates(planningResult);
+    const preparedCandidates = this.prepareCandidates(planningResult, orchestrationMode);
     if (input.commandReservation) {
       if (!this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand) {
         throw new Error('atomic clarification planning persistence is unavailable');
@@ -281,6 +337,7 @@ export class ControlPlanningService {
         expectedStateVersion: input.expectedStateVersion,
         taskType: planningResult.task.task_type,
         structuredTask,
+        orchestrationMode,
         activatedNodes: planningResult.activatedNodes,
         clarificationRecovery: input.clarificationRecovery,
         candidates: planningResult.candidates.map((candidate) => {
@@ -310,6 +367,10 @@ export class ControlPlanningService {
       structuredTask: planningResult.structuredTask ?? planningResult.task,
       candidates: preparedCandidates,
     });
-    return this.responseFromPersisted(conversation.id, planningResult, persisted);
+    return this.responseFromPersisted(
+      conversation.id,
+      { ...planningResult, orchestrationMode },
+      persisted,
+    );
   }
 }
