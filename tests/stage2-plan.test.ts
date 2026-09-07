@@ -40,6 +40,18 @@ test('Stage2Plan exposes CSV field descriptions and units after reading the sele
   assert.match(source, /Boolean\(datasetHeaderErrors\[input\.role\]\)/u);
 });
 
+test('Stage2Plan clearly requires local JPG, PNG, or WebP upload for visual inputs', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /请从本机选择 JPG、PNG 或 WebP 图片/u);
+  assert.match(source, /不支持用图片 URL 或本机文件路径代替上传/u);
+  assert.match(source, /单张最大 10 MiB/u);
+  assert.match(source, /可选择多张，最多 12 张/u);
+  assert.match(source, /请选择 1 张/u);
+  assert.match(source, /IMAGE_FILE_ACCEPT/u);
+  assert.match(source, /\.jpg,\.jpeg,\.png,\.webp,image\/jpeg,image\/png,image\/webp/u);
+  assert.doesNotMatch(source, /accept="image\/\*"/u);
+});
+
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
   const screenshot = new File(['fixture'], 'screen.png', { type: 'image/png' });
   const payload = buildPlanConfirmationPayload({

@@ -22,6 +22,8 @@ import {
   reconcileDatasetColumnMetadata,
 } from './stage2-plan-confirmation.ts';
 
+const IMAGE_FILE_ACCEPT = '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp';
+
 function pendingInputLabel(input: PendingUpload): string {
   return input.label;
 }
@@ -519,25 +521,30 @@ export function Stage2Plan({
 
       {visiblePending.some((input) => input.kind === 'visual') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（同一张图会自动用于所有需要它的分析能力）</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片</div>
+          <p id="visual-upload-guidance" style={{ margin: '0 0 10px', color: 'var(--text-dim)', fontSize: 12 }}>
+            请从本机选择 JPG、PNG 或 WebP 图片；不支持用图片 URL 或本机文件路径代替上传。单张最大 10 MiB。
+          </p>
           {visiblePending.filter((input) => input.kind === 'visual').map((pu) => (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
                 {pendingInputQuestion(pu, pendingRequirementByKey.get(pu.role)?.requirement.question)}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                   {' '}· {pendingRequirementByKey.get(pu.role)?.requirement.required === false ? '可选' : '必需'}
-                  {' '}· 将用于本次分析
+                  {' '}· {pu.multiple ? '可选择多张，最多 12 张' : '请选择 1 张'}
+                  {' '}· 同一图片会自动用于所有需要它的分析能力
                 </span>
               </span>
               {(images[pu.role] ?? []).length > 0 && (
                 <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-                  已选择：{images[pu.role]!.map(({ name }) => name).join('、')}
+                  已选择 {images[pu.role]!.length} 张：{images[pu.role]!.map(({ name }) => name).join('、')}
                 </span>
               )}
               <input
                 type="file"
-                accept="image/*"
+                accept={IMAGE_FILE_ACCEPT}
                 multiple={pu.multiple}
+                aria-describedby="visual-upload-guidance"
                 disabled={locked || confirmed || waivedSet.has(pu.role)}
                 onChange={(event) => {
                   pickImages(pu, Array.from(event.currentTarget.files ?? []));

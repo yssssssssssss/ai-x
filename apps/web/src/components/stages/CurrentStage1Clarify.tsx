@@ -177,7 +177,7 @@ export function CurrentStage1Clarify({
                     </div>
                     {question.options.some((option) => /上传.*(?:截图|图片)|(?:截图|图片).*上传/u.test(option)) ? (
                       <small style={{ color: 'var(--text-faint)' }}>
-                        选择后，图片选择按钮会在下一步的计划确认页出现；此处不会立即上传文件。
+                        选择后，下一步会显示本地图片选择按钮；请上传 JPG、PNG 或 WebP 文件，图片 URL 不能代替上传。
                       </small>
                     ) : null}
                   </>

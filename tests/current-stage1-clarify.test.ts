@@ -141,6 +141,8 @@ test('upload clarification clearly says that file selection happens on the next 
   }
 
   assert.match(markup, /我可以在下一步上传截图/u);
-  assert.match(markup, /图片选择按钮会在下一步的计划确认页出现/u);
+  assert.match(markup, /下一步会显示本地图片选择按钮/u);
+  assert.match(markup, /请上传 JPG、PNG 或 WebP 文件/u);
+  assert.match(markup, /图片 URL 不能代替上传/u);
   assert.doesNotMatch(markup, />我现在上传截图</u);
 });
