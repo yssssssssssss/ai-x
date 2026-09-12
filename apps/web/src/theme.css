@@ -489,15 +489,28 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .history-task-meta {
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
   color: var(--text-faint);
   font-size: 10px;
   line-height: 1.4;
 }
-.history-task-meta > span:last-child {
+.history-task-context {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.history-task-type {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-task-time {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .history-status-dot {
@@ -840,7 +853,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 /* ---- 用户气泡(claude.ai 风:右对齐、圆润、克制的强调色)---- */
 .user-row {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   margin: 12px 0 20px;
 }
 .user-bubble {
@@ -853,6 +867,14 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.user-message-time {
+  margin-top: 5px;
+  padding-right: 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- Welcome 屏 ---- */

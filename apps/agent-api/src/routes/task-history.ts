@@ -48,7 +48,7 @@ function parseTaskHistoryPreferencePatch(value: unknown): TaskHistoryPreferenceP
 }
 
 function taskKind(value: string | string[] | undefined): TaskHistoryKind | null {
-  return value === 'legacy' || value === 'current' ? value : null;
+  return value === 'legacy' || value === 'current' || value === 'native' ? value : null;
 }
 
 function taskId(value: string | string[] | undefined): string | null {

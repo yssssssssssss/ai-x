@@ -9,6 +9,11 @@ import {
   type HistoryTaskSummary,
   type TaskHistoryGroup,
 } from '../current-flow-state.ts';
+import {
+  formatCompactDateTime,
+  formatFullDateTime,
+  normalizedDateTime,
+} from '../time-format.ts';
 
 const HISTORY_TABS: Array<{ id: TaskHistoryGroup; label: string }> = [
   { id: 'pending', label: '待处理' },
@@ -164,6 +169,13 @@ function HistoryTaskRow({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const presentation = historyTaskPresentation(task);
+  const activityValue = task.updated_at ?? task.created_at;
+  const activityTime = formatCompactDateTime(activityValue);
+  const activityLabel = task.updated_at ? '更新' : '创建';
+  const fullTime = [
+    task.created_at ? `创建：${formatFullDateTime(task.created_at)}` : '',
+    task.updated_at ? `更新：${formatFullDateTime(task.updated_at)}` : '',
+  ].filter(Boolean).join('\n');
 
   useEffect(() => {
     if (mode === 'closed') return;
@@ -234,17 +246,28 @@ function HistoryTaskRow({
             className={`history-task${active ? ' is-active' : ''}`}
             aria-current={active ? 'page' : undefined}
             onClick={onOpen}
-            title={taskTitle(task)}
+            title={[taskTitle(task), fullTime].filter(Boolean).join('\n')}
           >
             <span className="history-task-title-row">
               <span className="history-task-title">{taskTitle(task)}</span>
               {task.pinnedAt && <span className="history-task-pinned">置顶</span>}
             </span>
             <span className="history-task-meta">
-              <span className={`history-status-dot tone-${presentation.tone}`} aria-hidden="true" />
-              <span>{presentation.label}</span>
-              <span aria-hidden="true">·</span>
-              <span>{task.task_type ?? '未分类'}</span>
+              <span className="history-task-context">
+                <span className={`history-status-dot tone-${presentation.tone}`} aria-hidden="true" />
+                <span>{presentation.label}</span>
+                <span aria-hidden="true">·</span>
+                <span className="history-task-type">{task.task_type ?? '未分类'}</span>
+              </span>
+              {activityTime ? (
+                <time
+                  className="history-task-time"
+                  dateTime={normalizedDateTime(activityValue)}
+                  title={fullTime}
+                >
+                  {activityLabel} {activityTime}
+                </time>
+              ) : null}
             </span>
           </button>
           <button

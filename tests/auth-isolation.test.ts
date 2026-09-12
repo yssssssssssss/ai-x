@@ -590,6 +590,13 @@ test('task history preferences persist per user and soft-delete without touching
     assert.equal(preference?.displayName, '置顶后的研究任务');
     assert.ok(preference?.pinnedAt);
     assert.ok(preference?.hiddenAt);
+
+    const currentTasks = await fetch(baseUrl.replace(/\/task-history$/u, '/control-tasks'), {
+      headers: ownerHeaders,
+    });
+    assert.equal(currentTasks.status, 200);
+    const currentTasksBody = await currentTasks.json() as { tasks: Array<{ id: string }> };
+    assert.equal(currentTasksBody.tasks.some((task) => task.id === currentTaskId), false);
   } finally {
     server.close();
     await once(server, 'close');

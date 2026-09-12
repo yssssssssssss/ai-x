@@ -6,6 +6,7 @@ const theme = new URL('../apps/web/src/theme.css', import.meta.url);
 const workbench = new URL('../apps/web/src/pages/Workbench.tsx', import.meta.url);
 const sidebar = new URL('../apps/web/src/components/Sidebar.tsx', import.meta.url);
 const composer = new URL('../apps/web/src/components/Composer.tsx', import.meta.url);
+const timeFormat = '../apps/web/src/time-format.ts';
 
 test('workbench has one contained scroll chain and a non-scrolling bottom composer', async () => {
   const [css, workbenchSource, composerSource] = await Promise.all([
@@ -42,11 +43,11 @@ test('current conversation renders each user turn before assistant stages and is
 
   assert.match(
     timeline,
-    /phase === 'idle'\s*\?\s*\([\s\S]*?: phase === 'loading-task'\s*\?\s*\([\s\S]*?:\s*\(\s*<>\s*\{originalInput\s*\?\s*<UserBubble/u,
+    /phase === 'idle'\s*\?\s*\([\s\S]*?: phase === 'loading-task'\s*\?\s*\([\s\S]*?:\s*\(\s*<>\s*\{originalInput\s*\?\s*\(\s*<UserBubble/u,
     'idle, loading, and active conversation states must be mutually exclusive',
   );
 
-  const userTurn = timeline.indexOf('{originalInput ? <UserBubble');
+  const userTurn = timeline.indexOf('{originalInput ? (');
   assert.ok(userTurn >= 0, 'active conversation must render the submitted user input');
   for (const assistantTurn of [
     "{clarification && phase === 'clarifying'",
@@ -66,6 +67,30 @@ test('current conversation renders each user turn before assistant stages and is
 
   const chatColumnRule = css.match(/\.chat-column\s*\{[^}]*\}/u)?.[0] ?? '';
   assert.doesNotMatch(chatColumnRule, /column-reverse|direction:\s*rtl/u);
+});
+
+test('task and conversation surfaces display compact time with full timestamp metadata', async () => {
+  const [sidebarSource, workbenchSource, css, time] = await Promise.all([
+    readFile(sidebar, 'utf8'),
+    readFile(workbench, 'utf8'),
+    readFile(theme, 'utf8'),
+    import(timeFormat),
+  ]);
+
+  assert.equal(
+    time.formatCompactDateTime('2026-09-10T21:51:59', new Date('2026-01-01T00:00:00')),
+    '09/10 21:51',
+  );
+  assert.equal(time.formatFullDateTime('2026-09-10T21:51:59'), '2026年09月10日 21:51:59');
+  assert.equal(time.formatCompactDateTime('invalid'), null);
+  assert.match(sidebarSource, /className="history-task-time"/u);
+  assert.match(sidebarSource, /创建：/u);
+  assert.match(sidebarSource, /更新：/u);
+  assert.match(workbenchSource, /className="user-message-time"/u);
+  assert.match(workbenchSource, /发起于/u);
+  assert.match(workbenchSource, /历史任务.*创建.*更新/su);
+  assert.match(css, /\.history-task-time\s*\{/u);
+  assert.match(css, /\.user-message-time\s*\{/u);
 });
 
 test('Knowledge configuration drift exposes replan and abort instead of retry', async () => {

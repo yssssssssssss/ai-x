@@ -37,6 +37,8 @@ export interface ResearchTaskRow {
   run_workspace_uri: string;
   sensitivity: string;
   pii_detected: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ExecutionLogRow {
@@ -244,9 +246,14 @@ export async function listRecentTasks(
   limit = 20,
 ): Promise<ResearchTaskRow[]> {
   const { rows } = await pool.query<ResearchTaskRow>(
-    `SELECT * FROM research_tasks
-     WHERE owner_user_id = $1
-     ORDER BY created_at DESC
+    `SELECT task.* FROM research_tasks AS task
+     LEFT JOIN task_history_preferences AS preference
+       ON preference.owner_user_id = task.owner_user_id
+      AND preference.task_kind = 'legacy'
+      AND preference.task_id = task.id
+     WHERE task.owner_user_id = $1
+       AND preference.hidden_at IS NULL
+     ORDER BY task.created_at DESC
      LIMIT $2`,
     [ownerUserId, limit],
   );
