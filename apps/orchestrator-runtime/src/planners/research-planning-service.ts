@@ -1,4 +1,8 @@
-import type { OrchestrationModeV1 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  OrchestrationModeV1,
+  ProvidedTaskMaterial,
+  VerifiedTaskMaterial,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   DeliverableType,
   EvidenceRequirement,
@@ -65,6 +69,7 @@ export interface ResearchPlanningInput {
   selectedScenarioId?: ScenarioId;
   requireExplicitScenarioSelection?: boolean;
   requiredProfileId?: CandidateProfile;
+  materials?: readonly VerifiedTaskMaterial[];
 }
 
 export interface ResearchPlanningResult {
@@ -87,6 +92,7 @@ export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResu
   portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
   problemGraphProvenance: ProblemGraphProvenance;
   planningProvenance: PlanningProvenance;
+  providedMaterials?: ProvidedTaskMaterial[];
 }
 
 export type CurrentResearchPlanningOutcome =
@@ -98,6 +104,19 @@ export interface CurrentResearchPlanningOptions {
   selectedScenarioId?: ScenarioId;
   requireExplicitScenarioSelection?: boolean;
   requiredProfileId?: CandidateProfile;
+  materials?: readonly VerifiedTaskMaterial[];
+}
+
+function providedMaterialsView(materials: readonly VerifiedTaskMaterial[] | undefined): ProvidedTaskMaterial[] {
+  if (!materials || materials.length === 0) return [];
+  const grouped = new Map<string, { materialIds: string[]; fileNames: string[] }>();
+  for (const material of materials) {
+    const current = grouped.get(material.role) ?? { materialIds: [], fileNames: [] };
+    current.materialIds.push(material.materialId);
+    current.fileNames.push(material.fileName);
+    grouped.set(material.role, current);
+  }
+  return [...grouped].map(([role, value]) => ({ role, ...value }));
 }
 
 export function isPlanningGuidanceClarification(
@@ -314,6 +333,9 @@ export class ResearchPlanningService {
         ? { capabilityDemandGraph: artifacts.capabilityDemandGraph }
         : {}),
       ...(artifacts.portfolios ? { portfolios: artifacts.portfolios } : {}),
+      ...(options.materials && options.materials.length > 0
+        ? { providedMaterials: providedMaterialsView(options.materials) }
+        : {}),
       planningProvenance: artifacts.planningProvenance,
     };
   }

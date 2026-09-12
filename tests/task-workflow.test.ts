@@ -1010,6 +1010,115 @@ test('seals valid visual input and stores only its Artifact reference in the gat
   }
 });
 
+test('confirms a Plan with an inherited Task-bound image without copying image bytes', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-task-material-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const visualGates = new VisualInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(repository, undefined, undefined, undefined, visualGates);
+    const structuredTask = currentTask({
+      task_type: 'design_audit',
+      research_goal: '走查商品详情页设计并标注问题',
+      expected_deliverables: ['design_audit_report'],
+      material_requests: [{
+        id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+        required: true, multiple: false, reason: '用于设计问题标注',
+      }],
+    });
+    const task = await repository.createTask({
+      conversationId,
+      ownerUserId: ownerId,
+      originalInput: structuredTask.research_goal,
+      taskType: null,
+      structuredTask,
+      state: 'awaiting_clarification',
+      orchestrationMode: 'single_skill',
+    });
+    const image = await artifacts.writeBinary({
+      taskId: task.id,
+      kind: 'visual_input_image',
+      relativePath: 'source.png',
+      schemaVersion: 'visual-input-image-v1',
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      metadata: {
+        requestId: 'target-design', role: 'designImage', fileName: 'source.png', ownerUserId: ownerId,
+      },
+    });
+    const activated = await repository.createAndActivateRequirementVersion({
+      taskId: task.id,
+      ownerUserId: ownerId,
+      expectedVersion: task.stateVersion,
+      rawInputHash: 'sha256:task-material-requirement',
+      clarification: {
+        materialBindings: [{ requestId: 'target-design', materialIds: [image.id] }],
+      },
+      structuredTask,
+    });
+    const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+    const candidate = (id: 'speed' | 'depth') => ({
+      candidateId: id,
+      plan: {
+        ...currentPlan('', `${id} task material`, [currentStep({ input: { designImage: null } })]),
+        deliverable_type: 'design_audit_report' as const,
+      },
+      pendingInputs: [{
+        kind: 'visual' as const,
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const created = await candidateRepository.persistExistingTaskWithCandidates!({
+      taskId: task.id,
+      conversationId,
+      ownerUserId: ownerId,
+      expectedStateVersion: activated.task.stateVersion,
+      taskType: 'design_audit',
+      structuredTask,
+      candidates: [candidate('speed'), candidate('depth')],
+    });
+    const selection = await workflow.select({
+      taskId: task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'task-material-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find(({ candidateId }) => candidateId === 'speed')!.id,
+    });
+
+    await workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'task-material-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+
+    const [gate] = await repository.listGateRecords(task.id, selection.planVersionId);
+    const manifest = await artifacts.readVerifiedBoundJson<{ images: Array<{ artifactId: string }> }>(gate!.evidenceRef!);
+    assert.deepEqual(manifest.value.images.map(({ artifactId }) => artifactId), [image.id]);
+    const connection = await scopedDatabase.connect();
+    try {
+      const count = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts
+         WHERE task_id = $1 AND kind = 'visual_input_image'`,
+        [task.id],
+      );
+      assert.equal(count.rows[0]?.count, 1);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
 test('binds one uploaded Dataset by Artifact reference without creating a visual publication', async () => {
   const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-dataset-input-'));
   try {

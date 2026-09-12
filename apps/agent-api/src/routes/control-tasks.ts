@@ -8,6 +8,12 @@ import {
   type ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  ProvidedTaskMaterial,
+  TaskMaterialBinding,
+  TaskMaterialResponse,
+  VerifiedTaskMaterial,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
@@ -27,12 +33,14 @@ import {
 } from '../../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
+import { BinaryArtifactValidationError } from '../../../orchestrator-runtime/src/control/artifact-store.ts';
 import { DatasetInputGateError } from '../../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import {
   InvalidScenarioSelectionError,
   planningGuidanceFromStored,
 } from '../../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
+import { TaskMaterialValidationError } from '../control-runtime.ts';
 import { requireAuth } from '../middleware.ts';
 
 const currentRequirementValidator = new SchemaValidator();
@@ -45,6 +53,8 @@ export interface ControlClarificationPort {
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
     selectedScenarioId?: string;
+    materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+    materials: VerifiedTaskMaterial[];
     expectedVersion: number;
     commandReservation: {
       commandType: 'clarification';
@@ -81,6 +91,25 @@ export interface ControlTasksRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadTaskVisualMaterial?(input: {
+    taskId: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+  }): Promise<TaskMaterialResponse>;
+  listTaskMaterials?(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<TaskMaterialResponse[]>;
+  resolveTaskMaterials?(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<VerifiedTaskMaterial[]>;
   uploadDataset?(input: {
     taskId: string;
     planVersionId: string;
@@ -135,6 +164,67 @@ function clarificationRequirement(value: unknown): ResearchTaskV2 | null {
     })
   ) return null;
   return candidate as unknown as ResearchTaskV2;
+}
+
+function parsedMaterialBindings(value: unknown): Array<{ requestId: string; materialIds: string[] }> | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const bindings: Array<{ requestId: string; materialIds: string[] }> = [];
+  for (const candidate of value) {
+    const item = record(candidate);
+    const requestId = string(item?.requestId);
+    const materialIds = item?.materialIds;
+    if (
+      !item
+      || Object.keys(item).some((key) => key !== 'requestId' && key !== 'materialIds')
+      || !requestId
+      || !Array.isArray(materialIds)
+      || materialIds.length === 0
+      || materialIds.some((materialId) => string(materialId) === null)
+    ) return null;
+    bindings.push({ requestId, materialIds: materialIds as string[] });
+  }
+  return bindings;
+}
+
+function storedMaterialBindings(value: unknown): TaskMaterialBinding[] {
+  const candidate = record(value);
+  const parsed = parsedMaterialBindings(candidate?.materialBindings);
+  return parsed ?? [];
+}
+
+function providedMaterialsView(
+  materials: readonly VerifiedTaskMaterial[],
+  bindings: readonly TaskMaterialBinding[],
+): ProvidedTaskMaterial[] {
+  const materialsById = new Map(materials.map((material) => [material.materialId, material]));
+  return bindings.flatMap((binding): ProvidedTaskMaterial[] => {
+    const selected = binding.materialIds.flatMap((materialId) => {
+      const material = materialsById.get(materialId);
+      return material && material.requestId === binding.requestId ? [material] : [];
+    });
+    if (selected.length === 0) return [];
+    return [{
+      role: selected[0]!.role,
+      materialIds: selected.map(({ materialId }) => materialId),
+      fileNames: selected.map(({ fileName }) => fileName),
+    }];
+  });
+}
+
+function withVerifiedMaterials(
+  response: CurrentPlanningResponse,
+  materials: readonly VerifiedTaskMaterial[],
+  bindings: readonly TaskMaterialBinding[],
+): CurrentPlanningResponse {
+  if (materials.length === 0) return response;
+  const taskMaterials: TaskMaterialResponse[] = materials.map((material) => ({ ...material, state: 'SEALED' }));
+  if (response.status === 'clarification_required') return { ...response, taskMaterials };
+  const providedMaterials = providedMaterialsView(materials, bindings);
+  return {
+    ...response,
+    candidates: response.candidates.map((candidate) => ({ ...candidate, providedMaterials })),
+  };
 }
 
 function version(value: unknown): number | null {
@@ -203,6 +293,15 @@ function publicError(error: unknown): {
   status: number;
   body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
 } {
+  if (error instanceof TaskMaterialValidationError || error instanceof BinaryArtifactValidationError) {
+    return {
+      status: 422,
+      body: {
+        error: error.message,
+        code: error instanceof TaskMaterialValidationError ? error.code : 'task_material_binary_invalid',
+      },
+    };
+  }
   if (error instanceof DatasetInputGateError) {
     return { status: 422, body: { error: error.message, code: error.code } };
   }
@@ -298,6 +397,8 @@ interface PreparedClarification {
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
   selectedScenarioId?: string;
+  materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+  materials: VerifiedTaskMaterial[];
   idempotencyKey: string;
   requestHash: string;
 }
@@ -324,11 +425,13 @@ async function prepareClarification(
   const assumptionEdits = record(body?.assumptionEdits);
   const hasSelectedScenarioId = body !== null && Object.hasOwn(body, 'selectedScenarioId');
   const selectedScenarioId = string(body?.selectedScenarioId);
+  const materialBindings = parsedMaterialBindings(body?.materialBindings);
   const key = idempotencyKey(req);
   if (
     expectedVersion == null
     || !clarificationAnswers
     || !assumptionEdits
+    || materialBindings === null
     || !key
     || (hasSelectedScenarioId && !selectedScenarioId)
     || Object.values(assumptionEdits).some((value) => typeof value !== 'string')
@@ -343,11 +446,31 @@ async function prepareClarification(
     res.status(404).json({ error: '任务不存在' });
     return null;
   }
+  let materials: VerifiedTaskMaterial[] = [];
+  const requirement = clarificationRequirement(task.structuredTask);
+  const requiresMaterials = requirement?.material_requests?.some(({ required }) => required) === true;
+  if (materialBindings.length > 0 || requiresMaterials) {
+    if (!runtime.resolveTaskMaterials) {
+      res.status(503).json({ error: 'Task Material binding is unavailable' });
+      return null;
+    }
+    try {
+      materials = await runtime.resolveTaskMaterials({
+        taskId: task.id,
+        ownerUserId: actor.userId,
+        bindings: materialBindings,
+      });
+    } catch (error) {
+      responseError(res, error);
+      return null;
+    }
+  }
   const requestHash = clarificationRequestHash({
     expectedVersion,
     clarificationAnswers,
     assumptionEdits,
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
+    ...(materialBindings.length > 0 ? { materialBindings } : {}),
   });
   const existingCommand = await runtime.repository.getCommand(task.id, 'clarification', key);
   const resumesExistingCommand = existingCommand?.requestHash === requestHash;
@@ -404,6 +527,8 @@ async function prepareClarification(
       Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
     ),
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
+    materialBindings,
+    materials,
     idempotencyKey: key,
     requestHash,
   };
@@ -433,7 +558,11 @@ async function runClarification(
       );
     }
     if (reservation.status === 'replay') {
-      return reservation.response as CurrentPlanningResponse;
+      return withVerifiedMaterials(
+        reservation.response as CurrentPlanningResponse,
+        prepared.materials,
+        prepared.materialBindings,
+      );
     }
     if (reservation.status === 'pending') {
       const waited = await runtime.repository.waitForCommand(command);
@@ -443,7 +572,11 @@ async function runClarification(
         );
       }
       if (waited.status === 'replay') {
-        return waited.response as CurrentPlanningResponse;
+        return withVerifiedMaterials(
+          waited.response as CurrentPlanningResponse,
+          prepared.materials,
+          prepared.materialBindings,
+        );
       }
       continue;
     }
@@ -458,6 +591,8 @@ async function runClarification(
       answers: prepared.clarificationAnswers,
       assumptionEdits: prepared.assumptionEdits,
       ...(prepared.selectedScenarioId ? { selectedScenarioId: prepared.selectedScenarioId } : {}),
+      materialBindings: prepared.materialBindings,
+      materials: prepared.materials,
       expectedVersion: prepared.expectedVersion,
       commandReservation: {
         ...command,
@@ -473,11 +608,77 @@ async function runClarification(
         response,
       });
     }
-    return response;
+    return withVerifiedMaterials(response, prepared.materials, prepared.materialBindings);
   } catch (error) {
     await runtime.repository.recoverCommandAfterFailure({ ...command, reservationToken });
     throw error;
   }
+}
+
+interface ParsedVisualMaterialUpload {
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Buffer;
+}
+
+function readVisualMaterialMultipart(req: Request): Promise<ParsedVisualMaterialUpload> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 1, fields: 2, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(new TaskMaterialValidationError(
+        error instanceof Error ? error.message : 'invalid visual Material multipart request',
+      ));
+      return;
+    }
+    let fileName: string | null = null;
+    let mediaType: string | null = null;
+    let requestId: string | null = null;
+    let role: string | null = null;
+    let fileSeen = false;
+    let truncated = false;
+    const chunks: Buffer[] = [];
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file' || fileSeen) {
+        stream.resume();
+        reject(new TaskMaterialValidationError('multipart request must contain exactly one file field'));
+        return;
+      }
+      fileSeen = true;
+      fileName = info.filename;
+      mediaType = info.mimeType;
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on('limit', () => { truncated = true; });
+      stream.on('error', reject);
+    });
+    parser.on('field', (fieldName, value) => {
+      if (fieldName === 'requestId' && requestId === null) requestId = value;
+      else if (fieldName === 'role' && role === null) role = value;
+      else reject(new TaskMaterialValidationError('multipart request contains invalid or duplicate fields'));
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      if (truncated) {
+        reject(new TaskMaterialValidationError('visual Material exceeds 10 MiB'));
+        return;
+      }
+      if (!fileSeen || !fileName || !mediaType || !requestId?.trim() || !role?.trim()) {
+        reject(new TaskMaterialValidationError('file、requestId 和 role 必填'));
+        return;
+      }
+      resolve({
+        requestId: requestId.trim(),
+        role: role.trim(),
+        fileName,
+        mediaType,
+        bytes: Buffer.concat(chunks),
+      });
+    });
+    req.pipe(parser);
+  });
 }
 
 interface ParsedDatasetUpload {
@@ -792,6 +993,8 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
           state: task.state,
           stateVersion: task.stateVersion,
           activePlanVersionId: task.activePlanVersionId,
+          ...(task.createdAt ? { createdAt: task.createdAt.toISOString() } : {}),
+          ...(task.updatedAt ? { updatedAt: task.updatedAt.toISOString() } : {}),
         });
       }
       res.json({ tasks: summaries });
@@ -799,6 +1002,51 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       responseError(res, error);
     }
   });
+
+router.post('/:id/materials/visual', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadTaskVisualMaterial) {
+    res.status(503).json({ error: 'Task Material upload is unavailable' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  try {
+    const upload = await readVisualMaterialMultipart(req);
+    const result = await runtime.uploadTaskVisualMaterial({
+      taskId: req.params.id,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      ...upload,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.get('/:id/materials', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  if (!actor) return;
+  if (!runtime.listTaskMaterials) {
+    res.status(503).json({ error: 'Task Material listing is unavailable' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  try {
+    res.json({ materials: await runtime.listTaskMaterials({
+      taskId: req.params.id,
+      ownerUserId: actor.userId,
+    }) });
+  } catch (error) {
+    responseError(res, error);
+  }
+});
 
 router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);
@@ -826,7 +1074,7 @@ router.get('/:id', async (req, res) => {
         );
       }
     }
-    const [recovered, activePlan, executionSteps, pendingInputQuarantined, activeRequirement] = await Promise.all([
+    const [recovered, activePlan, executionSteps, pendingInputQuarantined, activeRequirement, taskMaterials] = await Promise.all([
       task.state === 'awaiting_selection'
         ? isOwner
           ? repository.listCandidatePlanVersionsForOwner({
@@ -846,19 +1094,32 @@ router.get('/:id', async (req, res) => {
       task.activePlanVersionId && isOwner
         ? repository.isPlanPendingInputQuarantined(task.activePlanVersionId)
         : Promise.resolve(false),
-      task.state === 'awaiting_clarification' && isOwner
+      task.activeRequirementVersionId && isOwner
         ? repository.getActiveRequirementVersion(task.id)
         : Promise.resolve(null),
+      isOwner && runtime.listTaskMaterials
+        ? runtime.listTaskMaterials({ taskId: task.id, ownerUserId: actor.userId })
+        : Promise.resolve([]),
     ]);
     if (!recovered) {
       res.status(404).json({ error: '任务不存在' });
       return;
     }
     const planningGuidance = planningGuidanceFromStored(activeRequirement?.clarification);
+    const providedMaterials = providedMaterialsView(
+      taskMaterials,
+      storedMaterialBindings(activeRequirement?.clarification),
+    );
+    const candidates = recovered.candidates.map((candidate) => (
+      providedMaterials.length > 0 ? { ...candidate, providedMaterials } : candidate
+    ));
+    const visibleActivePlan = activePlan && providedMaterials.length > 0
+      ? { ...activePlan, providedMaterials }
+      : activePlan;
     res.json({
       kind: 'current',
       task,
-      activePlan,
+      activePlan: visibleActivePlan,
       executionSteps: executionSteps.map((step) => ({
         stepNo: step.stepNo,
         stepName: step.stepName,
@@ -877,6 +1138,8 @@ router.get('/:id', async (req, res) => {
         ? { planRecovery: { kind: 'plan_revision_required' as const, reason: 'legacy_pending_inputs' as const } }
         : {}),
       ...recovered,
+      candidates,
+      ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
     });
   } catch (error) {
     responseError(res, error);

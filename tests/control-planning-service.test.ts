@@ -857,6 +857,47 @@ test('rejects a foreign conversation before planning or candidate persistence', 
   assert.equal(repositoryCalls, 0);
 });
 
+test('rejects a Design Audit candidate before persistence when no provided image or annotation source exists', async () => {
+  const { ControlPlanningService } = await loadControlPlanningModule();
+  const planningResult = researchPlanningResult('走查商品详情页设计');
+  planningResult.task.task_type = 'design_audit';
+  planningResult.structuredTask = {
+    ...planningResult.structuredTask,
+    task_type: 'design_audit',
+    expected_deliverables: ['design_audit_report'],
+    material_requests: [{
+      id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+      required: true, multiple: false, reason: '用于设计问题标注',
+    }],
+  };
+  const designEvidence: EvidenceRequirement[] = [{
+    id: 'design-audit-report',
+    acceptedClasses: ['screenshot', 'user_input', 'public_source'],
+    minimumCount: 1,
+    required: true,
+  }];
+  planningResult.problemGraph.questions[0]!.evidence_requirements = structuredClone(designEvidence);
+  const service = new ControlPlanningService({
+    planning: { async plan() { throw new Error('not used'); } },
+    conversations: {
+      async create() { throw new Error('not used'); },
+      async requireOwned(input) { return { id: input.conversationId }; },
+    },
+    repository: {
+      async createTaskWithCandidates() { throw new Error('must not persist'); },
+      async persistExistingTaskWithCandidates() { throw new Error('must not persist'); },
+    },
+  });
+
+  await assert.rejects(() => service.planExistingTask({
+    taskId: 'task-design',
+    conversationId: 'conversation-design',
+    ownerUserId: 'owner-design',
+    expectedStateVersion: 1,
+    originalInput: '走查商品详情页设计',
+  }, planningResult), /requires one provided designImage and a visual annotation source/u);
+});
+
 test('planExistingTask persists finalized candidates on the original task without creating a duplicate', async () => {
   const { ControlPlanningService } = await loadControlPlanningModule();
   const taskId = '00000000-0000-0000-0000-000000000901';
@@ -864,6 +905,11 @@ test('planExistingTask persists finalized candidates on the original task withou
   const ownerUserId = '00000000-0000-0000-0000-000000000903';
   const originalInput = '澄清后的原任务规划';
   const planningResult = researchPlanningResult(originalInput);
+  planningResult.providedMaterials = [{
+    role: 'designImage',
+    materialIds: ['material-1'],
+    fileNames: ['page.png'],
+  }];
   const calls: Array<Record<string, unknown>> = [];
   const service = new ControlPlanningService({
     planning: { async plan() { throw new Error('plan must not run for finalized result'); } },
@@ -913,6 +959,9 @@ test('planExistingTask persists finalized candidates on the original task withou
   assert.deepEqual((calls[0]?.candidates as Array<{ candidateId: string }>).map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.deepEqual(calls[0]?.structuredTask, planningResult.structuredTask);
   assert.equal(response.task.id, taskId);
+  assert.deepEqual(response.candidates[0]?.providedMaterials, [{
+    role: 'designImage', materialIds: ['material-1'], fileNames: ['page.png'],
+  }]);
   assert.equal(response.task.state, 'awaiting_selection');
   assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.ok(response.candidates.every((candidate) => candidate.plan.task_id === taskId));

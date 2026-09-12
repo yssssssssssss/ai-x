@@ -89,6 +89,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/clarification_question" }
     },
+    "material_requests": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/material_request" }
+    },
     "blocking_issues": {
       "type": "array",
       "items": { "$ref": "#/$defs/blocking_issue" }
@@ -216,6 +221,20 @@
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "\\S" }
         }
+      }
+    },
+    "material_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "kind", "label", "required", "multiple", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "role": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "kind": { "const": "visual" },
+        "label": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "required": { "type": "boolean" },
+        "multiple": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1, "pattern": "\\S" }
       }
     },
     "blocking_issue": {

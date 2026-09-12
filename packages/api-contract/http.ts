@@ -131,6 +131,11 @@ export interface PlanResponse {
   activatedNodes: string[];
   plan: FinalizedPlan;
   pendingUploads: PendingUpload[];
+  providedMaterials?: Array<{
+    role: string;
+    materialIds: string[];
+    fileNames: string[];
+  }>;
 }
 
 export interface ExecuteResponse {
@@ -145,7 +150,15 @@ export interface ExecuteResponse {
 }
 
 export interface TaskDetail {
-  task: { id: string; original_input: string; task_type: string | null; structured_task: ResearchTaskData; status: string };
+  task: {
+    id: string;
+    original_input: string;
+    task_type: string | null;
+    structured_task: ResearchTaskData;
+    status: string;
+    created_at?: string;
+    updated_at?: string;
+  };
   decisionStates: Array<{ node_key: string }>;
   executionLog: ExecLogRow[];
   report: Report | null;
@@ -160,7 +173,7 @@ export interface TaskSummary {
   updated_at?: string;
 }
 
-export type TaskHistoryKind = 'legacy' | 'current';
+export type TaskHistoryKind = 'legacy' | 'current' | 'native';
 
 export interface TaskHistoryPreference {
   taskId: string;

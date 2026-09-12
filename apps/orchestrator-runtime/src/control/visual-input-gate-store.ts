@@ -39,6 +39,7 @@ interface VisualInputArtifactPort {
   writeBinary(input: BinaryArtifactWriteInput): Promise<ControlArtifact>;
   writeJson(input: ArtifactWriteInput): Promise<ControlArtifact>;
   readVerifiedBoundJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }>;
+  verifyTaskBoundVisual(artifactId: string): Promise<ControlArtifact>;
   readVerifiedBinary(artifactId: string): Promise<{
     artifact: ControlArtifact;
     bytes: Buffer;
@@ -188,6 +189,26 @@ function assertPlanBoundArtifact(input: {
   }
 }
 
+function assertImageArtifactReference(input: {
+  artifact: ControlArtifact;
+  taskId: string;
+  planVersionId: string;
+}): void {
+  const { artifact } = input;
+  const taskBound = artifact.planVersionId === null && artifact.attemptId === null;
+  const planBound = artifact.planVersionId === input.planVersionId && artifact.attemptId === null;
+  if (
+    artifact.state !== 'SEALED'
+    || artifact.taskId !== input.taskId
+    || (!taskBound && !planBound)
+    || artifact.kind !== IMAGE_KIND
+    || artifact.schemaVersion !== IMAGE_SCHEMA_VERSION
+    || !artifact.contentSha256
+  ) {
+    throw new VisualInputGateError(`${IMAGE_KIND} Artifact binding is invalid`);
+  }
+}
+
 function targetValue(value: unknown, sourceMultiple: boolean, targetMultiple: boolean): unknown {
   if (sourceMultiple === targetMultiple) return structuredClone(value);
   if (!sourceMultiple && targetMultiple) return [structuredClone(value)];
@@ -328,6 +349,76 @@ export class VisualInputGateStore {
     }
   }
 
+  async publishTaskMaterials(input: {
+    taskId: string;
+    planVersionId: string;
+    gateKey: string;
+    multiple: boolean;
+    materialIds: readonly string[];
+  }, publicationId?: string): Promise<PublishedVisualInputGate> {
+    if (
+      input.materialIds.length === 0
+      || (!input.multiple && input.materialIds.length !== 1)
+      || new Set(input.materialIds).size !== input.materialIds.length
+    ) throw new VisualInputGateError('Task Material count does not match the visual input');
+    const references: VisualInputGateImageV1[] = [];
+    for (const artifactId of input.materialIds) {
+      const artifact = await this.artifacts.verifyTaskBoundVisual(artifactId);
+      assertImageArtifactReference({
+        artifact,
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+      });
+      if (
+        (artifact.mediaType !== 'image/png'
+          && artifact.mediaType !== 'image/jpeg'
+          && artifact.mediaType !== 'image/webp')
+        || artifact.byteSize === null
+      ) throw new VisualInputGateError(`Task Material ${artifactId} media metadata is invalid`);
+      references.push({
+        artifactId,
+        contentSha256: artifact.contentSha256!,
+        mediaType: artifact.mediaType,
+        byteSize: artifact.byteSize,
+      });
+    }
+    const manifest: VisualInputGateManifestV1 = {
+      version: GATE_SCHEMA_VERSION,
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      gateKey: input.gateKey,
+      multiple: input.multiple,
+      images: references,
+    };
+    const artifact = await this.artifacts.writeJson({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      ...(publicationId === undefined ? {} : { publicationId }),
+      kind: GATE_KIND,
+      relativePath: `inputs/${randomUUID()}-gate.json`,
+      value: manifest,
+      schemaVersion: GATE_SCHEMA_VERSION,
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+    });
+    try {
+      assertPlanBoundArtifact({
+        artifact,
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        kind: GATE_KIND,
+        schemaVersion: GATE_SCHEMA_VERSION,
+      });
+      return { evidenceRef: artifact.id, artifactIds: [artifact.id] };
+    } catch (error) {
+      await this.artifacts.invalidateArtifactPublication(
+        artifact.id,
+        'Task Material gate publication did not complete',
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async publish(input: {
     taskId: string;
     planVersionId: string;
@@ -408,12 +499,10 @@ export class VisualInputGateStore {
         }
         artifactIds.add(reference.artifactId);
         const verified = await this.artifacts.readVerifiedBinary(reference.artifactId);
-        assertPlanBoundArtifact({
+        assertImageArtifactReference({
           artifact: verified.artifact,
           taskId: input.taskId,
           planVersionId: input.planVersionId,
-          kind: IMAGE_KIND,
-          schemaVersion: IMAGE_SCHEMA_VERSION,
         });
         if (
           verified.artifact.contentSha256 !== reference.contentSha256

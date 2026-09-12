@@ -1080,8 +1080,11 @@ export class RoutedPlanner implements PlanStrategy {
             if (
               pending.kind === 'visual'
               && (
-                visualPendingCount === 1
-                || (imageField.role ?? imageField.field) === pending.role
+                (imageField.role ?? imageField.field) === pending.role
+                || (
+                  manifest.id !== 'visual-analysis-suite'
+                  && visualPendingCount === 1
+                )
               )
             ) {
               input[imageField.field] = imageField.multiple ? [] : null;

@@ -1,7 +1,7 @@
 ---
 name: design-experience-review
-description: 设计体验走查——对设计稿/页面做美学量化、视觉注意力、品牌一致性评估
-when_to_use: 用户需要对设计稿/页面做美学、注意力、品牌视觉走查或体验评估时使用(需用户提供设计稿图像)
+description: 设计体验走查，对设计稿或页面做美学量化、视觉注意力、品牌视觉评审与跨方案比较
+when_to_use: 用户提供设计稿或京东与竞品页面截图，需要美学、注意力、品牌视觉走查或体验评估时使用
 owner: 体验设计组
 ---
 
@@ -9,38 +9,47 @@ owner: 体验设计组
 
 ## 何时使用 / 不使用
 
-**适用:** 用户提供了设计稿/页面截图,想评估视觉美学、注意力分布、品牌一致性,或做设计走查。
+**适用：** 用户提供设计稿或页面截图，希望评估视觉美学、注意力分布、品牌视觉，或者比较主方案与竞品。
 
-**不适用:** 无图像可评的纯文本研究、竞品对标(路由到竞品分析 skill)、真实用户访谈。
+**不适用：** 无图像的纯文本研究、真实用户访谈，或者用视觉分数预测经营结果。
 
 ## 输入
 
-见 `input.schema.json`。核心:`designImage`(设计稿,dataUrl 或可访问 url)、可选 `brandReferenceImage`(品牌参考)、`goal`(评估目标)、`focus`(评估重点,美学/注意力/品牌任选)。
+Standalone 接受 `designImage`。Industry Contributor 接受 `jd_screenshots` 与 `competitor_screenshots`，两组都允许多张图片；至少提供一组。
+
+正式执行由 `visual-analysis-suite` 统一完成批量和逐图调用：
+
+1. Vision Brand 每批最多 3 张，输出多角色视觉评审。
+2. Attention Analysis 对每张图片输出注意力结构和干扰风险。
+3. Aesthetic Quant 对每张图片输出美学量化与可读性观察。
+4. Skill 只汇总已验证 Tool Result，不重写工具事实或提升证据等级。
 
 ## 执行步骤
 
-按 `focus` 选调对应 tool,每步在 `step.input` 按该 tool 的 input.schema 生成入参:
-
-1. **美学量化**(focus 含 aesthetic):`aesthetic-quant-lab` tool,`step.input = { designImage: {url|dataUrl}, profileId?, enableAttention? }`。
-2. **注意力分析**(focus 含 attention):`attention-analysis-lab` tool,`step.input = { image: {url|dataUrl}, mode? }`。
-3. **品牌一致性**(focus 含 brand):`vision-brand-lab` tool,`step.input = { designImages: [{url|dataUrl}], brandReferenceImages?: [...], businessGoal? }`。
-4. **综合归纳**:llm 步汇总各工具客观量化,给出设计走查结论与改进优先级。
+1. 对主方案与竞品截图使用相同参数和批次规则。
+2. 保留每张图片的 Sample ID、角色和 Tool provenance。
+3. 把工具失败写为明确 Gap，其余结果继续生成。
+4. 综合归纳视觉观察和待验证的设计建议。
 
 ## 默认假设
 
-- 未给 focus → 默认三项全做。
-- 未给 profileId → aesthetic 用 `balanced`。
-- **无图像源** → 在计划阶段作为 assumption 标注『需用户提供设计稿(上传或给可访问 url/dataUrl)』,对应 tool 步留空图像字段,执行时工具将返回 insufficient_inputs。
+- 默认执行美学、注意力和视觉评审三项。
+- Aesthetic 使用 `balanced`，Attention 使用 `hybrid`。
+- 没有品牌参考图时不输出品牌一致性结论。
+- 无图像源时输出明确缺口，不用旧结果或虚构图像观察。
 
-## 质量门禁
+## 质量边界
 
-- 工具产出为算法量化,是客观参考,不等于最终设计结论;综合归纳须说明这一点。
-- 每条结论标注来源(tool_result / llm_inference)。
+- 工具结果是算法辅助，不等于真实眼动、用户研究或经营结果。
+- 所有 Visual Contribution 保持 `provisional`。
+- 每条结论保留 Tool Result 与截图 Evidence，不把美学分数当作 confidence。
+- 品类含义和行动优先级由最终 Synthesizer 决定。
 
 ## 输出
 
-见 `output.schema.json`。核心:`assessments`(各维度评估 + 来源)、`priority_actions`、`sources`。
+见 `output.schema.json`。核心为 `assessments`、`priority_actions` 和 `sources`。
 
 ## 失败降级
 
-- 某 tool 失败或无图 → 该维度标 `data_incomplete`,不阻塞其余维度;报告说明缺口。
+- 单个实验室失败时，该维度标记为 `data_incomplete`，其余结果继续。
+- 三个实验室都不可用时，输出明确 Visual Gap，不阻断其他 Industry Evidence。

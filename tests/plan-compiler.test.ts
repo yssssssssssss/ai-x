@@ -2402,7 +2402,7 @@ test('fans one sealed design input out to every declared visual Tool field', asy
     expected_deliverables: ['design audit report'],
   };
   const tools = new ToolRouter();
-  for (const adapterType of ['tavily', 'rest_json'] as const) {
+  for (const adapterType of ['tavily', 'rest_json', 'visual_suite'] as const) {
     tools.register({
       adapterType,
       implementationId: `qualified-real-${adapterType}`,
@@ -2442,9 +2442,7 @@ test('fans one sealed design input out to every declared visual Tool field', asy
       input.targets.map(({ tool_id, field, multiple }) => ({ tool_id, field, multiple })),
       [
         { tool_id: 'design-experience-review', field: 'designImage', multiple: false },
-        { tool_id: 'aesthetic-quant-lab', field: 'designImage', multiple: false },
-        { tool_id: 'attention-analysis-lab', field: 'image', multiple: false },
-        { tool_id: 'vision-brand-lab', field: 'designImages', multiple: true },
+        { tool_id: 'visual-analysis-suite', field: 'designImages', multiple: true },
       ],
     );
   }

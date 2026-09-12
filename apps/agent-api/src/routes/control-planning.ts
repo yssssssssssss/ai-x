@@ -6,6 +6,7 @@ import {
   type ControlTaskResponse,
   type PlanningGuidanceClarification,
   type PlanControlTaskRequest,
+  type TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import { OrchestrationModePlanningError } from '../../../orchestrator-runtime/src/planners/research-planning-service.ts';
@@ -24,6 +25,7 @@ export interface ClarificationRequiredResponse {
   structuredTask: ResearchTaskV2;
   activatedNodes: string[];
   candidates: [];
+  taskMaterials?: TaskMaterialResponse[];
   planningGuidance?: PlanningGuidanceClarification;
 }
 

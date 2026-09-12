@@ -1,0 +1,82 @@
+version: skill-execution-contract-v1
+skill_id: design-experience-review
+required_requirement_fields: [/research_goal]
+resources: []
+stages:
+  - stage_id: analyze-visual-inputs
+    title: 执行多实验室视觉分析
+    actor_type: tool
+    actor_id: visual-analysis-suite
+    share_scope: plan
+    share_input_fields: [research_goal, designImages, jd_screenshots, competitor_screenshots]
+    depends_on: []
+    input:
+      research_goal: 视觉层级、注意力竞争、美学质量与跨方案差异分析
+      designImages: []
+      jd_screenshots: []
+      competitor_screenshots: []
+    frozen_input_fields: [research_goal, designImages, jd_screenshots, competitor_screenshots]
+    input_bindings: []
+    expected_outputs:
+      - pointer: /status
+        description: Visual Analysis Suite availability.
+      - pointer: /samples
+        description: Per-screenshot aesthetic and attention observations.
+      - pointer: /visualReviewBatches
+        description: Traceable multi-role visual review batches.
+      - pointer: /comparisonFindings
+        description: Descriptive primary and comparison measurements.
+      - pointer: /warnings
+        description: Tool and evidence limitations.
+      - pointer: /boundaryNotes
+        description: Required interpretation boundaries.
+    acceptance_criteria:
+      - Every analyzed screenshot keeps a stable Sample ID and role.
+      - Partial lab failure remains explicit and does not fabricate missing results.
+    failure_policy: gap
+  - stage_id: compose-design-review
+    title: 形成设计体验走查结果
+    actor_type: skill
+    actor_id: design-experience-review
+    depends_on: [analyze-visual-inputs]
+    input:
+      instruction: Summarize the supplied visual analysis without treating algorithmic scores as user behavior or business outcomes. Keep every limitation and validation need.
+      designImage: {}
+      jd_screenshots: null
+      competitor_screenshots: null
+      visual_analysis:
+        status: null
+        samples: null
+        visualReviewBatches: null
+        comparisonFindings: null
+        warnings: null
+        boundaryNotes: null
+    input_bindings:
+      - target_pointer: /visual_analysis/status
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /status
+      - target_pointer: /visual_analysis/samples
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /samples
+      - target_pointer: /visual_analysis/visualReviewBatches
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /visualReviewBatches
+      - target_pointer: /visual_analysis/comparisonFindings
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /comparisonFindings
+      - target_pointer: /visual_analysis/warnings
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /warnings
+      - target_pointer: /visual_analysis/boundaryNotes
+        source_stage_id: analyze-visual-inputs
+        source_pointer: /boundaryNotes
+    expected_outputs:
+      - pointer: /payload
+        description: Design review payload for the user-facing Skill result.
+    acceptance_criteria:
+      - Findings distinguish Tool observations from design inference.
+      - Recommendations do not claim conversion or user impact without separate evidence.
+    failure_policy: gap
+output_stage_id: compose-design-review
+output_pointer: /payload
+degraded_policy: gap

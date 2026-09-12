@@ -15,6 +15,7 @@ import {
   type OrchestrationModeV1,
   type PlanProgress,
   type PlanResponse,
+  type TaskMaterialResponse,
   type Upload,
   type DatasetUpload,
 } from '../api/client.ts';
@@ -101,6 +102,7 @@ function planView(
         : {}),
     },
     pendingUploads: candidate.pendingInputs,
+    ...(candidate.providedMaterials ? { providedMaterials: candidate.providedMaterials } : {}),
   };
 }
 
@@ -134,6 +136,7 @@ function upsertPlanningProgress(
 
 export function useTaskFlow() {
   const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
+  const [taskMaterials, setTaskMaterials] = useState<TaskMaterialResponse[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [candidatesResp, setCandidatesResp] = useState<ControlPlanCandidatesResponse | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<CurrentPlanCandidate | null>(null);
@@ -197,6 +200,7 @@ export function useTaskFlow() {
     );
     setStateVersion(hydrated.stateVersion);
     setClarification(hydrated.clarification as ClarificationRequiredResponse | null);
+    setTaskMaterials(current.taskMaterials ?? []);
     setCandidatesResp(hydrated.candidatesResp);
     setSelectedCandidate(selected);
     setPlan(selected && hydrated.candidatesResp ? planView(hydrated.candidatesResp, selected) : null);
@@ -311,6 +315,7 @@ export function useTaskFlow() {
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('idle');
     setClarification(null);
+    setTaskMaterials([]);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
@@ -342,6 +347,7 @@ export function useTaskFlow() {
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('planning');
     setClarification(null);
+    setTaskMaterials([]);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
@@ -374,6 +380,7 @@ export function useTaskFlow() {
       setStateVersion(response.task.stateVersion);
       if (response.status === 'clarification_required') {
         setClarification(response);
+        setTaskMaterials(response.taskMaterials ?? []);
         setCandidatesResp(null);
         setPhase('clarifying');
       } else {
@@ -384,6 +391,27 @@ export function useTaskFlow() {
       setError(message(cause, '规划失败'));
       setPhase('error');
     }
+  }
+
+  async function uploadTaskMaterial(
+    requestId: string,
+    role: string,
+    file: File,
+    multiple: boolean,
+  ): Promise<TaskMaterialResponse> {
+    if (!clarification) throw new Error('当前没有待补材料的任务');
+    const uploaded = await api.uploadTaskVisualMaterial(
+      clarification.task.id,
+      requestId,
+      role,
+      file,
+      createRequestId(),
+    );
+    setTaskMaterials((previous) => [
+      ...(multiple ? previous : previous.filter((item) => item.requestId !== requestId)),
+      uploaded,
+    ]);
+    return uploaded;
   }
 
   async function submitClarification(input: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) {
@@ -421,6 +449,7 @@ export function useTaskFlow() {
       setStateVersion(response.task.stateVersion);
       if (response.status === 'clarification_required') {
         setClarification(response);
+        setTaskMaterials(response.taskMaterials ?? taskMaterials);
         setPhase('clarifying');
       } else {
         setClarification(null);
@@ -690,6 +719,8 @@ export function useTaskFlow() {
   return {
     phase,
     clarification,
+    taskMaterials,
+    uploadTaskMaterial,
     submitClarification,
     clarificationSubmitting,
     candidatesResp,

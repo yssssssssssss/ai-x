@@ -40,6 +40,13 @@ test('Stage2Plan exposes CSV field descriptions and units after reading the sele
   assert.match(source, /Boolean\(datasetHeaderErrors\[input\.role\]\)/u);
 });
 
+test('Stage2 treats inherited Task Materials as already provided and does not ask for another upload', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /providedByRole\.has\(input\.role\)/u);
+  assert.match(source, /已提供：\{provided\.fileNames\.join\('、'\)\}/u);
+  assert.match(source, /provided \? \(/u);
+});
+
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
   const payload = buildPlanConfirmationPayload({
     confirmationAnswers: { scope: '中国主流平台' },

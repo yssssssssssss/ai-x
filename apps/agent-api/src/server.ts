@@ -23,6 +23,7 @@ import {
   type ControlPlanningPort,
   type CurrentPlanningResponse,
 } from './routes/control-planning.ts';
+import type { TaskMaterialResponse } from '../../../packages/api-contract/control-workflow.ts';
 import { requireJwtSecret } from './auth.ts';
 import { buildControlRuntime, type ControlRuntime } from './control-runtime.ts';
 import {
@@ -43,6 +44,7 @@ function refinementResponse(
     activatedNodes?: string[];
   },
   task: ControlTaskDetail | null,
+  taskMaterials: TaskMaterialResponse[] = [],
 ): ClarificationRequiredResponse {
   if (!task) throw new Error(`task ${result.taskId} disappeared after refinement`);
   return {
@@ -60,6 +62,7 @@ function refinementResponse(
     structuredTask: result.requirement,
     activatedNodes: result.activatedNodes ?? [],
     candidates: [],
+    ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
     ...(result.planningGuidance ? { planningGuidance: result.planningGuidance } : {}),
   };
 }
@@ -140,11 +143,17 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         answers: { ...input.answers, assumption_edits: input.assumptionEdits },
+        materialBindings: input.materialBindings,
+        materials: input.materials,
         ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
         expectedVersion: input.expectedVersion,
       }, onProgress);
       if (result.status === 'clarification_required') {
-        return refinementResponse(result, await runtime.repository.getTaskDetail(input.taskId));
+        const currentTask = await runtime.repository.getTaskDetail(input.taskId);
+        const taskMaterials = runtime.listTaskMaterials
+          ? await runtime.listTaskMaterials({ taskId: input.taskId, ownerUserId: input.ownerUserId })
+          : [];
+        return refinementResponse(result, currentTask, taskMaterials);
       }
       const clarifiedTask = await runtime.repository.getTaskDetail(input.taskId);
       if (!clarifiedTask) throw new Error(`task ${input.taskId} disappeared after clarification`);
@@ -209,7 +218,7 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   return app;
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const PORT = Number(process.env.API_PORT ?? 3001);
+  const PORT = Number(process.env.API_PORT ?? 3010);
   const controlRuntime = buildControlRuntime();
   const recovery = new ExecutionRecoveryController(
     new ExecutionRecoveryService({

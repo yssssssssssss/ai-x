@@ -128,6 +128,7 @@ import type {
 export type {
   ApprovalControlPlanRequest,
   CancelControlPlanRequest,
+  ClarifyControlTaskRequest,
   ControlApprovalRequirement,
   ControlApprovalTaskSummary,
   ControlPlanRecovery,
@@ -147,6 +148,7 @@ export type {
   ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
+  TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 export type {
   CapabilityProvenance,
@@ -170,6 +172,7 @@ export type {
 import type {
   ApprovalControlPlanRequest,
   CancelControlPlanRequest,
+  ClarifyControlTaskRequest,
   ControlApprovalTaskSummary,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
@@ -182,6 +185,7 @@ import type {
   ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
+  TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -202,15 +206,6 @@ import type {
 } from '../../../../packages/api-contract/http.ts';
 import { parseControlDeliverableResponse } from '../report-package-response.ts';
 export type { ControlDeliverableResponse } from '../report-package-response.ts';
-
-
-export interface ClarifyControlTaskRequest {
-  expectedVersion: number;
-  clarificationAnswers: Record<string, unknown>;
-  assumptionEdits: Record<string, string>;
-  selectedScenarioId?: string;
-  idempotencyKey: string;
-}
 
 export interface ControlVisualAssetResponse {
   blob: Blob;
@@ -370,6 +365,26 @@ export const api = {
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
   controlTask: (taskId: string) =>
     req<CurrentTaskReadResponse>(`/control-tasks/${taskId}`),
+  listTaskMaterials: (taskId: string) => req<{ materials: TaskMaterialResponse[] }>(
+    `/control-tasks/${encodeURIComponent(taskId)}/materials`,
+  ),
+  uploadTaskVisualMaterial: (
+    taskId: string,
+    requestId: string,
+    role: string,
+    file: File,
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    form.append('requestId', requestId);
+    form.append('role', role);
+    form.append('file', file);
+    return reqForm<TaskMaterialResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/materials/visual`,
+      form,
+      idempotencyKey,
+    );
+  },
   selectControlPlan: (taskId: string, body: SelectControlPlanRequest) =>
     req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>

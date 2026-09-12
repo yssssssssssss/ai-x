@@ -5,6 +5,7 @@ import {
   contextOnlyContributionUnitKeys,
   ContributionAdapterError,
   ContributionAdapterRegistry,
+  VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID,
 } from '../apps/orchestrator-runtime/src/skills/contribution-adapter-registry.ts';
 
 const evidenceManifest: EvidenceManifest = {
@@ -149,6 +150,84 @@ test('generic adapter preserves a non-empty structured payload as typed Contribu
   assert.equal(artifact.contribution.units[2]!.statement, payload.serialized_note);
   assert.deepEqual(contextOnlyContributionUnitKeys(artifact), ['payload-001']);
   assert.deepEqual(artifact.source.diagnosticFields, ['/summary', '/status']);
+});
+
+test('visual analysis adapter preserves screenshot Evidence and provisional boundaries', () => {
+  const visualEvidenceManifest: EvidenceManifest = {
+    ...evidenceManifest,
+    entries: [
+      {
+        id: 'S1-1', kind: 'screenshot', evidenceClass: 'screenshot',
+        artifactId: 'visual-manifest-1', artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+        jsonPointer: '/assetId', sensitivity: 'internal', redaction: 'none',
+      },
+      {
+        id: 'S1-2', kind: 'screenshot', evidenceClass: 'screenshot',
+        artifactId: 'visual-manifest-2', artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+        jsonPointer: '/assetId', sensitivity: 'internal', redaction: 'none',
+      },
+    ],
+  };
+  const artifact = new ContributionAdapterRegistry().adapt({
+    adapterId: VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID,
+    source: {
+      version: 'visual-analysis-suite-v1',
+      status: 'partial',
+      samples: [{
+        sampleId: 'JD-001', role: 'primary', sourceImageId: 'source-1',
+        aesthetic: {
+          status: 'available', summary: '美学分析完成。',
+          findings: ['信息密度偏高。'], recommendations: [], warnings: [],
+        },
+        attention: {
+          status: 'available', summary: '首屏存在两个注意力中心。', hotspots: [], warnings: [],
+        },
+      }],
+      visualReviewBatches: [{
+        batchId: 'primary-batch-001', role: 'primary', sampleIds: ['JD-001'],
+        status: 'available', summary: '评审完成。', findings: ['价格入口层级不稳定。'],
+        recommendations: [], reviewers: [], warnings: [],
+      }],
+      comparisonFindings: [{
+        id: 'comparison:aesthetic-overall', dimension: 'aesthetic-overall',
+        statement: '主方案均值为 0.6，对照方案为 0.7。',
+        primaryValue: 0.6, comparisonValue: 0.7, interpretation: 'descriptive_only',
+      }],
+      warnings: ['attention-analysis-lab: timeout'],
+      boundaryNotes: ['注意力结果不是眼动实验。'],
+      toolProvenance: [],
+    },
+    sourceArtifact: {
+      id: 'artifact-visual-suite',
+      contentSha256: `sha256:${'d'.repeat(64)}`,
+      schemaVersion: 'tool-output-v1',
+    },
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    attemptId: 'attempt-1',
+    invocationId: 'invocation:design-experience-review',
+    skillId: 'design-experience-review',
+    contributionTypes: ['design_audit'],
+    questionIds: ['question-design'],
+    requestedArtifactTypes: [],
+    evidenceManifest: visualEvidenceManifest,
+  });
+
+  assert.deepEqual(artifact.contribution.contributionTypes, ['design_audit']);
+  assert.equal(artifact.contribution.units.length, 4);
+  assert.ok(artifact.contribution.units.every(({ support }) => (
+    support.status === 'provisional'
+    && support.confidence === 0.5
+    && support.evidenceIds.join(',') === 'S1-1,S1-2'
+  )));
+  assert.deepEqual(artifact.source.unitMappings.map(({ sourceJsonPointer }) => sourceJsonPointer), [
+    '/output/samples/0/aesthetic/findings/0',
+    '/output/samples/0/attention/summary',
+    '/output/visualReviewBatches/0/findings/0',
+    '/output/comparisonFindings/0',
+  ]);
+  assert.ok(artifact.contribution.limitations.includes('注意力结果不是眼动实验。'));
+  assert.equal(JSON.stringify(artifact).includes('sofa'), false);
 });
 
 test('adapter binds every frozen identity and rejects unsupported adapters', () => {

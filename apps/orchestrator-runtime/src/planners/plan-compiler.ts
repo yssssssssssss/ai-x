@@ -1032,8 +1032,11 @@ function derivePendingInputs(
           if (
             pending.kind !== 'visual'
             || (
-              visualPendingCount !== 1
-              && (imageField.role ?? imageField.field) !== pending.role
+              (imageField.role ?? imageField.field) !== pending.role
+              && (
+                manifest.id === 'visual-analysis-suite'
+                || visualPendingCount !== 1
+              )
             )
           ) continue;
           if (!Object.hasOwn(toolStep.input, imageField.field)) {

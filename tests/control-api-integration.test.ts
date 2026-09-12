@@ -91,6 +91,19 @@ interface ControlRuntimeHarness {
       ownerUserId: string;
     }): Promise<ControlPlanCandidatesResponse>;
   };
+  resolveTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<Array<{
+    materialId: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    contentSha256: string;
+    byteSize: number;
+  }>>;
 }
 
 interface ControlRuntimeModule {
@@ -1141,6 +1154,249 @@ after(async () => {
   restoreEnvironment('JWT_SECRET', originalJwtSecret);
   restoreEnvironment('PGOPTIONS', originalPgOptions);
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
+});
+
+test('production Task Material API seals one owner-bound image and replays idempotently', async () => {
+  const structuredTask: ResearchTaskV2 = {
+    version: 'research-task-v2',
+    task_type: 'design_audit',
+    outcome_mode: 'answer',
+    business_domain: 'commerce',
+    research_goal: '走查商品详情页设计并标注问题',
+    target_audience: ['设计团队'],
+    scope: ['商品详情页'],
+    constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '形成截图绑定的问题标注' }],
+    expected_deliverables: ['design_audit_report'],
+    assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+    material_requests: [{
+      id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+      required: true, multiple: false, reason: '用于设计问题标注',
+    }],
+    sensitivity: 'internal', pii_detected: false,
+  };
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: structuredTask.research_goal,
+    taskType: null,
+    structuredTask,
+    state: 'awaiting_clarification',
+    orchestrationMode: 'single_skill',
+  });
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: { async plan() { throw new Error('planning must not run during Material upload'); } },
+    tools: new ToolRouter(),
+    llm: new MockLLMClient(),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: 'mock-model-v1',
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const upload = () => {
+    const form = new FormData();
+    form.append('requestId', 'target-design');
+    form.append('role', 'designImage');
+    form.append('file', new Blob([png], { type: 'image/png' }), 'page.png');
+    return fetch(`${app.baseUrl}/api/control-tasks/${task.id}/materials/visual`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key },
+      body: form,
+    });
+  };
+  try {
+    const missing = await postJson(app.baseUrl, `/api/control-tasks/${task.id}/clarify`, token, {
+      expectedVersion: task.stateVersion,
+      clarificationAnswers: {},
+      assumptionEdits: {},
+      materialBindings: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(missing.status, 422);
+    assert.match(String((await missing.json() as { error?: string }).error), /required clarification materials/u);
+
+    const first = await upload();
+    assert.equal(first.status, 201, await first.clone().text());
+    const firstBody = await first.json() as { materialId: string; state: string };
+    assert.equal(firstBody.state, 'SEALED');
+    const resolved = await runtime.resolveTaskMaterials({
+      taskId: task.id,
+      ownerUserId,
+      bindings: [{ requestId: 'target-design', materialIds: [firstBody.materialId] }],
+    });
+    assert.deepEqual(resolved.map(({ materialId, requestId, role, fileName }) => ({
+      materialId, requestId, role, fileName,
+    })), [{
+      materialId: firstBody.materialId,
+      requestId: 'target-design',
+      role: 'designImage',
+      fileName: 'page.png',
+    }]);
+
+    const replay = await upload();
+    assert.equal(replay.status, 201, await replay.clone().text());
+    assert.equal((await replay.json() as { materialId: string }).materialId, firstBody.materialId);
+
+    const listed = await fetch(`${app.baseUrl}/api/control-tasks/${task.id}/materials`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(listed.status, 200);
+    const listedBody = await listed.json() as { materials: Array<{ materialId: string }> };
+    assert.deepEqual(listedBody.materials.map(({ materialId }) => materialId), [firstBody.materialId]);
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const stored = await connection.query(
+        `SELECT plan_version_id, attempt_id, kind, state
+         FROM control_artifacts WHERE id = $1`,
+        [firstBody.materialId],
+      );
+      assert.equal(stored.rows[0]?.plan_version_id, null);
+      assert.equal(stored.rows[0]?.attempt_id, null);
+      assert.equal(stored.rows[0]?.kind, 'visual_input_image');
+      assert.equal(stored.rows[0]?.state, 'SEALED');
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('production clarification flow reuses one Task-bound image through Plan confirmation', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const expectedModel = 'task-material-planning-model';
+  const designRequirement: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'design_audit', outcome_mode: 'answer',
+    business_domain: 'commerce', research_goal: '走查商品详情页设计并标注问题',
+    target_audience: ['设计团队'], scope: ['商品详情页'], constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '形成截图绑定的问题标注' }],
+    expected_deliverables: ['design_audit_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+  };
+  const visualSuite: ToolAdapter = {
+    adapterType: 'visual_suite',
+    implementationId: 'visual-suite-plan-fixture-v1',
+    executionMode: 'real',
+    endpointHost: () => 'visual-suite.fixture.test',
+    async invoke() { throw new Error('execution is outside this test'); },
+  };
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter().register(visualSuite),
+    llm: new PlanningModelFixtureLLM(expectedModel, expectedModel, designRequirement),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts,
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  try {
+    const planned = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput: `$design-experience-review ${designRequirement.research_goal}`,
+      orchestrationMode: 'single_skill',
+    });
+    assert.equal(planned.status, 200, await planned.clone().text());
+    const clarification = await planned.json() as CurrentPlanningResponse;
+    assert.equal(clarification.status, 'clarification_required');
+    assert.equal(clarification.structuredTask.material_requests?.[0]?.role, 'designImage');
+
+    const form = new FormData();
+    form.append('requestId', 'target-design');
+    form.append('role', 'designImage');
+    form.append('file', new Blob([Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )], { type: 'image/png' }), 'page.png');
+    const upload = await fetch(
+      `${app.baseUrl}/api/control-tasks/${clarification.task.id}/materials/visual`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': randomUUID() }, body: form },
+    );
+    assert.equal(upload.status, 201, await upload.clone().text());
+    const material = await upload.json() as { materialId: string };
+
+    const clarified = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${clarification.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: clarification.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+        materialBindings: [{ requestId: 'target-design', materialIds: [material.materialId] }],
+        idempotencyKey: randomUUID(),
+      },
+    );
+    assert.equal(clarified.status, 200, await clarified.clone().text());
+    const candidates = await clarified.json() as ControlPlanCandidatesResponse & { status?: string };
+    assert.equal(candidates.kind, 'current');
+    assert.ok(candidates.candidates.length >= 2);
+    assert.deepEqual(candidates.candidates[0]?.providedMaterials?.[0]?.materialIds, [material.materialId]);
+    assert.equal(candidates.candidates[0]?.pendingInputs.find(({ role }) => role === 'designImage')?.kind, 'visual');
+
+    const selectedCandidate = candidates.candidates[0]!;
+    const selected = await postJson(app.baseUrl, `/api/control-tasks/${clarification.task.id}/select`, token, {
+      expectedVersion: candidates.task.stateVersion,
+      planVersionId: selectedCandidate.planVersionId,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(selected.status, 200, await selected.clone().text());
+    const selectedBody = await selected.json() as { stateVersion: number };
+    const restored = await fetch(`${app.baseUrl}/api/control-tasks/${clarification.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(restored.status, 200);
+    const restoredBody = await restored.json() as CurrentTaskReadResponse;
+    assert.deepEqual(restoredBody.taskMaterials?.map(({ materialId }) => materialId), [material.materialId]);
+    assert.deepEqual(restoredBody.activePlan?.providedMaterials?.[0]?.materialIds, [material.materialId]);
+
+    const confirmed = await postJson(app.baseUrl, `/api/control-tasks/${clarification.task.id}/confirm`, token, {
+      expectedVersion: selectedBody.stateVersion,
+      planVersionId: selectedCandidate.planVersionId,
+      confirmationAnswers: {},
+      inputValues: {},
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(confirmed.status, 200, await confirmed.clone().text());
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const imageCount = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts
+         WHERE task_id = $1 AND kind = 'visual_input_image'`,
+        [clarification.task.id],
+      );
+      assert.equal(imageCount.rows[0]?.count, 1);
+      const gates = await repository.listGateRecords(clarification.task.id, selectedCandidate.planVersionId);
+      const visualGate = gates.find(({ gateKey }) => gateKey === 'designImage');
+      assert.ok(visualGate?.evidenceRef);
+      const manifest = await artifacts.readVerifiedBoundJson<{ images: Array<{ artifactId: string }> }>(visualGate.evidenceRef);
+      assert.deepEqual(manifest.value.images.map(({ artifactId }) => artifactId), [material.materialId]);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
 });
 
 test('Dataset multipart upload forwards the owner-bound Idempotency-Key and parsed CSV metadata', async () => {

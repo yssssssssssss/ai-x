@@ -42,6 +42,16 @@ interface SkillOutputEnvelope {
   payload: Record<string, unknown>;
 }
 
+interface VisualAnalysisSource {
+  version: 'visual-analysis-suite-v1';
+  status: 'available' | 'partial' | 'unavailable';
+  samples: unknown[];
+  visualReviewBatches: unknown[];
+  comparisonFindings: unknown[];
+  warnings: unknown[];
+  boundaryNotes: unknown[];
+}
+
 export interface ContributionAdapterInput {
   adapterId: string;
   source: unknown;
@@ -65,9 +75,11 @@ type Adapter = (input: ContributionAdapterInput) => ResearchContributionArtifact
 
 export const SKILL_ENVELOPE_PROVISIONAL_ADAPTER_ID = 'skill-envelope-provisional-v1';
 export const VIRTUAL_USER_TOOL_ADAPTER_ID = 'virtual-user-tool-v1';
+export const VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID = 'visual-analysis-contribution-v1';
 export const CONTRIBUTION_ADAPTER_IDS = [
   SKILL_ENVELOPE_PROVISIONAL_ADAPTER_ID,
   VIRTUAL_USER_TOOL_ADAPTER_ID,
+  VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID,
 ] as const;
 const ADAPTER_VERSION = '1.0.0';
 
@@ -297,6 +309,181 @@ function genericEnvelopeAdapter(input: ContributionAdapterInput): ResearchContri
   };
 }
 
+function visualAnalysisContributionAdapter(input: ContributionAdapterInput): ResearchContributionArtifactV1 {
+  if (input.questionIds.length === 0) {
+    throw new ContributionAdapterError(
+      'ambiguous_question_scope',
+      `Adapter ${VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID} requires at least one scoped Question`,
+    );
+  }
+  if (
+    !isRecord(input.source)
+    || input.source.version !== 'visual-analysis-suite-v1'
+    || (input.source.status !== 'available'
+      && input.source.status !== 'partial'
+      && input.source.status !== 'unavailable')
+    || !Array.isArray(input.source.samples)
+    || !Array.isArray(input.source.visualReviewBatches)
+    || !Array.isArray(input.source.comparisonFindings)
+    || !Array.isArray(input.source.warnings)
+    || !Array.isArray(input.source.boundaryNotes)
+  ) {
+    throw new ContributionAdapterError(
+      'source_envelope_invalid',
+      'Visual Analysis Suite output is malformed',
+    );
+  }
+  const visualSource = input.source as unknown as VisualAnalysisSource;
+  const sourcePointerPrefix = input.sourceArtifact.schemaVersion === 'tool-output-v1' ? '/output' : '';
+  const screenshotEvidenceIds = input.evidenceManifest.entries
+    .filter(({ kind, evidenceClass }) => kind === 'screenshot' && evidenceClass === 'screenshot')
+    .map(({ id }) => id)
+    .sort((left, right) => left.localeCompare(right));
+  const mappings: ResearchContributionArtifactV1['source']['unitMappings'] = [];
+  const units: ResearchContributionUnit[] = [];
+  const addUnit = (value: {
+    title: string;
+    statement: string;
+    pointer: string;
+    sourceValue: unknown;
+    kind?: ContributionUnitKind;
+    recommendedAction?: string;
+  }): void => {
+    const key = `visual:${String(units.length + 1).padStart(3, '0')}`;
+    units.push({
+      key,
+      kind: value.kind ?? 'observation',
+      title: value.title,
+      statement: value.statement,
+      ...(value.recommendedAction ? { recommendedAction: value.recommendedAction } : {}),
+      requestedArtifactTypes: [],
+      support: {
+        questionIds: [...input.questionIds],
+        evidenceIds: [...screenshotEvidenceIds],
+        status: 'provisional',
+        confidence: visualSource.status === 'unavailable' ? 0 : 0.5,
+        validationNeeded: '通过真实用户任务测试、行为数据或人工设计评审验证该视觉观察。',
+      },
+    });
+    mappings.push({
+      sourceUnitKey: key,
+      targetUnitKey: key,
+      sourceJsonPointer: `${sourcePointerPrefix}${value.pointer}`,
+      sourceSemanticHash: stableJsonHash(value.sourceValue),
+    });
+  };
+  visualSource.samples.forEach((sample, sampleIndex) => {
+    if (!isRecord(sample) || typeof sample.sampleId !== 'string') return;
+    const aesthetic = isRecord(sample.aesthetic) ? sample.aesthetic : null;
+    const aestheticFindings = Array.isArray(aesthetic?.findings)
+      ? aesthetic.findings.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+      : [];
+    aestheticFindings.forEach((statement, findingIndex) => addUnit({
+      title: `${sample.sampleId} 美学观察`,
+      statement,
+      pointer: `/samples/${sampleIndex}/aesthetic/findings/${findingIndex}`,
+      sourceValue: statement,
+    }));
+    const attention = isRecord(sample.attention) ? sample.attention : null;
+    if (
+      attention?.status === 'available'
+      && typeof attention.summary === 'string'
+      && attention.summary.trim()
+    ) {
+      addUnit({
+        title: `${sample.sampleId} 注意力观察`,
+        statement: attention.summary,
+        pointer: `/samples/${sampleIndex}/attention/summary`,
+        sourceValue: attention.summary,
+      });
+    }
+  });
+  visualSource.visualReviewBatches.forEach((batch, batchIndex) => {
+    if (!isRecord(batch) || !Array.isArray(batch.findings)) return;
+    const batchId = typeof batch.batchId === 'string' ? batch.batchId : `batch-${batchIndex + 1}`;
+    batch.findings
+      .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+      .forEach((statement, findingIndex) => addUnit({
+        title: `${batchId} 视觉评审`,
+        statement,
+        pointer: `/visualReviewBatches/${batchIndex}/findings/${findingIndex}`,
+        sourceValue: statement,
+        kind: 'finding',
+      }));
+  });
+  visualSource.comparisonFindings.forEach((finding, findingIndex) => {
+    if (!isRecord(finding) || typeof finding.statement !== 'string' || !finding.statement.trim()) return;
+    addUnit({
+      title: typeof finding.dimension === 'string' ? finding.dimension : `视觉对照 ${findingIndex + 1}`,
+      statement: finding.statement,
+      pointer: `/comparisonFindings/${findingIndex}`,
+      sourceValue: finding,
+      kind: 'finding',
+    });
+  });
+  if (units.length === 0) {
+    addUnit({
+      title: '视觉分析缺口',
+      statement: '本次多实验室视觉分析没有返回可用观察，需恢复工具或完成人工设计评审。',
+      pointer: '/status',
+      sourceValue: visualSource.status,
+      kind: 'finding',
+    });
+  }
+  const limitations = [...new Set([
+    '视觉分析结果为算法辅助，不代表真实用户、专业眼动或经营结果。',
+    ...visualSource.boundaryNotes.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())),
+    ...visualSource.warnings.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())),
+  ])];
+  const contribution = {
+    version: 'research-contribution-v1' as const,
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    invocationId: input.invocationId,
+    skillId: input.skillId,
+    contributionTypes: [...input.contributionTypes],
+    units,
+    limitations,
+    openQuestions: visualSource.status === 'unavailable'
+      ? ['视觉实验室恢复后，是否能复现本次人工观察？']
+      : ['这些视觉观察能否在真实用户任务与行为数据中复现？'],
+  };
+  validateResearchContribution({
+    contribution,
+    allowedQuestionIds: input.questionIds,
+    evidenceManifest: input.evidenceManifest,
+    expected: {
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+      invocationId: input.invocationId,
+      skillId: input.skillId,
+      contributionTypes: input.contributionTypes,
+      requestedArtifactTypes: input.requestedArtifactTypes,
+    },
+  });
+  return {
+    version: 'research-contribution-artifact-v1',
+    contribution,
+    source: {
+      artifactId: input.sourceArtifact.id,
+      artifactContentSha256: input.sourceArtifact.contentSha256,
+      schemaVersion: input.sourceArtifact.schemaVersion,
+      adapterId: VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID,
+      adapterVersion: ADAPTER_VERSION,
+      adapterHash: stableJsonHash({ id: VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID, version: ADAPTER_VERSION }),
+      unitMappings: mappings,
+      diagnosticFields: [
+        `${sourcePointerPrefix}/status`,
+        `${sourcePointerPrefix}/warnings`,
+        `${sourcePointerPrefix}/boundaryNotes`,
+        `${sourcePointerPrefix}/toolProvenance`,
+      ],
+    },
+  };
+}
+
 function virtualUserToolAdapter(input: ContributionAdapterInput): ResearchContributionArtifactV1 {
   if (input.questionIds.length === 0) {
     throw new ContributionAdapterError(
@@ -446,6 +633,7 @@ export class ContributionAdapterRegistry {
   private readonly adapters = new Map<string, Adapter>([
     [SKILL_ENVELOPE_PROVISIONAL_ADAPTER_ID, genericEnvelopeAdapter],
     [VIRTUAL_USER_TOOL_ADAPTER_ID, virtualUserToolAdapter],
+    [VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID, visualAnalysisContributionAdapter],
   ]);
 
   constructor(private readonly validator = new SchemaValidator()) {}

@@ -9,6 +9,7 @@ export interface MaterializedVisualOriginal {
   original: {
     assetId: string;
     manifestArtifactId: string;
+    manifestContentSha256?: string;
   };
 }
 
@@ -59,6 +60,9 @@ export class VisualInputMaterializer {
           original: {
             assetId: original.assetArtifact.id,
             manifestArtifactId: original.manifestArtifact.id,
+            ...(original.manifestArtifact.contentSha256
+              ? { manifestContentSha256: original.manifestArtifact.contentSha256 }
+              : {}),
           },
         });
         if (!input.annotationPurpose) continue;

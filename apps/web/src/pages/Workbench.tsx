@@ -28,6 +28,7 @@ import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
 import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
+import { formatCompactDateTime, formatFullDateTime, normalizedDateTime } from '../time-format.ts';
 import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
@@ -50,17 +51,20 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     ]).then(([preferences, [legacy, current, approvals]]) => {
       const currentTasks = current.status === 'fulfilled' ? current.value.tasks : [];
       const currentIds = new Set(currentTasks.map((task) => task.id));
+      const hiddenCurrentIds = new Set(preferences.preferences.flatMap((preference) => (
+        preference.taskKind === 'current' && preference.hiddenAt ? [preference.taskId] : []
+      )));
       const approvalTasks = approvals.status === 'fulfilled'
         ? approvals.value.tasks
-          .filter((task) => !currentIds.has(task.id))
+          .filter((task) => !currentIds.has(task.id) && !hiddenCurrentIds.has(task.id))
           .map((task) => ({
             id: task.id,
             originalInput: task.originalInput,
             taskType: task.taskType,
             state: task.state,
-            // 审批列表只返回待处理项;没有创建时间时以更新时间排序即可。
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            // 服务端返回真实任务时间；缺失只兼容旧测试夹具。
+            createdAt: task.createdAt ?? task.updatedAt ?? '',
+            updatedAt: task.updatedAt ?? task.createdAt ?? '',
             requiresAction: true,
           }))
         : [];
@@ -78,6 +82,8 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
   const {
     phase,
     clarification,
+    taskMaterials,
+    uploadTaskMaterial,
     submitClarification,
     clarificationSubmitting,
     candidatesResp,
@@ -104,6 +110,9 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
   useEffect(() => {
     if (stateVersion != null) refreshHistory();
   }, [refreshHistory, stateVersion]);
+  const activeHistoryTask = currentTaskId
+    ? history.find((task) => task.kind === 'current' && task.id === currentTaskId)
+    : undefined;
 
   function newTask() {
     setView('task'); setDetail(null); setDetailError('');
@@ -177,7 +186,9 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
               <Loading text="正在读取任务状态…" />
             ) : (
               <>
-                {originalInput ? <UserBubble text={originalInput} /> : null}
+                {originalInput ? (
+                  <UserBubble text={originalInput} createdAt={activeHistoryTask?.created_at} />
+                ) : null}
 
                 {clarification && phase === 'clarifying' && (
                   <>
@@ -185,6 +196,8 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                     <CurrentStage1Clarify
                       key={`${clarification.task.id}:${clarification.task.stateVersion}`}
                       response={clarification}
+                      materials={taskMaterials}
+                      onUploadMaterial={uploadTaskMaterial}
                       onSubmit={submitClarification}
                       disabled={clarificationSubmitting}
                     />
@@ -329,10 +342,19 @@ function HistoryDetail({ detail }: { detail: TaskDetail }) {
     actor_type: l.actor_type, actor_id: l.actor_id,
   }));
   const activatedNodes = detail.decisionStates.map((d) => d.node_key);
+  const createdTime = formatCompactDateTime(detail.task.created_at);
+  const updatedTime = formatCompactDateTime(detail.task.updated_at);
+  const fullTime = [
+    detail.task.created_at ? `创建：${formatFullDateTime(detail.task.created_at)}` : '',
+    detail.task.updated_at ? `更新：${formatFullDateTime(detail.task.updated_at)}` : '',
+  ].filter(Boolean).join('\n');
   return (
     <>
-      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12 }}>
-        历史任务 · {detail.task.status} · <span className="mono">{detail.task.id}</span>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12 }} title={fullTime || undefined}>
+        历史任务 · {detail.task.status}
+        {createdTime ? ` · 创建 ${createdTime}` : ''}
+        {updatedTime ? ` · 更新 ${updatedTime}` : ''}
+        {' · '}<span className="mono">{detail.task.id}</span>
       </div>
       <Stage1Understand task={detail.task.structured_task} activatedNodes={activatedNodes} />
       {steps.length > 0 && <Stage3Execute steps={steps} log={detail.executionLog} />}
@@ -360,11 +382,22 @@ function Welcome({ onPick }: { onPick: (t: string) => void }) {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+function UserBubble({ text, createdAt }: { text: string; createdAt?: string }) {
   if (!text) return null;
+  const compactTime = formatCompactDateTime(createdAt);
+  const fullTime = formatFullDateTime(createdAt);
   return (
     <div className="user-row">
       <div className="user-bubble">{text}</div>
+      {compactTime ? (
+        <time
+          className="user-message-time"
+          dateTime={normalizedDateTime(createdAt)}
+          title={fullTime ?? undefined}
+        >
+          发起于 {compactTime}
+        </time>
+      ) : null}
     </div>
   );
 }

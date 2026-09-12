@@ -62,6 +62,12 @@ interface BlockingIssue {
 interface WorkflowTaskShape {
   version?: string;
   clarification_questions?: ConfirmationRequirement[];
+  material_requests?: Array<{
+    id: string;
+    role: string;
+    required: boolean;
+    multiple: boolean;
+  }>;
   blocking_issues?: BlockingIssue[];
 }
 
@@ -159,14 +165,33 @@ function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
   if (!isRecord(task.structuredTask)) throw new TaskWorkflowGateError(['structured_task']);
   const version = task.structuredTask.version;
   const clarificationQuestions = task.structuredTask.clarification_questions;
+  const materialRequests = task.structuredTask.material_requests;
   const blockingIssues = task.structuredTask.blocking_issues;
   if (clarificationQuestions !== undefined && !Array.isArray(clarificationQuestions)) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
+  if (materialRequests !== undefined && !Array.isArray(materialRequests)) throw new TaskWorkflowGateError(['structured_task.material_requests']);
   if (blockingIssues !== undefined && !Array.isArray(blockingIssues)) throw new TaskWorkflowGateError(['structured_task.blocking_issues']);
   return {
     ...(typeof version === 'string' ? { version } : {}),
     clarification_questions: clarificationQuestions?.map((item) => {
       if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
       return { key: item.key, question: typeof item.question === 'string' ? item.question : undefined };
+    }),
+    material_requests: materialRequests?.map((item) => {
+      if (
+        !isRecord(item)
+        || typeof item.id !== 'string'
+        || !item.id
+        || typeof item.role !== 'string'
+        || !item.role
+        || typeof item.required !== 'boolean'
+        || typeof item.multiple !== 'boolean'
+      ) throw new TaskWorkflowGateError(['structured_task.material_requests']);
+      return {
+        id: item.id,
+        role: item.role,
+        required: item.required,
+        multiple: item.multiple,
+      };
     }),
     blocking_issues: blockingIssues?.map((item) => {
       if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.blocking_issues']);
@@ -179,6 +204,40 @@ function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
       };
     }),
   };
+}
+
+function materialIdsByRole(
+  task: WorkflowTaskShape,
+  clarification: unknown,
+): Map<string, string[]> {
+  const requests = new Map((task.material_requests ?? []).map((request) => [request.id, request]));
+  if (requests.size === 0) return new Map();
+  if (!isRecord(clarification) || !Array.isArray(clarification.materialBindings)) {
+    throw new TaskWorkflowGateError(
+      [...requests.values()].filter(({ required }) => required).map(({ role }) => role),
+    );
+  }
+  const byRole = new Map<string, string[]>();
+  for (const candidate of clarification.materialBindings) {
+    if (!isRecord(candidate) || typeof candidate.requestId !== 'string' || !Array.isArray(candidate.materialIds)) {
+      throw new TaskWorkflowGateError(['material_bindings']);
+    }
+    const request = requests.get(candidate.requestId);
+    const materialIds = candidate.materialIds.filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    if (!request || materialIds.length !== candidate.materialIds.length || materialIds.length === 0) {
+      throw new TaskWorkflowGateError(['material_bindings']);
+    }
+    if (!request.multiple && materialIds.length !== 1) {
+      throw new TaskWorkflowGateError([request.role]);
+    }
+    byRole.set(request.role, materialIds);
+  }
+  for (const request of requests.values()) {
+    if (request.required && !byRole.has(request.role)) throw new TaskWorkflowGateError([request.role]);
+  }
+  return byRole;
 }
 
 function planShape(plan: ControlPlanVersionDetail): WorkflowPlanShape {
@@ -370,7 +429,7 @@ export class TaskWorkflowService {
     private readonly terminalArtifacts?: WorkflowArtifactReader,
     private readonly visualInputGates?: Pick<
       VisualInputGateStore,
-      'prepare' | 'publishPrepared' | 'invalidate'
+      'prepare' | 'publishPrepared' | 'publishTaskMaterials' | 'invalidate'
     >,
     private readonly datasetInputGates?: Pick<
       DatasetInputGateStore,
@@ -623,6 +682,10 @@ export class TaskWorkflowService {
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
     const taskData = taskShape(task);
+    const activeRequirement = taskData.material_requests?.length
+      ? await this.repository.getActiveRequirementVersion(task.id)
+      : null;
+    const inheritedMaterialIds = materialIdsByRole(taskData, activeRequirement?.clarification);
     const clarificationQuestions = taskData.clarification_questions ?? [];
     if (taskData.version === 'research-task-v2' && clarificationQuestions.length > 0) {
       throw new ControlPlaneConflictError(
@@ -642,16 +705,30 @@ export class TaskWorkflowService {
     const pendingInputs = pendingInputRequirements(plan);
     const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
     const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
+    const unconsumedMaterialRoles = [...inheritedMaterialIds.keys()]
+      .filter((role) => !requiredInputRoles.has(role));
     const missingInputs = [...requiredInputRoles].filter((key) => (
-      !Object.prototype.hasOwnProperty.call(input.inputValues, key)
-      || input.inputValues[key] === undefined
+      (!Object.prototype.hasOwnProperty.call(input.inputValues, key)
+        || input.inputValues[key] === undefined)
+      && !inheritedMaterialIds.has(key)
     ));
-    if (missingAnswers.length || extraAnswers.length || missingInputs.length || extraInputs.length) {
+    const conflictingInheritedInputs = Object.keys(input.inputValues)
+      .filter((key) => inheritedMaterialIds.has(key));
+    if (
+      missingAnswers.length
+      || extraAnswers.length
+      || missingInputs.length
+      || extraInputs.length
+      || unconsumedMaterialRoles.length
+      || conflictingInheritedInputs.length
+    ) {
       throw new TaskWorkflowGateError([
         ...missingAnswers,
         ...extraAnswers.map((key) => `confirmation:${key}`),
         ...missingInputs,
         ...extraInputs,
+        ...unconsumedMaterialRoles.map((key) => `material:${key}`),
+        ...conflictingInheritedInputs.map((key) => `input_values:${key}`),
       ]);
     }
     if (containsInlineImageData(input.confirmationAnswers)) {
@@ -665,10 +742,17 @@ export class TaskWorkflowService {
     }
 
     const preparedVisualInputs = new Map<string, PreparedVisualInputGate>();
+    const inheritedVisualInputs = new Map<string, string[]>();
     const preparedDatasetInputs = new Map<string, PreparedDatasetInputGate>();
     const plainInputs = new Map<string, PublishedVisualInputGate & { kind: 'value' }>();
     try {
       for (const pending of pendingInputs) {
+        const inherited = inheritedMaterialIds.get(pending.role);
+        if (inherited) {
+          if (pending.kind !== 'visual') throw new TaskWorkflowGateError([pending.role]);
+          inheritedVisualInputs.set(pending.role, inherited);
+          continue;
+        }
         const value = input.inputValues[pending.role];
         if (pending.kind === 'dataset') {
           if (typeof value !== 'string' || !value.trim()) {
@@ -759,7 +843,10 @@ export class TaskWorkflowService {
     };
     let publicationId: string | undefined;
     try {
-      if ([...preparedVisualInputs.values()].some((prepared) => prepared.requiredVisual)) {
+      if (
+        [...preparedVisualInputs.values()].some((prepared) => prepared.requiredVisual)
+        || inheritedVisualInputs.size > 0
+      ) {
         publicationId = await this.repository.beginVisualPublication({
           taskId: task.id,
           planVersionId: plan.id,
@@ -776,6 +863,17 @@ export class TaskWorkflowService {
           kind: prepared.requiredVisual ? 'visual' : 'value',
         });
       }
+      for (const [role, materialIds] of inheritedVisualInputs) {
+        const pending = pendingInputs.find((candidate) => candidate.role === role)!;
+        const published = await this.visualInputGates!.publishTaskMaterials({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: role,
+          multiple: pending.multiple,
+          materialIds,
+        }, publicationId);
+        publishedInputs.set(role, { ...published, kind: 'visual' });
+      }
       for (const [role, prepared] of preparedDatasetInputs) {
         publishedInputs.set(role, { ...prepared, kind: 'dataset' });
       }
@@ -788,7 +886,7 @@ export class TaskWorkflowService {
           value,
           idempotencyKey: `${input.idempotencyKey}:confirmation:${key}`,
         })),
-        ...Object.keys(input.inputValues).map((role) => {
+        ...pendingInputs.map(({ role }) => {
           const published = publishedInputs.get(role);
           if (!published) throw new TaskWorkflowGateError([role]);
           return {

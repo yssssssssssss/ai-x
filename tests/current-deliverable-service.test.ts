@@ -1579,6 +1579,56 @@ test('revises Industry through one authorized typed Patch without regenerating t
   );
 });
 
+test('research strategy assembly uses the contract Reviewer instead of a later advisory Reviewer', async () => {
+  const content = openStrategyDraft();
+  const materials = openStrategyMaterials(content);
+  materials.push({
+    stepNo: 10,
+    actorType: 'reviewer',
+    actorId: 'reviewer',
+    questionIds: ['q1'],
+    artifactId: 'advisory-review-output',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'review',
+    value: {
+      version: 'reviewer-step-output-v1',
+      review: 'Advisory revision requested.',
+      verdict: 'revise',
+      conditions: [{ id: 'advisory-1', statement: '保留为交付限制。', disposition: 'limitation' }],
+    },
+  });
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return materials; } };
+  const { service } = await createHarness(validDeliverableDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  const payload = result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2;
+  assert.ok(payload.riskDisclosures.some(({ sourceId }) => sourceId === 'advisory-review-output:advisory-1'));
+  assert.ok(payload.limitations.includes('保留为交付限制。'));
+});
+
+test('research strategy assembly accepts an authoritative revise verdict with explicit conditions', async () => {
+  const content = openStrategyDraft();
+  const materials = openStrategyMaterials(content);
+  materials[1] = {
+    ...materials[1]!,
+    value: {
+      version: 'reviewer-step-output-v1',
+      review: 'Revision is required.',
+      verdict: 'revise',
+      conditions: [{ id: 'review-1', statement: '将证据不足的判断保留为暂定结论。', disposition: 'limitation' }],
+    },
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return materials; } };
+  const { service } = await createHarness(validDeliverableDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  const payload = result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2;
+  assert.ok(payload.riskDisclosures.some(({ sourceId }) => sourceId === 'review-output-1:review-1'));
+  assert.ok(payload.limitations.includes('将证据不足的判断保留为暂定结论。'));
+});
+
 test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
   const content = openStrategyDraft();
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };

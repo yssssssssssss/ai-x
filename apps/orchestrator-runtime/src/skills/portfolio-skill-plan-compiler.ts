@@ -754,7 +754,9 @@ export function assertCompiledPortfolioPlan(
         const sharedInputOverride = step.shared_by_invocation_ids?.includes(invocation.invocation_id)
           && contractStage.share_scope === 'plan'
           && contractStage.share_input_fields?.includes(key);
-        if (!portfolioInjected && !sharedInputOverride && !isDeepStrictEqual(step.input[key], value)) {
+        const frozenInputOverride = contractStage.actor_type === 'tool'
+          && contractStage.frozen_input_fields?.includes(key) === true;
+        if (!portfolioInjected && !sharedInputOverride && !frozenInputOverride && !isDeepStrictEqual(step.input[key], value)) {
           portfolioDrift(`Portfolio invocation ${invocation.invocation_id} input drift at ${contractStage.stage_id}/${key}`);
         }
       }

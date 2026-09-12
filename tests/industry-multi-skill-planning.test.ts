@@ -101,6 +101,32 @@ function toolStep(stepNo: number, toolId: string): CurrentPlanStep {
       acceptance_criteria: ['结果保持 simulation 标记'], requires_approval: false, fallback_actor_ids: [],
     };
   }
+  if (toolId === 'visual-analysis-suite') {
+    return {
+      step_no: stepNo, step_name: '多实验室视觉分析', actor_type: 'tool', actor_id: toolId,
+      question_ids: graph.questions.map(({ id }) => id), depends_on: [],
+      input: {
+        research_goal: task.research_goal,
+        designImages: [],
+        jd_screenshots: [],
+        competitor_screenshots: [],
+      },
+      input_bindings: [],
+      expected_outputs: [
+        { pointer: '/status', description: 'Visual Analysis Suite availability.' },
+        { pointer: '/samples', description: 'Per-screenshot aesthetic and attention observations.' },
+        { pointer: '/visualReviewBatches', description: 'Traceable multi-role visual review batches.' },
+        { pointer: '/comparisonFindings', description: 'Descriptive primary and comparison measurements.' },
+        { pointer: '/warnings', description: 'Tool and evidence limitations.' },
+        { pointer: '/boundaryNotes', description: 'Required interpretation boundaries.' },
+      ],
+      acceptance_criteria: [
+        'Every analyzed screenshot keeps a stable Sample ID and role.',
+        'Partial lab failure remains explicit and does not fabricate missing results.',
+      ],
+      requires_approval: false, fallback_actor_ids: [],
+    };
+  }
   throw new Error(`unexpected tool ${toolId}`);
 }
 
@@ -178,7 +204,11 @@ function planningHarness() {
   });
   return new ResearchPlanningService({
     llm: new IndustryPortfolioLlm(), validator: new SchemaValidator(), skillLoader: new SkillLoader(),
-    tools: new ToolRouter().register(adapter('tavily')).register(adapter('o2')).register(adapter('rest_json')),
+    tools: new ToolRouter()
+      .register(adapter('tavily'))
+      .register(adapter('o2'))
+      .register(adapter('rest_json'))
+      .register(adapter('visual_suite')),
     approvalAuthorities: ['owner'], multiSkillPortfolioMode: 'active', planningPolicy: loadPlanningPolicy(),
   });
 }
@@ -225,7 +255,7 @@ test('Industry multi_skill compiles Plan v3 with one Synthesizer and dataset-bou
     assert.ok(portfolio.invocations.some(({ skillId, role }) => (
       skillId === 'generate-persona' && role === 'contributor'
     )));
-    assert.ok(result.capabilityResolution.eligible.some(({ skill }) => skill.id === 'competitive-analysis'));
+    assert.equal(portfolio.invocations.some(({ skillId }) => skillId === 'design-experience-review'), false);
     const compiled = new PlanCompiler().compilePortfolio({
       candidate, task: result.structuredTask,
       deliverable_selection: resolvePlanningDeliverableSelection(result.structuredTask),
@@ -247,13 +277,13 @@ test('Industry multi_skill compiles Plan v3 with one Synthesizer and dataset-bou
   }
 });
 
-test('Industry multi_skill adds Design Audit only when JD screenshots are promised', async () => {
+test('Industry multi_skill adds the Visual Contributor only when JD and competitor screenshots are promised', async () => {
   const withScreenshots: ResearchTaskV2 = {
     ...structuredClone(task),
-    research_goal: `${task.research_goal}，并基于京东截图完成设计走查`,
-    available_material_roles: ['user_research_dataset', 'jd_screenshots'],
+    research_goal: task.research_goal,
+    available_material_roles: ['user_research_dataset', 'jd_screenshots', 'competitor_screenshots'],
     unavailable_material_roles: [
-      'competitor_screenshots', 'competitor_platform_names', 'internal_metrics_dataset',
+      'competitor_platform_names', 'internal_metrics_dataset',
     ],
   };
   const result = await planningHarness().planCurrentFromRequirementOutcome(
@@ -265,8 +295,9 @@ test('Industry multi_skill adds Design Audit only when JD screenshots are promis
   assert.equal('kind' in result, false);
   if ('kind' in result) return;
   for (const candidate of result.candidates) {
-    const portfolio = result.portfolios?.[candidate.id];
-    assert.ok(portfolio?.invocations.some(({ skillId }) => skillId === 'run-heuristic-evaluation'));
+    const portfolio: SkillPortfolioDecision | undefined = result.portfolios?.[candidate.id];
+    assert.ok(portfolio?.invocations.some(({ skillId }) => skillId === 'design-experience-review'));
+    assert.equal(portfolio?.invocations.some(({ skillId }) => skillId === 'run-heuristic-evaluation'), false);
     const compiled = new PlanCompiler().compilePortfolio({
       candidate, task: result.structuredTask,
       deliverable_selection: resolvePlanningDeliverableSelection(result.structuredTask),
@@ -281,8 +312,14 @@ test('Industry multi_skill adds Design Audit only when JD screenshots are promis
     assert.ok(screenshots);
     assert.equal(screenshots.kind, 'visual');
     assert.equal(screenshots.multiple, true);
-    assert.ok(screenshots.targets.some(({ tool_id }) => tool_id === 'run-heuristic-evaluation'));
+    assert.ok(screenshots.targets.some(({ tool_id }) => tool_id === 'visual-analysis-suite'));
     assert.ok(screenshots.targets.some(({ tool_id }) => tool_id === 'industry-market-analysis'));
+    const competitorScreenshots = compiled.pending_inputs.find(({ role }) => role === 'competitor_screenshots');
+    assert.ok(competitorScreenshots);
+    assert.equal(competitorScreenshots.kind, 'visual');
+    assert.equal(competitorScreenshots.multiple, true);
+    assert.ok(competitorScreenshots.targets.some(({ tool_id }) => tool_id === 'visual-analysis-suite'));
+    assert.ok(competitorScreenshots.targets.some(({ tool_id }) => tool_id === 'industry-market-analysis'));
   }
 });
 

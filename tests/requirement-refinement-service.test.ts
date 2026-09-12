@@ -278,6 +278,109 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
+test('design audit remains in clarification until a required screenshot Material is provided', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const llm = new FixtureLLM([requirement({
+    task_type: 'design_audit',
+    outcome_mode: 'answer',
+    research_goal: '走查商品详情页设计并标注问题',
+    expected_deliverables: ['design_audit_report'],
+    ambiguities: [{ id: 'missing-image', statement: '尚未提供商品详情页截图', blocking: true }],
+    clarification_questions: [{
+      key: 'screenshot_availability',
+      ambiguity_id: 'missing-image',
+      question: '请确认是否会提供商品详情页截图？',
+      rationale: '缺少截图无法开展设计审计',
+      options: ['会提供截图', '稍后提供截图'],
+    }],
+    blocking_issues: [{
+      key: 'missing_design_image', reason: '当前未收到截图', kind: 'missing_required_material',
+    }, {
+      key: 'missing_screenshots', reason: '当前尚未提供商品详情页截图', kind: 'missing_material',
+    }],
+  })]);
+  const repository = makeRepository();
+  let planningCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() { planningCalls += 1; } },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '走查商品详情页设计并标注问题',
+  });
+
+  assert.equal(result.status, 'clarification_required');
+  assert.deepEqual(result.requirement.material_requests, [{
+    id: 'target-design',
+    role: 'designImage',
+    kind: 'visual',
+    label: '目标页面截图',
+    required: true,
+    multiple: false,
+    reason: 'Design Audit 必须基于实际页面截图并生成问题标注',
+  }]);
+  assert.deepEqual(result.requirement.clarification_questions, []);
+  assert.deepEqual(result.requirement.ambiguities, []);
+  assert.deepEqual(result.requirement.blocking_issues, []);
+  assert.equal(planningCalls, 0);
+});
+
+test('a verified screenshot Material completes clarification and is passed to planning without another LLM call', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const initial = requirement({
+    task_type: 'design_audit',
+    outcome_mode: 'answer',
+    research_goal: '走查商品详情页设计并标注问题',
+    expected_deliverables: ['design_audit_report'],
+  });
+  const llm = new FixtureLLM([initial]);
+  const repository = makeRepository();
+  let plannedMaterials: unknown;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input) {
+        plannedMaterials = input.materials;
+      },
+    },
+  });
+  const first = await service.understand({
+    taskId, conversationId, ownerUserId, originalInput: initial.research_goal,
+  });
+  assert.equal(first.status, 'clarification_required');
+
+  const materials = [{
+    materialId: 'material-1', requestId: 'target-design', role: 'designImage', fileName: 'page.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68,
+  }];
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: {},
+    materialBindings: [{ requestId: 'target-design', materialIds: ['material-1'] }],
+    materials,
+    expectedVersion: 2,
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(plannedMaterials, materials);
+  assert.equal(llm.calls.length, 1);
+  assert.deepEqual(repository.versions.at(-1)?.clarification, {
+    materialBindings: [{ requestId: 'target-design', materialIds: ['material-1'] }],
+  });
+});
+
 test('unwraps and projects a complete Requirement without accepting undeclared root fields', async () => {
   const { RequirementRefinementService } = await loadModule();
   const valid = requirement();
@@ -298,6 +401,25 @@ test('unwraps and projects a complete Requirement without accepting undeclared r
   assert.equal(llm.calls.length, 1);
   assert.equal('provider_note' in result.requirement, false);
   assert.equal(repository.versions.length, 1);
+});
+
+test('preserves a visual design audit after the user selects answer mode', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    research_goal: '基于商品截图评估登山鞋电商页面并给出改进建议',
+    expected_deliverables: ['research_strategy_report'],
+  });
+
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '我想做一个登山鞋的电商设计分析报告',
+    { outcome_mode: 'answer' },
+  );
+
+  assert.equal(normalized.task_type, 'design_audit');
+  assert.equal(normalized.outcome_mode, 'answer');
 });
 
 test('answer mode removes hypothetical private-data blockers when the user explicitly requires public sources', async () => {
@@ -856,7 +978,7 @@ test('Planning Guidance direction selection is persisted and resumes planning wi
   });
 });
 
-test('a changed task type discards the stale Scenario and returns a fresh direction gate', async () => {
+test('a changed task type discards the stale Scenario and requests required Material before replanning', async () => {
   const { RequirementRefinementService } = await loadModule();
   const initial = requirement({
     task_type: 'user_research_planning',
@@ -872,10 +994,6 @@ test('a changed task type discards the stale Scenario and returns a fresh direct
     reasonCode: 'scenario_selection_required' as const,
     options: [{ id: 'user-segmentation', label: '用户分层' }],
   };
-  const newGuidance = {
-    reasonCode: 'scenario_selection_required' as const,
-    options: [{ id: 'experience-walkthrough', label: '页面与链路体验走查' }],
-  };
   const llm = new FixtureLLM([initial, changed]);
   const repository = makeRepository();
   const plannedSelections: Array<string | undefined> = [];
@@ -890,7 +1008,7 @@ test('a changed task type discards the stale Scenario and returns a fresh direct
         return {
           kind: 'planning_guidance_clarification' as const,
           activatedNodes: ['D1_research_goal'],
-          planningGuidance: plannedSelections.length === 1 ? oldGuidance : newGuidance,
+          planningGuidance: oldGuidance,
         };
       },
     },
@@ -914,10 +1032,14 @@ test('a changed task type discards the stale Scenario and returns a fresh direct
   });
 
   assert.equal(refreshedDirection.status, 'clarification_required');
-  assert.deepEqual(refreshedDirection.planningGuidance, newGuidance);
-  assert.deepEqual(plannedSelections, [undefined, undefined]);
+  assert.equal(refreshedDirection.planningGuidance, undefined);
+  assert.deepEqual(refreshedDirection.requirement.material_requests, [{
+    id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+    required: true, multiple: false, reason: 'Design Audit 必须基于实际页面截图并生成问题标注',
+  }]);
+  assert.deepEqual(plannedSelections, [undefined]);
   assert.equal(repository.versions.at(-1)?.structuredTask.task_type, 'design_audit');
-  assert.deepEqual(repository.versions.at(-1)?.clarification, { planningGuidance: newGuidance });
+  assert.deepEqual(repository.versions.at(-1)?.clarification, { actual_task: 'design audit' });
 });
 
 test('Planning Guidance retries the same edited assumptions after post-activation planning failure', async () => {
@@ -1380,14 +1502,20 @@ for (const refinementCase of LOCALIZED_REFINEMENT_CASES) {
       originalInput: `请生成${refinementCase.localized}`,
     });
 
-    assert.equal(result.status, 'ready_to_plan');
+    if (refinementCase.taskType === 'design_audit') {
+      assert.equal(result.status, 'clarification_required');
+      assert.equal(result.requirement.material_requests?.[0]?.role, 'designImage');
+      assert.equal(plannedRequirement, undefined);
+    } else {
+      assert.equal(result.status, 'ready_to_plan');
+      assert.deepEqual(plannedRequirement?.expected_deliverables, [refinementCase.canonical]);
+      assert.equal(plannedRequirement?.version, 'research-task-v2');
+    }
     assert.deepEqual(result.requirement.expected_deliverables, [refinementCase.canonical]);
     assert.deepEqual(repository.versions[0]?.structuredTask.expected_deliverables, [refinementCase.canonical]);
-    assert.deepEqual(plannedRequirement?.expected_deliverables, [refinementCase.canonical]);
     assert.deepEqual(repository.versions.map(({ version }) => version), [1]);
     assert.equal(result.requirement.version, 'research-task-v2');
     assert.equal(repository.versions[0]?.structuredTask.version, 'research-task-v2');
-    assert.equal(plannedRequirement?.version, 'research-task-v2');
   });
 }
 

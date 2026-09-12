@@ -359,7 +359,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
         ))
       : [];
     const pendingInputs = [...new Set([
-      ...skill.inputs,
+      ...(input.portfolio_context ? [] : skill.inputs),
       ...requiredInputRoles,
       ...declaredPendingMaterialRoles,
     ])]

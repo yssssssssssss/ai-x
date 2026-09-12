@@ -95,6 +95,40 @@ export interface CreateControlTaskRequest {
   sensitivity?: string;
 }
 
+export interface TaskMaterialBinding {
+  requestId: string;
+  materialIds: string[];
+}
+
+export interface VerifiedTaskMaterial {
+  materialId: string;
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  contentSha256: string;
+  byteSize: number;
+}
+
+export interface ProvidedTaskMaterial {
+  role: string;
+  materialIds: string[];
+  fileNames: string[];
+}
+
+export interface TaskMaterialResponse extends VerifiedTaskMaterial {
+  state: 'SEALED';
+}
+
+export interface ClarifyControlTaskRequest {
+  expectedVersion: number;
+  clarificationAnswers: Record<string, unknown>;
+  assumptionEdits: Record<string, string>;
+  selectedScenarioId?: string;
+  materialBindings?: TaskMaterialBinding[];
+  idempotencyKey: string;
+}
+
 export interface CurrentPlanCandidate {
   planVersionId: string;
   candidateId: CandidateProfile;
@@ -104,6 +138,7 @@ export interface CurrentPlanCandidate {
   planHash: string;
   plan: CurrentExecutionPlan;
   pendingInputs: PendingInput[];
+  providedMaterials?: ProvidedTaskMaterial[];
 }
 
 export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
@@ -202,6 +237,8 @@ export interface ControlApprovalTaskSummary {
   state: ControlWorkflowState;
   stateVersion: number;
   activePlanVersionId: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ControlPlanRecovery {
@@ -413,6 +450,7 @@ export interface CurrentTaskReadResponse {
   activatedNodes: string[];
   candidates: CurrentPlanCandidate[];
   activePlan: CurrentPlanCandidate | null;
+  taskMaterials?: TaskMaterialResponse[];
   planningGuidance?: PlanningGuidanceClarification;
   approvalRequirements?: ControlApprovalRequirement[];
   planRecovery?: ControlPlanRecovery;

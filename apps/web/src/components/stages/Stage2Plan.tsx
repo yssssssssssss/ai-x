@@ -160,9 +160,13 @@ export function Stage2Plan({
   }
 
   const pending = plan.pendingUploads ?? [];
+  const providedByRole = new Map((plan.providedMaterials ?? []).map((material) => [material.role, material]));
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
   const missingInputs = pending.filter((input) => {
-    if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
+    if (input.kind === 'visual') {
+      if (providedByRole.has(input.role)) return false;
+      return (images[input.role] ?? []).length === 0;
+    }
     if (input.kind === 'value') {
       const raw = values[input.role] ?? '';
       return input.multiple
@@ -391,27 +395,38 @@ export function Stage2Plan({
 
       {pending.some((input) => input.kind === 'visual') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（必须上传；同一张图会自动用于所有需要它的步骤）</div>
-          {pending.filter((input) => input.kind === 'visual').map((pu) => (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>图片材料（同一张图会自动用于所有需要它的步骤）</div>
+          {pending.filter((input) => input.kind === 'visual').map((pu) => {
+            const provided = providedByRole.get(pu.role);
+            return (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
                 {pu.label}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
               </span>
-              {(images[pu.role] ?? []).map((dataUrl, index) => (
-                <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-              ))}
-              <input
-                type="file"
-                accept="image/*"
-                multiple={pu.multiple}
-                onChange={(event) => {
-                  void pickImages(pu, Array.from(event.currentTarget.files ?? []));
-                }}
-                style={{ fontSize: 12, color: 'var(--text-dim)' }}
-              />
+              {provided ? (
+                <span style={{ color: 'var(--ok)', fontSize: 12 }}>
+                  已提供：{provided.fileNames.join('、')}
+                </span>
+              ) : (
+                <>
+                  {(images[pu.role] ?? []).map((dataUrl, index) => (
+                    <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
+                  ))}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple={pu.multiple}
+                    onChange={(event) => {
+                      void pickImages(pu, Array.from(event.currentTarget.files ?? []));
+                    }}
+                    style={{ fontSize: 12, color: 'var(--text-dim)' }}
+                  />
+                </>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

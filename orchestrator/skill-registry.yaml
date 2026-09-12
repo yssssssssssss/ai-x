@@ -114,16 +114,22 @@ skills:
   - id: design-experience-review
     name: 设计体验走查
     path: skills/design-review/SKILL.md
-    when_to_use: 用户需要对设计稿/页面做美学、注意力、品牌视觉走查或体验评估时使用(需用户提供设计稿图像)
+    when_to_use: 用户提供设计稿或京东与竞品页面截图，需要美学、注意力、品牌视觉走查或跨方案视觉比较时使用
     owner: 体验设计组
     status: active
     task_types:
       - design_audit
       - user_research_planning
+      - industry_market_analysis
     inputs:
       - designImage
     visual_inputs:
       - designImage
+      - jd_screenshots
+      - competitor_screenshots
+    multiple_visual_inputs:
+      - jd_screenshots
+      - competitor_screenshots
     outputs:
       - design_review
     intent_tags:
@@ -132,23 +138,27 @@ skills:
       - attention
       - brand
       - visual
+      - screenshot
+      - competitive
     input_schema: skills/design-review/input.schema.json
     output_schema: schemas/skill-result-envelope.schema.json
     payload_schema: skills/design-review/output.schema.json
     required_tools:
-      - tavily-web-search
-      - aesthetic-quant-lab
-      - attention-analysis-lab
-      - vision-brand-lab
+      - visual-analysis-suite
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/design-experience-review.yaml
     cost_level: low
     risk_level: low
     composition:
-      modes: [standalone]
+      modes: [standalone, contributor]
       supported_outcomes: [plan, answer]
-      compatible_deliverables: [research_plan, design_audit_report]
-      required_input_roles: [designImage]
-      optional_input_roles: []
-      standalone_reason: Multi-lab visual review payload is not yet mapped to stable Contribution units.
+      compatible_deliverables: [research_plan, design_audit_report, industry_market_analysis_report]
+      contribution_types: [design_audit]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: visual-analysis-contribution-v1
+      required_input_roles: [research_goal]
+      optional_input_roles: [designImage, jd_screenshots, competitor_screenshots]
+      shareable_prerequisites: [visual-analysis-suite]
   - id: accessibility-review
     name: accessibility-review
     path: knowledge-base/skills/accessibility-review
@@ -707,10 +717,11 @@ skills:
     risk_level: low
     task_types:
       - design_audit
-      - industry_market_analysis
     inputs:
       - research_goal
+      - designImage
     visual_inputs:
+      - designImage
       - jd_screenshots
     multiple_visual_inputs:
       - jd_screenshots
@@ -719,7 +730,7 @@ skills:
     composition:
       modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
-      compatible_deliverables: [design_audit_report, accessibility_audit_report, industry_market_analysis_report]
+      compatible_deliverables: [design_audit_report, accessibility_audit_report]
       contribution_types: [design_audit]
       contribution_schema: schemas/research-contribution-v1.schema.json
       contribution_adapter: skill-envelope-provisional-v1

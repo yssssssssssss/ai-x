@@ -107,6 +107,16 @@ export interface ResearchTaskV2BlockingIssue {
   kind: string;
 }
 
+export interface TaskMaterialRequest {
+  id: string;
+  role: string;
+  kind: 'visual';
+  label: string;
+  required: boolean;
+  multiple: boolean;
+  reason: string;
+}
+
 export const REQUESTED_ARTIFACTS = [
   'executive_answers',
   'research_report',
@@ -221,6 +231,7 @@ export interface ResearchTaskV2 {
   assumptions: Assumption[];
   ambiguities: ResearchTaskV2Ambiguity[];
   clarification_questions: ResearchTaskV2ClarificationQuestion[];
+  material_requests?: TaskMaterialRequest[];
   blocking_issues: ResearchTaskV2BlockingIssue[];
   sensitivity: 'public' | 'internal' | 'confidential';
   pii_detected: boolean;

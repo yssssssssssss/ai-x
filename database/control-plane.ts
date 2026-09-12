@@ -623,6 +623,8 @@ export interface ControlTaskDetail extends ControlTask {
   structuredTask: unknown;
   activeRequirementVersionId: string | null;
   orchestrationMode?: OrchestrationModeV1 | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 export interface ControlTaskSummary {
   id: string;
@@ -669,6 +671,8 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
     orchestrationMode: row.orchestration_mode === 'single_skill' || row.orchestration_mode === 'multi_skill'
       ? row.orchestration_mode
       : null,
+    ...(row.created_at == null ? {} : { createdAt: asDate(row.created_at, 'created_at') }),
+    ...(row.updated_at == null ? {} : { updatedAt: asDate(row.updated_at, 'updated_at') }),
   };
 }
 
@@ -2552,6 +2556,25 @@ export class ControlPlaneRepository {
     }
   }
 
+  async listTaskMaterialArtifacts(taskId: string): Promise<ControlArtifact[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT * FROM control_artifacts
+         WHERE task_id = $1
+           AND plan_version_id IS NULL
+           AND attempt_id IS NULL
+           AND kind = 'visual_input_image'
+           AND state = 'SEALED'
+         ORDER BY created_at, id`,
+        [taskId],
+      );
+      return result.rows.map(artifactFromRow);
+    } finally {
+      connection.release();
+    }
+  }
+
   async listArtifactsByStorageUri(storageUri: string): Promise<ControlArtifact[]> {
     const connection = await this.database.connect();
     try {
@@ -2586,8 +2609,13 @@ export class ControlPlaneRepository {
                 task.created_at, task.updated_at
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         LEFT JOIN task_history_preferences AS preference
+           ON preference.owner_user_id = task.owner_user_id
+          AND preference.task_kind = 'current'
+          AND preference.task_id = task.id
          WHERE task.owner_user_id = $1
            AND conversation.owner_user_id = $1
+           AND preference.hidden_at IS NULL
          ORDER BY task.created_at DESC, task.id DESC
          LIMIT $2`,
         [input.ownerUserId, limit],
@@ -2606,7 +2634,7 @@ export class ControlPlaneRepository {
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
-                task.active_requirement_version_id
+                task.active_requirement_version_id, task.created_at, task.updated_at
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.state = 'awaiting_approval'
@@ -2627,7 +2655,7 @@ export class ControlPlaneRepository {
         `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version, task.active_plan_version_id,
                 task.current_attempt_id, task.active_requirement_version_id,
-                task.orchestration_mode
+                task.orchestration_mode, task.created_at, task.updated_at
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1`,

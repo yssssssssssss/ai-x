@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -11,7 +11,10 @@ import {
 } from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
-import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
+import {
+  assertDesignAuditPlanMaterialContract,
+  ControlPlanningService,
+} from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
 import {
   CandidateProfileNoLongerEligibleError,
@@ -47,6 +50,9 @@ import {
 import type {
   CurrentReportPackageResponse,
   OrchestrationModeV1,
+  TaskMaterialBinding,
+  TaskMaterialResponse,
+  VerifiedTaskMaterial,
 } from '../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
@@ -103,6 +109,135 @@ import {
   type ZeroPublicationMcp,
 } from './integrations/zero/zero-publication-service.ts';
 
+
+export class TaskMaterialValidationError extends Error {
+  readonly code = 'task_material_invalid';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskMaterialValidationError';
+  }
+}
+
+interface StoredTaskMaterialMetadata {
+  requestId: string;
+  role: string;
+  fileName: string;
+  ownerUserId: string;
+}
+
+function storedTaskMaterialMetadata(artifact: ControlArtifact): StoredTaskMaterialMetadata {
+  const metadata = artifact.metadata;
+  if (
+    !metadata
+    || typeof metadata.requestId !== 'string'
+    || !metadata.requestId.trim()
+    || typeof metadata.role !== 'string'
+    || !metadata.role.trim()
+    || typeof metadata.fileName !== 'string'
+    || !metadata.fileName.trim()
+    || typeof metadata.ownerUserId !== 'string'
+    || !metadata.ownerUserId.trim()
+  ) throw new TaskMaterialValidationError(`Task Material ${artifact.id} metadata is invalid`);
+  return {
+    requestId: metadata.requestId,
+    role: metadata.role,
+    fileName: metadata.fileName,
+    ownerUserId: metadata.ownerUserId,
+  };
+}
+
+function taskMaterialResponse(artifact: ControlArtifact): TaskMaterialResponse {
+  const metadata = storedTaskMaterialMetadata(artifact);
+  if (
+    artifact.state !== 'SEALED'
+    || artifact.planVersionId !== null
+    || artifact.attemptId !== null
+    || artifact.kind !== 'visual_input_image'
+    || artifact.schemaVersion !== 'visual-input-image-v1'
+    || (artifact.mediaType !== 'image/png'
+      && artifact.mediaType !== 'image/jpeg'
+      && artifact.mediaType !== 'image/webp')
+    || !artifact.contentSha256
+    || artifact.byteSize === null
+  ) throw new TaskMaterialValidationError(`Task Material ${artifact.id} binding is invalid`);
+  return {
+    materialId: artifact.id,
+    requestId: metadata.requestId,
+    role: metadata.role,
+    fileName: metadata.fileName,
+    mediaType: artifact.mediaType,
+    contentSha256: artifact.contentSha256,
+    byteSize: artifact.byteSize,
+    state: 'SEALED',
+  };
+}
+
+function safeMaterialFileName(value: string): string {
+  const fileName = value.trim().split(/[\\/]/u).at(-1)?.trim() ?? '';
+  if (!fileName || fileName.length > 255 || /[\0\r\n]/u.test(fileName)) {
+    throw new TaskMaterialValidationError('Task Material file name is invalid');
+  }
+  return fileName;
+}
+
+function taskMaterialUploadHash(input: {
+  taskId: string;
+  ownerUserId: string;
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify({
+    taskId: input.taskId,
+    ownerUserId: input.ownerUserId,
+    requestId: input.requestId,
+    role: input.role,
+    fileName: safeMaterialFileName(input.fileName),
+    mediaType: input.mediaType,
+    contentSha256: `sha256:${createHash('sha256').update(input.bytes).digest('hex')}`,
+  })).digest('hex')}`;
+}
+
+function taskMaterialReplay(value: unknown): TaskMaterialResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TaskMaterialValidationError('Task Material upload replay is malformed');
+  }
+  const candidate = value as Partial<TaskMaterialResponse>;
+  if (
+    typeof candidate.materialId !== 'string'
+    || typeof candidate.requestId !== 'string'
+    || typeof candidate.role !== 'string'
+    || typeof candidate.fileName !== 'string'
+    || (candidate.mediaType !== 'image/png'
+      && candidate.mediaType !== 'image/jpeg'
+      && candidate.mediaType !== 'image/webp')
+    || typeof candidate.contentSha256 !== 'string'
+    || typeof candidate.byteSize !== 'number'
+    || candidate.state !== 'SEALED'
+  ) throw new TaskMaterialValidationError('Task Material upload replay is malformed');
+  return candidate as TaskMaterialResponse;
+}
+
+function storedTaskMaterialBindings(value: unknown): TaskMaterialBinding[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const bindings = (value as { materialBindings?: unknown }).materialBindings;
+  if (!Array.isArray(bindings)) return [];
+  return bindings.flatMap((candidate): TaskMaterialBinding[] => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+    const binding = candidate as { requestId?: unknown; materialIds?: unknown };
+    if (
+      typeof binding.requestId !== 'string'
+      || !binding.requestId.trim()
+      || !Array.isArray(binding.materialIds)
+      || binding.materialIds.length === 0
+      || binding.materialIds.some((materialId) => typeof materialId !== 'string' || !materialId.trim())
+    ) return [];
+    return [{ requestId: binding.requestId, materialIds: [...binding.materialIds] as string[] }];
+  });
+}
 
 function datasetUploadHash(input: {
   taskId: string;
@@ -430,6 +565,25 @@ export interface ControlRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadTaskVisualMaterial(input: {
+    taskId: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+  }): Promise<TaskMaterialResponse>;
+  listTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<TaskMaterialResponse[]>;
+  resolveTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<VerifiedTaskMaterial[]>;
   uploadDataset(input: {
     taskId: string;
     planVersionId: string;
@@ -579,6 +733,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             ? { requireExplicitScenarioSelection: true }
             : {}),
           ...(input.requiredProfileId ? { requiredProfileId: input.requiredProfileId } : {}),
+          ...(input.materials && input.materials.length > 0 ? { materials: input.materials } : {}),
         },
       );
     },
@@ -817,6 +972,63 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const visualInputGates = new VisualInputGateStore(artifacts);
   const datasetInputGates = new DatasetInputGateStore(artifacts);
+  const resolveTaskMaterials: ControlRuntime['resolveTaskMaterials'] = async (input) => {
+    const task = await repository.getTaskDetail(input.taskId);
+    if (
+      !task
+      || task.ownerUserId !== input.ownerUserId
+      || task.conversationOwnerUserId !== input.ownerUserId
+    ) throw new ControlPlaneConflictError('Task Material binding target is unavailable');
+    const requests = new Map(
+      ((task.structuredTask as Partial<ResearchTaskV2>).material_requests ?? [])
+        .map((request) => [request.id, request]),
+    );
+    const bindingByRequest = new Map<string, string[]>();
+    const allMaterialIds = new Set<string>();
+    for (const binding of input.bindings) {
+      const request = requests.get(binding.requestId);
+      if (!request || bindingByRequest.has(binding.requestId)) {
+        throw new TaskMaterialValidationError('Task Material binding references an unknown or duplicate request');
+      }
+      if (
+        binding.materialIds.length === 0
+        || (!request.multiple && binding.materialIds.length !== 1)
+        || new Set(binding.materialIds).size !== binding.materialIds.length
+      ) throw new TaskMaterialValidationError(`Task Material count is invalid for ${request.id}`);
+      for (const materialId of binding.materialIds) {
+        if (allMaterialIds.has(materialId)) {
+          throw new TaskMaterialValidationError(`Task Material ${materialId} is bound more than once`);
+        }
+        allMaterialIds.add(materialId);
+      }
+      bindingByRequest.set(binding.requestId, [...binding.materialIds]);
+    }
+    const missing = [...requests.values()]
+      .filter(({ required }) => required)
+      .filter(({ id }) => !bindingByRequest.has(id))
+      .map(({ id }) => id);
+    if (missing.length > 0) {
+      throw new TaskMaterialValidationError(`required clarification materials are missing: ${missing.join(', ')}`);
+    }
+    const verified: VerifiedTaskMaterial[] = [];
+    for (const [requestId, materialIds] of bindingByRequest) {
+      const request = requests.get(requestId)!;
+      for (const materialId of materialIds) {
+        const artifact = await artifacts.verifyTaskBoundVisual(materialId);
+        const response = taskMaterialResponse(artifact);
+        const metadata = storedTaskMaterialMetadata(artifact);
+        if (
+          artifact.taskId !== task.id
+          || metadata.ownerUserId !== input.ownerUserId
+          || response.requestId !== request.id
+          || response.role !== request.role
+        ) throw new TaskMaterialValidationError(`Task Material ${materialId} does not match its declared request`);
+        const { state: _state, ...material } = response;
+        verified.push(material);
+      }
+    }
+    return verified;
+  };
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -856,6 +1068,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         throw new Error(`active plan ${activePlan.id} has no controlled candidate profile`);
       }
       const deliverableSelection = resolvePlanningDeliverableSelection(structuredTask);
+      const activeRequirement = structuredTask.material_requests?.length
+        ? await repository.getActiveRequirementVersion(task.id)
+        : null;
+      const materials = structuredTask.material_requests?.length
+        ? await resolveTaskMaterials({
+            taskId: task.id,
+            ownerUserId: task.ownerUserId,
+            bindings: storedTaskMaterialBindings(activeRequirement?.clarification),
+          })
+        : [];
       if (!await repository.isPlanPendingInputQuarantined(activePlan.id)) {
         assertRevisionSourceContract({ activePlan, deliverableSelection, validator });
       }
@@ -880,6 +1102,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         requirement: structuredTask,
         orchestrationMode: task.orchestrationMode,
         ...(activeScenarioId ? { selectedScenarioId: activeScenarioId } : {}),
+        ...(materials.length > 0 ? { materials } : {}),
         requiredProfileId: activePlan.candidateId,
       });
       const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);
@@ -918,6 +1141,12 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (task.orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      assertDesignAuditPlanMaterialContract({
+        deliverableId: deliverableSelection.deliverableId,
+        plan: compiled.plan,
+        pendingInputs: compiled.pending_inputs,
+        providedMaterials: planningResult.providedMaterials,
+      });
       return {
         plan: { ...compiled.plan, task_id: task.id },
         pendingInputs: compiled.pending_inputs,
@@ -971,6 +1200,190 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     repository,
     artifacts,
     ...(zeroPublication ? { zeroPublication } : {}),
+    uploadTaskVisualMaterial: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_clarification'
+      ) throw new ControlPlaneConflictError('Task Material upload target is unavailable');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      if (structuredTask.pii_detected === true || structuredTask.sensitivity === 'confidential') {
+        throw new TaskMaterialValidationError('PII or confidential Material cannot enter the current model path');
+      }
+      const request = structuredTask.material_requests?.find(({ id }) => id === input.requestId);
+      if (!request || request.kind !== 'visual' || request.role !== input.role) {
+        throw new TaskMaterialValidationError('Task Material request or role is not declared by the active Requirement');
+      }
+      if (
+        input.mediaType !== 'image/png'
+        && input.mediaType !== 'image/jpeg'
+        && input.mediaType !== 'image/webp'
+      ) throw new TaskMaterialValidationError('Task Material must be PNG, JPEG, or WebP');
+      const fileName = safeMaterialFileName(input.fileName);
+      const commandType = `material_upload:${input.requestId}`;
+      const requestHash = taskMaterialUploadHash({ ...input, fileName });
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') {
+          throw new ControlPlaneConflictError('Task Material upload idempotency key conflicts');
+        }
+        if (reservation.status === 'replay') return taskMaterialReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') {
+            throw new ControlPlaneConflictError('Task Material upload idempotency key conflicts');
+          }
+          if (waited.status === 'replay') return taskMaterialReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let artifact: ControlArtifact | null = null;
+      try {
+        artifact = await artifacts.writeBinary({
+          taskId: task.id,
+          kind: 'visual_input_image',
+          relativePath: `${randomUUID()}.image`,
+          schemaVersion: 'visual-input-image-v1',
+          sensitivity: structuredTask.sensitivity ?? 'internal',
+          redactionPolicyVersion: 'v1',
+          bytes: input.bytes,
+          metadata: {
+            requestId: request.id,
+            role: request.role,
+            fileName,
+            ownerUserId: input.ownerUserId,
+          },
+        });
+        if (artifact.mediaType !== input.mediaType) {
+          throw new TaskMaterialValidationError('Task Material MIME type does not match its content');
+        }
+        const response = taskMaterialResponse(artifact);
+        await repository.completeCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          stateAfter: task.state,
+          response,
+        });
+        return response;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return taskMaterialReplay(completed.response);
+          }
+        }
+        if (artifact) {
+          await artifacts.invalidateArtifactPublication(
+            artifact.id,
+            'Task Material upload command did not commit',
+          );
+        }
+        throw error;
+      }
+    },
+    listTaskMaterials: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+      ) throw new ControlPlaneAuthorizationError('Task Material is unavailable');
+      const stored = await repository.listTaskMaterialArtifacts(task.id);
+      return stored.flatMap((artifact) => {
+        try {
+          const metadata = storedTaskMaterialMetadata(artifact);
+          return metadata.ownerUserId === input.ownerUserId ? [taskMaterialResponse(artifact)] : [];
+        } catch {
+          return [];
+        }
+      });
+    },
+    resolveTaskMaterials: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+      ) throw new ControlPlaneConflictError('Task Material binding target is unavailable');
+      const requests = new Map(
+        ((task.structuredTask as Partial<ResearchTaskV2>).material_requests ?? [])
+          .map((request) => [request.id, request]),
+      );
+      const bindingByRequest = new Map<string, string[]>();
+      const allMaterialIds = new Set<string>();
+      for (const binding of input.bindings) {
+        const request = requests.get(binding.requestId);
+        if (!request || bindingByRequest.has(binding.requestId)) {
+          throw new TaskMaterialValidationError('Task Material binding references an unknown or duplicate request');
+        }
+        if (
+          binding.materialIds.length === 0
+          || (!request.multiple && binding.materialIds.length !== 1)
+          || new Set(binding.materialIds).size !== binding.materialIds.length
+        ) throw new TaskMaterialValidationError(`Task Material count is invalid for ${request.id}`);
+        for (const materialId of binding.materialIds) {
+          if (allMaterialIds.has(materialId)) {
+            throw new TaskMaterialValidationError(`Task Material ${materialId} is bound more than once`);
+          }
+          allMaterialIds.add(materialId);
+        }
+        bindingByRequest.set(binding.requestId, [...binding.materialIds]);
+      }
+      const missing = [...requests.values()]
+        .filter(({ required }) => required)
+        .filter(({ id }) => !bindingByRequest.has(id))
+        .map(({ id }) => id);
+      if (missing.length > 0) {
+        throw new TaskMaterialValidationError(`required clarification materials are missing: ${missing.join(', ')}`);
+      }
+      const verified: VerifiedTaskMaterial[] = [];
+      for (const [requestId, materialIds] of bindingByRequest) {
+        const request = requests.get(requestId)!;
+        for (const materialId of materialIds) {
+          const artifact = await artifacts.verifyTaskBoundVisual(materialId);
+          const response = taskMaterialResponse(artifact);
+          const metadata = storedTaskMaterialMetadata(artifact);
+          if (
+            artifact.taskId !== task.id
+            || metadata.ownerUserId !== input.ownerUserId
+            || response.requestId !== request.id
+            || response.role !== request.role
+          ) throw new TaskMaterialValidationError(`Task Material ${materialId} does not match its declared request`);
+          const { state: _state, ...material } = response;
+          verified.push(material);
+        }
+      }
+      return verified;
+    },
     uploadDataset: async (input) => {
       const task = await repository.getTaskDetail(input.taskId);
       if (

@@ -3,6 +3,7 @@ import type {
   ControlTaskResponse,
   OrchestrationModeV1,
   PlanControlTaskRequest,
+  ProvidedTaskMaterial,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
@@ -37,6 +38,33 @@ interface PersistedPlanVersion {
   plan: ReadableCurrentExecutionPlan;
   planHash: string;
   pendingInputs: PendingInput[];
+}
+
+export function assertDesignAuditPlanMaterialContract(input: {
+  deliverableId: string;
+  plan: Pick<ReadableCurrentExecutionPlan, 'steps'>;
+  pendingInputs: readonly PendingInput[];
+  providedMaterials?: readonly ProvidedTaskMaterial[];
+}): void {
+  if (input.deliverableId !== 'design_audit_report') return;
+  const designMaterials = input.providedMaterials?.find(({ role }) => role === 'designImage');
+  const designInput = input.pendingInputs.find(({ role }) => role === 'designImage');
+  const hasAnnotationSource = input.plan.steps.some(({ actor_type, actor_id }) => (
+    actor_type === 'tool'
+    && (actor_id === 'visual-analysis-suite' || actor_id === 'attention-analysis-lab')
+  ));
+  if (
+    !designMaterials
+    || designMaterials.materialIds.length !== 1
+    || !designInput
+    || designInput.kind !== 'visual'
+    || designInput.multiple
+    || !hasAnnotationSource
+  ) {
+    throw new Error(
+      'design_audit_report requires one provided designImage and a visual annotation source',
+    );
+  }
 }
 
 export interface ControlPlanningDependencies {
@@ -191,6 +219,12 @@ export class ControlPlanningService {
       if (orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      assertDesignAuditPlanMaterialContract({
+        deliverableId: deliverableSelection.deliverableId,
+        plan: compiled.plan,
+        pendingInputs: compiled.pending_inputs,
+        providedMaterials: planningResult.providedMaterials,
+      });
       return {
         candidateId: candidate.id,
         plan: compiled.plan,
@@ -219,6 +253,9 @@ export class ControlPlanningService {
         planHash: stored.planHash,
         plan: stored.plan as CurrentExecutionPlan,
         pendingInputs: stored.pendingInputs,
+        ...(planningResult.providedMaterials && planningResult.providedMaterials.length > 0
+          ? { providedMaterials: structuredClone(planningResult.providedMaterials) }
+          : {}),
       };
     });
     return {
@@ -305,7 +342,7 @@ export class ControlPlanningService {
       const structuredTask = planningResult.structuredTask;
       if (!structuredTask) throw new Error('clarification planning requires ResearchTaskV2');
       const preparedById = new Map(preparedCandidates.map((candidate) => [candidate.candidateId, candidate]));
-      return this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand({
+      const response = await this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand({
         taskId: input.taskId,
         conversationId: conversation.id,
         ownerUserId: input.ownerUserId,
@@ -329,6 +366,15 @@ export class ControlPlanningService {
         }),
         command: input.commandReservation,
       });
+      return planningResult.providedMaterials && planningResult.providedMaterials.length > 0
+        ? {
+            ...response,
+            candidates: response.candidates.map((candidate) => ({
+              ...candidate,
+              providedMaterials: structuredClone(planningResult.providedMaterials!),
+            })),
+          }
+        : response;
     }
     if (!this.dependencies.repository.persistExistingTaskWithCandidates) {
       throw new Error('existing-task planning persistence is unavailable');

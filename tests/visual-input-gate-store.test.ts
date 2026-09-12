@@ -43,7 +43,7 @@ function sha256(bytes: Uint8Array): string {
 function artifact(input: {
   id: string;
   taskId: string;
-  planVersionId: string;
+  planVersionId: string | null;
   kind: string;
   schemaVersion: string;
   byteSize: number;
@@ -87,7 +87,7 @@ class MemoryArtifacts {
     const stored = artifact({
       id,
       taskId: input.taskId,
-      planVersionId: input.planVersionId,
+      planVersionId: input.planVersionId ?? null,
       kind: input.kind,
       schemaVersion: input.schemaVersion ?? 'v1',
       byteSize: bytes.byteLength,
@@ -122,6 +122,10 @@ class MemoryArtifacts {
       artifact: this.artifacts.get(artifactId)!,
       value: structuredClone(this.values.get(artifactId)) as T,
     };
+  }
+
+  async verifyTaskBoundVisual(artifactId: string): Promise<ControlArtifact> {
+    return this.artifacts.get(artifactId)!;
   }
 
   async readVerifiedBinary(artifactId: string): Promise<{
@@ -203,6 +207,43 @@ test('seals visual bytes outside gate JSON and hydrates only after bound verific
 
   assert.deepEqual(resolved.gates[0]?.value, { dataUrl });
   assert.deepEqual(resolved.visuals[0]?.images[0]?.bytes, JPEG);
+});
+
+test('publishes a Plan gate that references an existing Task-bound image without copying its bytes', async () => {
+  const artifacts = new MemoryArtifacts();
+  const taskImage = artifact({
+    id: 'task-image-1',
+    taskId: 'task-1',
+    planVersionId: null,
+    kind: 'visual_input_image',
+    schemaVersion: 'visual-input-image-v1',
+    byteSize: PNG.byteLength,
+    contentSha256: sha256(PNG),
+    mediaType: 'image/png',
+  });
+  artifacts.artifacts.set(taskImage.id, taskImage);
+  artifacts.bytes.set(taskImage.id, PNG);
+  const store = new VisualInputGateStore(artifacts);
+
+  const published = await store.publishTaskMaterials({
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    gateKey: 'designImage',
+    multiple: false,
+    materialIds: [taskImage.id],
+  });
+
+  assert.equal(artifacts.binaryWrites.length, 0);
+  assert.equal(artifacts.jsonWrites.length, 1);
+  const manifest = artifacts.values.get(published.evidenceRef!) as { images: Array<{ artifactId: string }> };
+  assert.deepEqual(manifest.images.map(({ artifactId }) => artifactId), [taskImage.id]);
+  const resolved = await store.resolve({
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    gates: [inputGate(published.evidenceRef!)],
+    pendingInputs: pending,
+  });
+  assert.deepEqual(resolved.visuals[0]?.images[0]?.bytes, PNG);
 });
 
 test('invalidates a sealed manifest when its post-write binding check fails', async () => {

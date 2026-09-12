@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ResolvedVisualInputImage } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
+import { VisualAnalysisSuiteAdapter } from '../apps/orchestrator-runtime/src/runtime/visual-analysis-suite-adapter.ts';
+import {
+  ToolInvocationError,
+  type ToolAdapter,
+} from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
+import { loadToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 const modulePath = '../apps/orchestrator-runtime/src/report/visual-input-materializer.ts';
 const moduleFile = new URL(modulePath, import.meta.url);
@@ -386,5 +394,111 @@ test('rejects a complete image whose declared MIME disagrees with its decoded fo
       dataUrl: `data:image/png;base64,${JPEG_BYTES.toString('base64')}`,
     }),
     /visual input dataUrl/u,
+  );
+});
+
+test('visual analysis suite keeps sample order and degrades only the failed lab result', async () => {
+  let aestheticCalls = 0;
+  const labAdapter: ToolAdapter = {
+    adapterType: 'rest_json',
+    implementationId: 'fixture-labs',
+    executionMode: 'real',
+    endpointHost: () => 'labs.test',
+    async invoke(options) {
+      if (options.toolId === 'aesthetic-quant-lab') {
+        aestheticCalls += 1;
+        const body = options.input as { designImage?: { dataUrl?: string } };
+        if (body.designImage?.dataUrl?.endsWith('Y21wLTI=')) {
+          throw new ToolInvocationError(options.toolId, {
+            kind: 'timeout', retryable: true, sanitizedMessage: 'fixture timeout',
+          });
+        }
+        return {
+          output: {
+            status: 'available', summary: '美学分析完成。', overallScore: 0.6 + aestheticCalls / 100,
+            findings: [`美学观察 ${aestheticCalls}`], recommendations: [], warnings: [],
+          },
+          latencyMs: 1,
+          receipt: {
+            declaredAdapterType: 'rest_json', resolvedAdapterType: 'rest_json',
+            implementationId: 'fixture-labs', executionMode: 'real', endpointHost: 'labs.test',
+            status: 'ok', latencyMs: 1,
+          },
+        };
+      }
+      if (options.toolId === 'attention-analysis-lab') {
+        return {
+          output: {
+            status: 'available', mode: 'hybrid', engine: 'vlm', summary: '注意力分析完成。',
+            hotspots: [], peakAttentionScore: 0.8, focusBalanceScore: 0.7,
+            distractionRiskScore: 0.4, warnings: [],
+          },
+          latencyMs: 1,
+          receipt: {
+            declaredAdapterType: 'rest_json', resolvedAdapterType: 'rest_json',
+            implementationId: 'fixture-labs', executionMode: 'real', endpointHost: 'labs.test',
+            status: 'ok', latencyMs: 1,
+          },
+        };
+      }
+      return {
+        output: {
+          status: 'partial_failed', engine: 'vlm', summary: '三角色评审完成。',
+          visualReview: {
+            reviewers: [{ role: 'structural', roleLabel: '视觉设计师', score: 0.7, findings: ['层级可继续收敛。'], suggestions: ['强化主行动。'] }],
+            consensus: [], conflicts: [], priorityActions: ['强化主行动。'],
+          },
+          findings: ['层级可继续收敛。'], recommendations: ['强化主行动。'],
+          warnings: ['没有品牌参考图。'], boundaryNotes: [],
+        },
+        latencyMs: 1,
+        receipt: {
+          declaredAdapterType: 'rest_json', resolvedAdapterType: 'rest_json',
+          implementationId: 'fixture-labs', executionMode: 'real', endpointHost: 'labs.test',
+          status: 'ok', latencyMs: 1,
+        },
+      };
+    },
+  };
+  const adapter = new VisualAnalysisSuiteAdapter(labAdapter);
+  const manifest = loadToolManifest('tools/visual-analysis-suite/manifest.yaml');
+  const controller = new AbortController();
+  const result = await adapter.invoke({
+    toolId: 'visual-analysis-suite',
+    manifest,
+    context: { signal: controller.signal, deadlineAt: Date.now() + 10_000 },
+    input: {
+      research_goal: '比较商品详情页视觉体验',
+      jd_screenshots: [
+        { dataUrl: 'data:image/png;base64,amQtMQ==' },
+        { dataUrl: 'data:image/png;base64,amQtMg==' },
+      ],
+      competitor_screenshots: [
+        { dataUrl: 'data:image/png;base64,Y21wLTE=' },
+        { dataUrl: 'data:image/png;base64,Y21wLTI=' },
+      ],
+      designImages: [],
+    },
+  });
+  const output = result.output as {
+    status: string;
+    samples: Array<{ sampleId: string; role: string; aesthetic: { status: string } }>;
+    comparisonFindings: unknown[];
+    toolProvenance: unknown[];
+  };
+  assert.equal(output.status, 'partial');
+  assert.deepEqual(output.samples.map(({ sampleId, role }) => ({ sampleId, role })), [
+    { sampleId: 'JD-001', role: 'primary' },
+    { sampleId: 'JD-002', role: 'primary' },
+    { sampleId: 'COMP-001', role: 'comparison' },
+    { sampleId: 'COMP-002', role: 'comparison' },
+  ]);
+  assert.equal(output.samples[3]!.aesthetic.status, 'failed');
+  assert.equal(output.comparisonFindings.length, 3);
+  assert.equal(output.toolProvenance.length, 10);
+  assert.equal(JSON.stringify(output).includes('base64'), false);
+  new SchemaValidator().validateFileOrThrow(
+    join(process.cwd(), 'tools/visual-analysis-suite/output.schema.json'),
+    output,
   );
 });

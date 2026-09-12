@@ -20,7 +20,7 @@ capabilities:
     method_family: visual_competitive_analysis
     evidence_paths: [public_web, screenshot_analysis]
   - id: design-experience-review
-    task_types: [design_audit, user_research_planning]
+    task_types: [design_audit, user_research_planning, industry_market_analysis]
     profile_support: [focused, mixed_method, remediation]
     roles: [focused_analysis, independent_method, issue_identification, retest]
     method_family: expert_visual_review
@@ -128,7 +128,7 @@ capabilities:
     method_family: journey_synthesis
     evidence_paths: [user_material, behavioral_dataset]
   - id: run-heuristic-evaluation
-    task_types: [design_audit, industry_market_analysis]
+    task_types: [design_audit]
     profile_support: [focused, mixed_method, remediation]
     roles: [focused_analysis, independent_method, issue_identification, retest]
     method_family: heuristic_review

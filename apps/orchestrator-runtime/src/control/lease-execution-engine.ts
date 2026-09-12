@@ -91,6 +91,7 @@ import { buildResearchContributionBundle } from '../skills/research-contribution
 import { assertCompiledPortfolioPlan } from '../skills/portfolio-skill-plan-compiler.ts';
 import {
   ContributionAdapterRegistry,
+  VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID,
   VIRTUAL_USER_TOOL_ADAPTER_ID,
 } from '../skills/contribution-adapter-registry.ts';
 import {
@@ -564,46 +565,73 @@ function skillDegradationMessage(step: EngineStep, outcome: SkillOutputOutcome):
   return redactString(`Step ${step.step_no} (${step.actor_id}) degraded: ${reason}`);
 }
 
-function designAnnotationFindings(
+export function designAnnotationFindings(
   outputs: readonly EngineSealedStepOutput[],
 ): FindingBoundVisualAnnotation[] {
-  const analysis = outputs.find((output) => (
+  const direct = outputs.find((output) => (
     output.actorType === 'tool'
     && output.actorId === 'attention-analysis-lab'
     && output.kind === 'tool_output'
   ));
-  const value = isRecord(analysis?.output) ? analysis.output : null;
-  if (!analysis || value?.status !== 'available' || !Array.isArray(value.hotspots)) {
+  const directValue = isRecord(direct?.output) ? direct.output : null;
+  const suite = outputs.find((output) => (
+    output.actorType === 'tool'
+    && output.actorId === 'visual-analysis-suite'
+    && output.kind === 'tool_output'
+  ));
+  const suiteValue = isRecord(suite?.output) ? suite.output : null;
+  const sources: Array<{ stepNo: number; prefix: string; hotspots: unknown[] }> = [];
+  if (direct && directValue?.status === 'available' && Array.isArray(directValue.hotspots)) {
+    sources.push({ stepNo: direct.stepNo, prefix: '', hotspots: directValue.hotspots });
+  } else if (
+    suite
+    && (suiteValue?.status === 'available' || suiteValue?.status === 'partial')
+    && Array.isArray(suiteValue.samples)
+  ) {
+    for (const [sampleIndex, sampleCandidate] of suiteValue.samples.entries()) {
+      const sample = isRecord(sampleCandidate) ? sampleCandidate : null;
+      const attention = isRecord(sample?.attention) ? sample.attention : null;
+      if (attention?.status !== 'available' || !Array.isArray(attention.hotspots)) continue;
+      sources.push({
+        stepNo: suite.stepNo,
+        prefix: `${sampleIndex + 1}-`,
+        hotspots: attention.hotspots,
+      });
+    }
+  }
+  if (sources.length === 0) {
     throw new ExecutionAuthenticityError(
       'design audit requires a successful attention analysis before annotation synthesis',
     );
   }
-  const findings = value.hotspots.flatMap((candidate, index): FindingBoundVisualAnnotation[] => {
-    if (!isRecord(candidate)) return [];
-    const { x, y, width, height, score } = candidate;
-    if (
-      typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1
-      || typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y > 1
-      || typeof width !== 'number' || !Number.isFinite(width) || width <= 0 || x + width > 1
-      || typeof height !== 'number' || !Number.isFinite(height) || height <= 0 || y + height > 1
-    ) return [];
-    const label = typeof candidate.reason === 'string' && candidate.reason.trim()
-      ? candidate.reason.trim()
-      : typeof candidate.label === 'string' && candidate.label.trim()
-        ? candidate.label.trim()
-        : '';
-    if (!label) return [];
-    const normalizedScore = typeof score === 'number' && Number.isFinite(score) ? score : 0;
-    return [{
-      findingId: `design-attention-${analysis.stepNo}-${index + 1}`,
-      label,
-      severity: normalizedScore >= 0.8 ? 'high' : normalizedScore >= 0.5 ? 'medium' : 'low',
-      x,
-      y,
-      width,
-      height,
-    }];
-  });
+  const findings = sources.flatMap(({ stepNo, prefix, hotspots }) => (
+    hotspots.flatMap((candidate, index): FindingBoundVisualAnnotation[] => {
+      if (!isRecord(candidate)) return [];
+      const { x, y, width, height, score } = candidate;
+      if (
+        typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1
+        || typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y > 1
+        || typeof width !== 'number' || !Number.isFinite(width) || width <= 0 || x + width > 1
+        || typeof height !== 'number' || !Number.isFinite(height) || height <= 0 || y + height > 1
+      ) return [];
+      const label = typeof candidate.reason === 'string' && candidate.reason.trim()
+        ? candidate.reason.trim()
+        : typeof candidate.label === 'string' && candidate.label.trim()
+          ? candidate.label.trim()
+          : '';
+      if (!label) return [];
+      const normalizedScore = typeof score === 'number' && Number.isFinite(score) ? score : 0;
+      return [{
+        findingId: `design-attention-${stepNo}-${prefix}${index + 1}`,
+        label,
+        severity: normalizedScore >= 0.8 ? 'high' : normalizedScore >= 0.5 ? 'medium' : 'low',
+        x,
+        y,
+        width,
+        height,
+      }];
+    })
+  ));
   if (findings.length === 0) {
     throw new ExecutionAuthenticityError(
       'design audit attention analysis has no valid finding-bound hotspot',
@@ -1576,8 +1604,25 @@ function contributionEvidenceView(input: {
   lease: ControlExecutionLease;
   adapterId: string;
   source?: EngineSealedStepOutput;
+  visualOriginals?: readonly MaterializedVisualOriginal[];
 }): EvidenceManifest {
   const entries: EvidenceEntry[] = [];
+  if (input.adapterId === VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID) {
+    entries.push(...(input.visualOriginals ?? []).flatMap((visual, index): EvidenceEntry[] => (
+      visual.original.manifestContentSha256
+        ? [{
+            id: `S1-${index + 1}`,
+            kind: 'screenshot',
+            evidenceClass: 'screenshot',
+            artifactId: visual.original.manifestArtifactId,
+            artifactContentSha256: visual.original.manifestContentSha256,
+            jsonPointer: '/assetId',
+            sensitivity: 'internal',
+            redaction: 'none',
+          }]
+        : []
+    )));
+  }
   if (
     input.adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
     && input.source
@@ -2538,23 +2583,28 @@ export class LeaseExecutionEngine {
                 `Contributor ${contributionPolicy.invocationId} has no adapter`,
               );
             }
-            const virtualSource = adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+            const sourceToolId = adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+              ? 'virtual-user-lab'
+              : adapterId === VISUAL_ANALYSIS_CONTRIBUTION_ADAPTER_ID
+                ? 'visual-analysis-suite'
+                : null;
+            const adapterSource = sourceToolId
               ? [...outputs].reverse().find((output) => (
-                  output.actorId === 'virtual-user-lab'
+                  output.actorId === sourceToolId
                   && output.stepNo < step.step_no
                   && output.kind === 'tool_output'
                 ))
               : undefined;
-            if (adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID && !virtualSource) {
+            if (sourceToolId && !adapterSource) {
               throw new ExecutionAuthenticityError(
-                `Contributor ${contributionPolicy.invocationId} has no virtual-user-lab source`,
+                `Contributor ${contributionPolicy.invocationId} has no ${sourceToolId} source`,
               );
             }
-            const source = virtualSource ?? sealedOutput;
+            const source = adapterSource ?? sealedOutput;
             const contributionValue = (this.dependencies.contributionAdapters
               ?? new ContributionAdapterRegistry()).adapt({
               adapterId,
-              source: virtualSource?.output ?? verified.output,
+              source: adapterSource?.output ?? verified.output,
               sourceArtifact: {
                 id: source.artifact.id,
                 contentSha256: source.artifact.contentSha256!,
@@ -2571,7 +2621,8 @@ export class LeaseExecutionEngine {
               evidenceManifest: contributionEvidenceView({
                 lease: input.lease,
                 adapterId,
-                source: virtualSource,
+                source: adapterSource,
+                visualOriginals: materializedVisualOriginals,
               }),
             });
             const contributionArtifact = await this.dependencies.artifacts.writeJson({
@@ -3141,6 +3192,34 @@ export class LeaseExecutionEngine {
               implementationId,
               redactedOutputHash,
             });
+          }
+          if (
+            step.actorType === 'tool'
+            && step.actorId === 'visual-analysis-suite'
+            && step.state === 'succeeded'
+            && artifact
+            && executionMode === 'real'
+            && typeof implementationId === 'string'
+            && typeof redactedOutputHash === 'string'
+            && (toolTier === 'core' || toolTier === 'optional')
+            && isRecord(artifact.value)
+            && isRecord(artifact.value.output)
+            && artifact.value.output.version === 'visual-analysis-suite-v1'
+          ) {
+            return [{
+              id: `VA${step.stepNo}-1`,
+              kind: 'tool_output',
+              evidenceClass: 'derived',
+              toolId: step.actorId,
+              toolTier,
+              artifactId: artifact.artifact.id,
+              artifactContentSha256: artifact.artifact.contentSha256,
+              jsonPointer: '/output',
+              stepNo: step.stepNo,
+              toolProof: { implementationId, executionMode: 'real', redactedOutputHash },
+              sensitivity: 'internal',
+              redaction: 'masked',
+            }];
           }
           if (
             step.actorType !== 'tool'

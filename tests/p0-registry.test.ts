@@ -37,7 +37,6 @@ test('every current real-smoke capability declares core Tavily through the Regis
     'generate-research-plan',
     'competitive-web-research',
     'code-open-feedback',
-    'design-experience-review',
     'accessibility-review',
   ];
 

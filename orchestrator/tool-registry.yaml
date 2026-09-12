@@ -69,6 +69,15 @@ tools:
     status: active
     tier: optional
 
+  - id: visual-analysis-suite
+    name: 多实验室视觉分析套件
+    path: tools/visual-analysis-suite/manifest.yaml
+    adapter_type: visual_suite
+    auth_required: false
+    risk_level: low
+    status: active
+    tier: optional
+
   - id: experience-model-lab
     name: 体验模型实验室
     path: tools/experience-model-lab/manifest.yaml

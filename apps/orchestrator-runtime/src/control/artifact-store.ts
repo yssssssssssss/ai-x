@@ -54,7 +54,7 @@ export class TextArtifactValidationError extends Error {
 
 interface ArtifactWriteBase {
   taskId: string;
-  planVersionId: string;
+  planVersionId?: string;
   attemptId?: string;
   publicationId?: string;
   kind: string;
@@ -67,6 +67,7 @@ interface ArtifactWriteBase {
 }
 
 export interface ArtifactWriteInput extends ArtifactWriteBase {
+  planVersionId: string;
   value: unknown;
 }
 
@@ -76,12 +77,14 @@ export interface BinaryArtifactWriteInput extends ArtifactWriteBase {
 }
 
 export interface TextArtifactWriteInput extends ArtifactWriteBase {
+  planVersionId: string;
   content: string;
   mediaType: 'text/html; charset=utf-8';
   maxByteSize: number;
 }
 
 export interface CsvArtifactWriteInput extends ArtifactWriteBase {
+  planVersionId: string;
   content: string;
   mediaType: 'text/csv; charset=utf-8';
   maxByteSize: number;
@@ -451,18 +454,25 @@ export class ControlArtifactStore {
     }
   }
 
-  private directoryFor(input: Pick<ArtifactWriteBase, 'taskId' | 'planVersionId' | 'attemptId'>): string {
+  private directoryFor(input: Pick<ArtifactWriteBase, 'taskId' | 'planVersionId' | 'attemptId' | 'kind'>): string {
     for (const [name, value] of Object.entries({
       taskId: input.taskId,
-      planVersionId: input.planVersionId,
+      ...(input.planVersionId ? { planVersionId: input.planVersionId } : {}),
       ...(input.attemptId ? { attemptId: input.attemptId } : {}),
     })) {
       if (!value || value === '.' || value === '..' || value.includes('/') || value.includes('\\')) {
         throw new Error(`artifact ${name} is not a valid workspace identity`);
       }
     }
-    if (input.attemptId) return join(this.options.root, 'tasks', input.taskId, 'attempts', input.attemptId);
-    return join(this.options.root, 'tasks', input.taskId, 'plans', input.planVersionId);
+    if (input.attemptId) {
+      if (!input.planVersionId) throw new Error('attempt-bound Artifact requires a Plan Version');
+      return join(this.options.root, 'tasks', input.taskId, 'attempts', input.attemptId);
+    }
+    if (input.planVersionId) return join(this.options.root, 'tasks', input.taskId, 'plans', input.planVersionId);
+    if (input.kind !== 'visual_input_image') {
+      throw new Error('only visual_input_image may be stored as a Task-bound Artifact');
+    }
+    return join(this.options.root, 'tasks', input.taskId, 'materials');
   }
 
   private resolveArtifactPath(directory: string, relativePath: string): string {
@@ -485,17 +495,21 @@ export class ControlArtifactStore {
   }
 
   private assertVerifiedPath(artifact: ControlArtifact): string {
-    if (!artifact.planVersionId) {
-      throw new ArtifactIntegrityError(artifact.id, 'has no versioned workspace identity');
+    const taskBoundVisual = artifact.planVersionId === null
+      && artifact.attemptId === null
+      && artifact.kind === 'visual_input_image';
+    if (!artifact.planVersionId && !taskBoundVisual) {
+      throw new ArtifactIntegrityError(artifact.id, 'has no trusted workspace identity');
     }
     const logical = this.logicalPath(artifact.storageUri);
     const expectedDirectory = relative(resolve(this.options.root), resolve(this.directoryFor({
       taskId: artifact.taskId,
-      planVersionId: artifact.planVersionId,
+      planVersionId: artifact.planVersionId ?? undefined,
       attemptId: artifact.attemptId ?? undefined,
+      kind: artifact.kind,
     })));
     if (logical !== expectedDirectory && !logical.startsWith(`${expectedDirectory}${sep}`)) {
-      throw new ArtifactIntegrityError(artifact.id, 'storage path does not match its versioned workspace');
+      throw new ArtifactIntegrityError(artifact.id, 'storage path does not match its trusted workspace');
     }
     return logical;
   }
@@ -625,7 +639,7 @@ export class ControlArtifactStore {
       if (!artifact && persisted) {
         const recoveredCreate = persisted.id === stagingArtifactId
           && persisted.taskId === input.taskId
-          && persisted.planVersionId === input.planVersionId
+          && persisted.planVersionId === (input.planVersionId ?? null)
           && persisted.attemptId === (input.attemptId ?? null)
           && persisted.kind === input.kind
           && persisted.storageUri === storageUri
@@ -714,7 +728,11 @@ export class ControlArtifactStore {
     const metadata = await inspectBinary(bytes, input.trustedMediaType);
     return this.writeBytes(input, bytes, {
       mediaType: metadata.contentType,
-      metadata: { width: metadata.width, height: metadata.height },
+      metadata: {
+        ...(input.metadata ? structuredClone(input.metadata) : {}),
+        width: metadata.width,
+        height: metadata.height,
+      },
     });
   }
 
@@ -784,9 +802,19 @@ export class ControlArtifactStore {
     verifyPath = false,
     maxByteSize?: number,
   ): Promise<{ artifact: ControlArtifact; bytes: Buffer }> {
-    const artifact = verifyPath
-      ? await this.options.registry.requireSealedArtifactBinding(artifactId)
-      : await this.options.registry.requireSealedArtifact(artifactId);
+    let artifact = await this.options.registry.requireSealedArtifact(artifactId);
+    if (verifyPath && artifact.planVersionId !== null) {
+      artifact = await this.options.registry.requireSealedArtifactBinding(artifactId);
+    } else if (
+      verifyPath
+      && !(
+        artifact.planVersionId === null
+        && artifact.attemptId === null
+        && artifact.kind === 'visual_input_image'
+      )
+    ) {
+      throw new ArtifactIntegrityError(artifactId, 'has no trusted workspace identity');
+    }
     if (artifact.byteSize === null) throw new ArtifactIntegrityError(artifactId, 'sealed byte size is missing');
     if (maxByteSize !== undefined && artifact.byteSize > maxByteSize) {
       throw new BinaryArtifactValidationError('stored byte size exceeds 10 MiB');
@@ -850,6 +878,19 @@ export class ControlArtifactStore {
     return { artifact, content };
   }
 
+  async verifyTaskBoundVisual(artifactId: string): Promise<ControlArtifact> {
+    const { artifact } = await this.readVerifiedBytes(artifactId, true, MAX_BINARY_BYTE_SIZE);
+    if (
+      artifact.planVersionId !== null
+      || artifact.attemptId !== null
+      || artifact.kind !== 'visual_input_image'
+      || artifact.schemaVersion !== 'visual-input-image-v1'
+    ) {
+      throw new ArtifactIntegrityError(artifactId, 'is not a Task-bound visual input');
+    }
+    return artifact;
+  }
+
   async readVerifiedBinary(artifactId: string): Promise<{
     artifact: ControlArtifact;
     bytes: Buffer;
@@ -861,11 +902,16 @@ export class ControlArtifactStore {
       artifact.mediaType === 'image/svg+xml' ? 'image/svg+xml' : undefined,
     );
     const persisted = artifact.metadata;
+    const expectedMetadataKeys = artifact.planVersionId === null
+      ? ['fileName', 'height', 'ownerUserId', 'requestId', 'role', 'width']
+      : ['height', 'width'];
+    const persistedKeys = persisted ? Object.keys(persisted).sort() : [];
     if (
       artifact.mediaType !== metadata.contentType
       || artifact.byteSize !== metadata.byteSize
       || !persisted
-      || Object.keys(persisted).length !== 2
+      || persistedKeys.length !== expectedMetadataKeys.length
+      || persistedKeys.some((key, index) => key !== expectedMetadataKeys[index])
       || persisted.width !== metadata.width
       || persisted.height !== metadata.height
     ) {

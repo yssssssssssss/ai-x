@@ -20,6 +20,7 @@ import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/v
 import {
   ExecutionAuthenticityError,
   LeaseExecutionEngine,
+  designAnnotationFindings,
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
@@ -613,6 +614,36 @@ class CapturingRestAdapter implements ToolAdapter {
   async invoke(options: { input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     this.calls += 1;
     this.inputs.push(structuredClone(options.input));
+    return {
+      output: structuredClone(this.output),
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok',
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+class CapturingVisualSuiteAdapter implements ToolAdapter {
+  readonly adapterType = 'visual_suite' as const;
+  readonly implementationId = 'test-visual-suite-real-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  constructor(private readonly output: object) {}
+
+  endpointHost(): string {
+    return 'visual-suite.test';
+  }
+
+  async invoke(options: { manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
     return {
       output: structuredClone(this.output),
       latencyMs: 1,
@@ -2237,6 +2268,138 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
   const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
   assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
   assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'user_input').length, 0);
+});
+
+test('maps Visual Analysis Suite sample hotspots into finding-bound annotations', () => {
+  const findings = designAnnotationFindings([{
+    stepNo: 4,
+    actorType: 'tool',
+    actorId: 'visual-analysis-suite',
+    kind: 'tool_output',
+    output: {
+      version: 'visual-analysis-suite-v1',
+      status: 'available',
+      samples: [{
+        sampleId: 'sample-1',
+        role: 'primary',
+        sourceImageId: 'material-1',
+        visualReviewBatchId: 'batch-1',
+        aesthetic: { status: 'available', summary: '', findings: [], recommendations: [], warnings: [] },
+        attention: {
+          status: 'available', summary: '首屏注意力集中', warnings: [],
+          hotspots: [{ id: 'hotspot-1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, score: 0.85, reason: '主按钮竞争注意力' }],
+        },
+      }],
+      visualReviewBatches: [], comparisonFindings: [], warnings: [], boundaryNotes: [], toolProvenance: [],
+    },
+  }] as never);
+
+  assert.deepEqual(findings, [{
+    findingId: 'design-attention-4-1-1',
+    label: '主按钮竞争注意力',
+    severity: 'high',
+    x: 0.1,
+    y: 0.2,
+    width: 0.3,
+    height: 0.4,
+  }]);
+});
+
+test('visual-only Design Audit records Visual Suite as core derived Evidence', async () => {
+  const visualStep: CurrentPlanStep = {
+    step_no: 1,
+    step_name: 'visual analysis suite',
+    actor_type: 'tool',
+    actor_id: 'visual-analysis-suite',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: { research_goal: '审计页面视觉层级', designImages: [] },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/samples', description: 'visual samples' }],
+    acceptance_criteria: ['returns normalized visual findings'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [visualStep],
+    {
+      deliverable_type: 'design_audit_report',
+      evidence_requirements: [{
+        id: 'design-audit-report',
+        acceptedClasses: ['screenshot', 'user_input', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts });
+  const adapter = new CapturingVisualSuiteAdapter({
+    version: 'visual-analysis-suite-v1',
+    status: 'available',
+    samples: [{
+      sampleId: 'sample-1', role: 'primary', sourceImageId: 'material-1', visualReviewBatchId: 'batch-1',
+      aesthetic: { status: 'available', summary: '', findings: [], recommendations: [], warnings: [] },
+      attention: {
+        status: 'available', summary: '首屏注意力集中', warnings: [],
+        hotspots: [{ id: 'hotspot-1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, score: 0.85, reason: '主按钮竞争注意力' }],
+      },
+    }],
+    visualReviewBatches: [], comparisonFindings: [], warnings: [], boundaryNotes: [], toolProvenance: [],
+  });
+  let annotatedFindings: Array<{ findingId: string }> = [];
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts,
+    tools: new ToolRouter().register(adapter),
+    llm: new CountingRealLLM(),
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: {
+      async materialize(input) {
+        const original = await visualAssets.ingest({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          activeLease: input.lease,
+          source: {
+            kind: 'user_upload', fileName: 'design-original.png',
+            bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+          },
+          exportPolicy: 'allow',
+        });
+        return [{
+          gateKey: 'designImage', imageIndex: 1,
+          original: {
+            assetId: original.assetArtifact.id,
+            manifestArtifactId: original.manifestArtifact.id,
+            manifestContentSha256: original.manifestArtifact.contentSha256!,
+          },
+        }];
+      },
+      async annotateDesignFindings(input) {
+        annotatedFindings = input.findings.map(({ findingId }) => ({ findingId }));
+      },
+    },
+  });
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(adapter.calls, 1);
+  assert.deepEqual(annotatedFindings, [{ findingId: 'design-attention-1-1-1' }]);
+  assert.ok(result.evidenceManifestArtifactId);
+  const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
+  assert.ok(manifest.value.entries.some((entry) => (
+    entry.id === 'VA1-1'
+    && entry.evidenceClass === 'derived'
+    && entry.toolId === 'visual-analysis-suite'
+    && entry.toolTier === 'core'
+  )));
+  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
 });
 
 test('defers design annotation until verified attention findings are available', async () => {

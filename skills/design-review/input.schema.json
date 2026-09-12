@@ -10,19 +10,57 @@
       "additionalProperties": false,
       "properties": {
         "url": { "type": "string" },
-        "dataUrl": { "type": "string" },
+        "dataUrl": {
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/definitions/uploadedImage" }
+          ]
+        },
         "path": { "type": "string" }
+      }
+    },
+    "uploadedImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "mediaType", "byteSize", "contentSha256"],
+      "properties": {
+        "kind": { "const": "uploaded_image" },
+        "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp"] },
+        "byteSize": { "type": "integer", "minimum": 1 },
+        "contentSha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }
     }
   },
   "properties": {
     "designImage": { "$ref": "#/definitions/imageRef", "description": "待评设计稿(dataUrl 或可访问 url)" },
+    "jd_screenshots": {
+      "type": ["array", "null"],
+      "items": { "$ref": "#/definitions/imageRef" }
+    },
+    "competitor_screenshots": {
+      "type": ["array", "null"],
+      "items": { "$ref": "#/definitions/imageRef" }
+    },
     "brandReferenceImage": { "$ref": "#/definitions/imageRef", "description": "品牌参考图,做品牌一致性时用" },
     "goal": { "type": "string", "description": "评估目标/业务诉求" },
     "focus": {
       "type": "array",
       "description": "评估重点;为空则三项全做。",
       "items": { "type": "string", "enum": ["aesthetic", "attention", "brand"] }
+    },
+    "instruction": { "type": "string" },
+    "visual_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "samples", "visualReviewBatches", "comparisonFindings", "warnings", "boundaryNotes"],
+      "properties": {
+        "status": { "type": ["string", "null"] },
+        "samples": { "type": ["array", "null"] },
+        "visualReviewBatches": { "type": ["array", "null"] },
+        "comparisonFindings": { "type": ["array", "null"] },
+        "warnings": { "type": ["array", "null"] },
+        "boundaryNotes": { "type": ["array", "null"] }
+      }
     }
   }
 }
