@@ -77,6 +77,50 @@ test('Scenario direction submission exposes candidate generation progress', asyn
   assert.match(markup, /正在生成候选方案/u);
 });
 
+test('renders required visual Material requests and preserves already uploaded files', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        taskMaterials: [{
+          materialId: 'material-1', requestId: 'target-design', role: 'designImage', fileName: 'page.png',
+          mediaType: 'image/png', contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+        }],
+        structuredTask: {
+          ...response.structuredTask,
+          task_type: 'design_audit',
+          expected_deliverables: ['design_audit_report'],
+          material_requests: [{
+            id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+            required: true, multiple: false, reason: '用于设计问题标注',
+          }],
+        },
+      },
+      materials: [{
+        materialId: 'material-1', requestId: 'target-design', role: 'designImage', fileName: 'page.png',
+        mediaType: 'image/png', contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+      }],
+      onUploadMaterial: async () => undefined,
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /所需材料/u);
+  assert.match(markup, /目标页面截图/u);
+  assert.match(markup, /page\.png/u);
+  assert.match(markup, /已提供/u);
+  assert.match(markup, /accept="image\/png,image\/jpeg,image\/webp"/u);
+});
+
 test('deliverable intent clarification renders business-language choices', async () => {
   const { CurrentStage1Clarify } = await loadClarificationComponent();
   const globals = globalThis as typeof globalThis & { React?: unknown };

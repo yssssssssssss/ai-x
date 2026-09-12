@@ -132,7 +132,12 @@ stages:
     actor_id: llm.openai.gpt-4o
     depends_on: [inventory-evidence, synthesize-direct-answers, challenge-answer-claims]
     input:
-      instruction: Materialize every requested strategy object and bind it to questions and verified Evidence.
+      instruction: >-
+        Materialize every requested strategy object and bind it to questions and verified Evidence.
+        Use the exact content Block kind for each requested artifact: strategy_map→strategy_map,
+        mind_model→mind_model, design_principles→design_principles,
+        opportunity_backlog→opportunity_backlog, prioritized_actions→prioritized_actions,
+        channel_strategies→channel_strategies, action_plan→action_plan.
       evidence_inventory: null
       direct_answers: null
       conflict_review: null
@@ -180,7 +185,21 @@ stages:
     actor_id: research-strategy-synthesis
     depends_on: [load-evidence-standards, inventory-evidence, synthesize-direct-answers, challenge-answer-claims, materialize-strategy, prioritize-actions]
     input:
-      instruction: Compose one research-strategy-content-draft-v2 with direct answers, evidence findings, and only useful typed content blocks. When a research-contribution-bundle-v1 is present, explicitly cite every source unit whose content is used as `${entry.artifactId}:${unit.key}` in sourceContributionUnitIds. Preserve every supported unit owned by a required demand; select provisional units only when they materially improve the answer. Unselected provisional units remain explicit fidelity conditions in the Contribution Ledger and must never be presented as used. Preserve source statements exactly when claiming direct inclusion, never invent source IDs, and do not repeat Contributor-owned analysis. Choose content blocks from the requested artifacts and evidence; do not generate machine-owned IDs, coverage, risk identities, source pointers, or requestedArtifactBindings.
+      instruction: >-
+        Compose one research-strategy-content-draft-v2 with direct answers, evidence findings,
+        and only useful typed content blocks. Materialize every requested artifact with its exact
+        same-named content Block kind: strategy_map→strategy_map, mind_model→mind_model,
+        design_principles→design_principles, opportunity_backlog→opportunity_backlog,
+        prioritized_actions→prioritized_actions, channel_strategies→channel_strategies,
+        action_plan→action_plan. When a research-contribution-bundle-v1 is present, explicitly
+        cite every source unit whose content is used as `${entry.artifactId}:${unit.key}` in
+        sourceContributionUnitIds. Preserve every supported unit owned by a required demand;
+        select provisional units only when they materially improve the answer. Unselected
+        provisional units remain explicit fidelity conditions in the Contribution Ledger and
+        must never be presented as used. Preserve source statements exactly when claiming direct
+        inclusion, never invent source IDs, and do not repeat Contributor-owned analysis. Choose
+        content blocks from the requested artifacts and evidence; do not generate machine-owned
+        IDs, coverage, risk identities, source pointers, or requestedArtifactBindings.
       contribution_bundle: null
       contribution_order: []
       knowledge: null

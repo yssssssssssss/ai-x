@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "visual-analysis-suite/input.schema.json",
+  "title": "VisualAnalysisSuiteInput",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "research_goal": {
+      "type": "string"
+    },
+    "designImages": {
+      "$ref": "#/$defs/images"
+    },
+    "jd_screenshots": {
+      "$ref": "#/$defs/images"
+    },
+    "competitor_screenshots": {
+      "$ref": "#/$defs/images"
+    }
+  },
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataUrl"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "dataUrl": {
+          "type": "string",
+          "pattern": "^data:image/(?:jpeg|png|webp);base64,"
+        }
+      }
+    },
+    "images": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/image" }
+    }
+  }
+}

@@ -107,6 +107,16 @@ export interface ResearchTaskV2BlockingIssue {
   kind: string;
 }
 
+export interface TaskMaterialRequest {
+  id: string;
+  role: string;
+  kind: 'visual';
+  label: string;
+  required: boolean;
+  multiple: boolean;
+  reason: string;
+}
+
 export const REQUESTED_ARTIFACTS = [
   'executive_answers',
   'research_report',
@@ -183,11 +193,33 @@ export interface CapabilityDemandGraphV1 {
   demands: CapabilityDemand[];
 }
 
+export type IndustryMaterialRole =
+  | 'jd_screenshots'
+  | 'competitor_screenshots'
+  | 'competitor_platform_names'
+  | 'user_research_dataset'
+  | 'internal_metrics_dataset';
+
+export interface IndustryScopeV1 {
+  category: string;
+  subcategories: string[];
+  exclusions: string[];
+  analysis_depth: 'light' | 'medium' | 'heavy';
+  primary_focus: string;
+  secondary_focuses: string[];
+  decision_audience: string[];
+  decision_goal: string;
+  time_window: string;
+}
+
 export interface ResearchTaskV2 {
   version: 'research-task-v2';
-  task_type: 'competitive_research' | 'user_research_planning' | 'research_synthesis' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  task_type: 'competitive_research' | 'user_research_planning' | 'research_synthesis' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit' | 'industry_market_analysis';
   outcome_mode?: ResearchOutcomeMode;
   requested_artifacts?: RequestedArtifact[];
+  industry_scope?: IndustryScopeV1;
+  available_material_roles?: IndustryMaterialRole[];
+  unavailable_material_roles?: IndustryMaterialRole[];
   business_domain: string;
   research_goal: string;
   comparison_dimensions?: string[];
@@ -199,6 +231,7 @@ export interface ResearchTaskV2 {
   assumptions: Assumption[];
   ambiguities: ResearchTaskV2Ambiguity[];
   clarification_questions: ResearchTaskV2ClarificationQuestion[];
+  material_requests?: TaskMaterialRequest[];
   blocking_issues: ResearchTaskV2BlockingIssue[];
   sensitivity: 'public' | 'internal' | 'confidential';
   pii_detected: boolean;
@@ -231,7 +264,7 @@ export function missingRequiredClarificationAnswers(
 }
 
 export interface PendingUpload {
-  kind?: 'value' | 'visual';
+  kind?: 'value' | 'visual' | 'dataset';
   role: string;
   label: string;
   multiple: boolean;

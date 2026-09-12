@@ -21,7 +21,9 @@ import {
   TaskWorkflowGateError,
   TaskWorkflowService,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { DatasetInputGateStore } from '../apps/orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import {
@@ -1003,6 +1005,195 @@ test('seals valid visual input and stores only its Artifact reference in the gat
     }
     const manifest = await artifacts.readVerifiedBoundJson<unknown>(gate!.evidenceRef!);
     assert.doesNotMatch(JSON.stringify(manifest.value), /data:image|base64/u);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('confirms a Plan with an inherited Task-bound image without copying image bytes', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-task-material-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const visualGates = new VisualInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(repository, undefined, undefined, undefined, visualGates);
+    const structuredTask = currentTask({
+      task_type: 'design_audit',
+      research_goal: '走查商品详情页设计并标注问题',
+      expected_deliverables: ['design_audit_report'],
+      material_requests: [{
+        id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+        required: true, multiple: false, reason: '用于设计问题标注',
+      }],
+    });
+    const task = await repository.createTask({
+      conversationId,
+      ownerUserId: ownerId,
+      originalInput: structuredTask.research_goal,
+      taskType: null,
+      structuredTask,
+      state: 'awaiting_clarification',
+      orchestrationMode: 'single_skill',
+    });
+    const image = await artifacts.writeBinary({
+      taskId: task.id,
+      kind: 'visual_input_image',
+      relativePath: 'source.png',
+      schemaVersion: 'visual-input-image-v1',
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      metadata: {
+        requestId: 'target-design', role: 'designImage', fileName: 'source.png', ownerUserId: ownerId,
+      },
+    });
+    const activated = await repository.createAndActivateRequirementVersion({
+      taskId: task.id,
+      ownerUserId: ownerId,
+      expectedVersion: task.stateVersion,
+      rawInputHash: 'sha256:task-material-requirement',
+      clarification: {
+        materialBindings: [{ requestId: 'target-design', materialIds: [image.id] }],
+      },
+      structuredTask,
+    });
+    const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+    const candidate = (id: 'speed' | 'depth') => ({
+      candidateId: id,
+      plan: {
+        ...currentPlan('', `${id} task material`, [currentStep({ input: { designImage: null } })]),
+        deliverable_type: 'design_audit_report' as const,
+      },
+      pendingInputs: [{
+        kind: 'visual' as const,
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const created = await candidateRepository.persistExistingTaskWithCandidates!({
+      taskId: task.id,
+      conversationId,
+      ownerUserId: ownerId,
+      expectedStateVersion: activated.task.stateVersion,
+      taskType: 'design_audit',
+      structuredTask,
+      candidates: [candidate('speed'), candidate('depth')],
+    });
+    const selection = await workflow.select({
+      taskId: task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'task-material-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find(({ candidateId }) => candidateId === 'speed')!.id,
+    });
+
+    await workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'task-material-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+
+    const [gate] = await repository.listGateRecords(task.id, selection.planVersionId);
+    const manifest = await artifacts.readVerifiedBoundJson<{ images: Array<{ artifactId: string }> }>(gate!.evidenceRef!);
+    assert.deepEqual(manifest.value.images.map(({ artifactId }) => artifactId), [image.id]);
+    const connection = await scopedDatabase.connect();
+    try {
+      const count = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts
+         WHERE task_id = $1 AND kind = 'visual_input_image'`,
+        [task.id],
+      );
+      assert.equal(count.rows[0]?.count, 1);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('binds one uploaded Dataset by Artifact reference without creating a visual publication', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-dataset-input-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const datasetGates = new DatasetInputGateStore(artifacts);
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+      datasetGates,
+    );
+    const created = await createCandidateTask(repository, 'sealed-dataset-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'sealed-dataset-input', [currentStep({ input: { user_research_dataset: null } })]),
+      pendingInputs: [{
+        kind: 'dataset', role: 'user_research_dataset', label: '匿名用户研究 CSV', multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'user_research_dataset', multiple: false }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'sealed-dataset-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const uploaded = await datasetGates.upload({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      role: 'user_research_dataset',
+      ownerUserId: ownerId,
+      taskSensitivity: 'internal',
+      fileName: 'users.csv',
+      mediaType: 'text/csv',
+      bytes: Buffer.from('sample_id,score\nu1,3\n'),
+      metadata: {
+        rowMeaning: '一行一个匿名样本', timeRange: '2026-Q3', fieldNotes: {}, units: { score: '分' },
+        sampling: '访谈样本', piiConfirmedAbsent: true,
+      },
+    });
+
+    await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'sealed-dataset-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { user_research_dataset: uploaded.datasetInputId },
+    });
+
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.value, null);
+    assert.equal(gate?.evidenceRef, uploaded.datasetInputId);
+    const verified = await datasetGates.resolve({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      ownerUserId: ownerId,
+      gates: [gate!],
+      pendingInputs: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.pendingInputs as never,
+    });
+    assert.equal((verified.gates[0]?.value as { version?: string }).version, 'dataset-model-view-v1');
+    const connection = await scopedDatabase.connect();
+    try {
+      const publications = await connection.query(
+        'SELECT count(*)::int AS count FROM control_visual_publications WHERE task_id = $1',
+        [created.task.id],
+      );
+      assert.equal(publications.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
   } finally {
     rmSync(artifactRoot, { recursive: true, force: true });
   }
@@ -3213,6 +3404,80 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
     ...currentPlan(optional.task.id, 'optional-resume', originalOptionalSteps),
     steps: expectedSteps,
   });
+});
+
+test('resume skip preserves a legacy v2 Invocation id while remapping its owned step', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const invocationId = 'competitive-analysis:2';
+  const steps = [
+    currentStep({
+      step_name: 'failed optional search',
+      actor_type: 'tool',
+      actor_id: 'ai-spider-search',
+      expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+    }),
+    currentStep({
+      step_no: 2,
+      step_name: 'competitive analysis',
+      actor_type: 'skill',
+      actor_id: 'competitive-analysis',
+      input: { research_goal: 'compare competitors' },
+      expected_outputs: [{ pointer: '/payload', description: 'analysis result' }],
+      skill_invocation_id: invocationId,
+    }),
+  ];
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'legacy-v2-invocation-remap',
+    failedStepNo: 1,
+    steps,
+    allowedActions: ['retry', 'skip', 'abort'],
+    planFactory(taskId, planSteps) {
+      const plan = currentPlan(taskId, 'legacy-v2-invocation-remap', planSteps);
+      const skill = new SkillLoader().listCapabilitySkills()
+        .find(({ id }) => id === 'competitive-analysis');
+      assert.ok(skill?.status === 'active');
+      plan.capability_decisions.eligible.push({
+        skill,
+        reasons: [{ code: 'eligible', message: 'fixture Skill is eligible' }],
+        pending_inputs: [],
+        required_approvals: [],
+        optional_tool_decisions: [],
+      });
+      plan.execution_contract_version = 'current-execution-plan-v2';
+      plan.skill_invocations = [{
+        invocation_id: invocationId,
+        skill_id: 'competitive-analysis',
+        execution_mode: 'legacy_single_call',
+        step_nos: [2],
+      }];
+      return plan;
+    },
+  });
+
+  const skipped = await workflow.resume({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'legacy-v2-invocation-remap',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'skip',
+    failedStepNo: 1,
+  });
+  assert.equal(skipped.state, 'awaiting_confirmation');
+
+  const task = await repository.getTaskDetail(paused.task.id);
+  const revised = await repository.getPlanVersionDetail(task?.activePlanVersionId ?? '');
+  const revisedPlan = revised?.plan as CurrentExecutionPlan | undefined;
+  assert.equal(revisedPlan?.execution_contract_version, 'current-execution-plan-v2');
+  assert.deepEqual(revisedPlan?.skill_invocations, [{
+    invocation_id: invocationId,
+    skill_id: 'competitive-analysis',
+    execution_mode: 'legacy_single_call',
+    step_nos: [1],
+  }]);
+  assert.equal(revisedPlan?.steps[0]?.skill_invocation_id, invocationId);
+  assert.equal(revisedPlan?.steps[0]?.step_no, 1);
 });
 
 test('resume skip remaps every remaining PendingInput target with the step map', async () => {

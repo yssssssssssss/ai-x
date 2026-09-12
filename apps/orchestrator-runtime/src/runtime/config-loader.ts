@@ -292,6 +292,7 @@ export interface SkillRegistryEntry {
   inputs?: string[];
   visual_inputs?: string[];
   multiple_visual_inputs?: string[];
+  dataset_inputs?: string[];
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
@@ -318,6 +319,7 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'inputs',
   'visual_inputs',
   'multiple_visual_inputs',
+  'dataset_inputs',
   'outputs',
   'input_schema',
   'output_schema',
@@ -525,7 +527,14 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
   }
   const inputs = record.inputs;
   if (!Array.isArray(inputs)) return 'visual_inputs requires an inputs array';
-  const missingRole = visualInputs.find((role) => !inputs.includes(role));
+  const optionalInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    && Array.isArray((record.composition as Record<string, unknown>).optional_input_roles)
+    ? (record.composition as Record<string, unknown>).optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...optionalInputs]);
+  const missingRole = visualInputs.find((role) => !declaredInputs.has(role));
   if (missingRole !== undefined) return `visual_inputs references an undeclared input: ${missingRole}`;
   if (multipleVisualInputs === undefined) return null;
   if (
@@ -545,11 +554,44 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
     : `multiple_visual_inputs references a non-visual input: ${nonVisualRole}`;
 }
 
+export function skillDatasetInputIssue(skill: SkillRegistryEntry): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const datasetInputs = record.dataset_inputs;
+  if (datasetInputs === undefined) return null;
+  if (
+    !Array.isArray(datasetInputs)
+    || datasetInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(datasetInputs).size !== datasetInputs.length
+  ) {
+    return 'dataset_inputs must be a unique array of canonical non-empty strings';
+  }
+  const inputs = record.inputs;
+  if (!Array.isArray(inputs)) return 'dataset_inputs requires an inputs array';
+  const optionalInputs = record.composition !== null
+    && typeof record.composition === 'object'
+    && !Array.isArray(record.composition)
+    && Array.isArray((record.composition as Record<string, unknown>).optional_input_roles)
+    ? (record.composition as Record<string, unknown>).optional_input_roles as unknown[]
+    : [];
+  const declaredInputs = new Set([...inputs, ...optionalInputs]);
+  const missingRole = datasetInputs.find((role) => !declaredInputs.has(role));
+  if (missingRole !== undefined) return `dataset_inputs references an undeclared input: ${missingRole}`;
+  const visualInputs = Array.isArray(record.visual_inputs) ? record.visual_inputs : [];
+  const overlap = datasetInputs.find((role) => visualInputs.includes(role));
+  return overlap === undefined
+    ? null
+    : `dataset_inputs overlaps visual_inputs: ${overlap}`;
+}
+
 export interface ToolRegistryEntry {
   id: string;
   name: string;
   path: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
+  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'visual_suite' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
   auth_required: boolean;
   risk_level: 'low' | 'medium' | 'high';
   status: 'draft' | 'active' | 'deprecated';
@@ -563,7 +605,7 @@ export interface ToolRegistryEntry {
 export interface ToolManifest {
   id: string;
   name: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
+  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'visual_suite' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
   entrypoint?: string;
   base_url_env?: string;
   auth_required: boolean;

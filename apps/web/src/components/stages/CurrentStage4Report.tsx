@@ -43,6 +43,23 @@ type GenericTextReportResponse = Exclude<
 type LegacyStrategyReportView = Exclude<ReportViewIdV1, 'actions'> | 'artifacts';
 type StrategyReportView = ReportViewIdV1 | 'artifacts';
 
+const summaryRequests = new Map<string, Promise<Blob>>();
+
+function loadEditorialSummary(taskId: string, attemptId: string): Promise<Blob> {
+  const key = `${taskId}\u0000${attemptId}`;
+  const cached = summaryRequests.get(key);
+  if (cached) return cached;
+  let pending: Promise<Blob>;
+  pending = api.controlEditorialSummary(taskId, attemptId)
+    .then(({ blob }) => blob)
+    .catch((error: unknown) => {
+      if (summaryRequests.get(key) === pending) summaryRequests.delete(key);
+      throw error;
+    });
+  summaryRequests.set(key, pending);
+  return pending;
+}
+
 const STRATEGY_TOPIC_SECTION_IDS = new Set([
   'strategy-map',
   'mind-model',
@@ -150,13 +167,195 @@ export function selectCurrentStage4Renderer(report: unknown): {
   return { component: 'GenericTextReport' };
 }
 
-export function CurrentStage4Report({
+export function CurrentStage4Report(props: {
+  report: ControlDeliverableResponse;
+  taskState: 'completed' | 'completed_with_gaps';
+  orchestrationMode?: 'single_skill' | 'multi_skill';
+}) {
+  const [view, setView] = useState<'summary' | 'detail'>('summary');
+  useEffect(() => {
+    setView('summary');
+  }, [props.report.deliverable.attemptId, props.report.deliverable.taskId]);
+  return (
+    <>
+      <nav className="report-view-toggle" aria-label="报告呈现">
+        <button
+          type="button"
+          className={view === 'summary' ? 'is-active' : ''}
+          aria-pressed={view === 'summary'}
+          onClick={() => setView('summary')}
+        >
+          编辑摘要
+        </button>
+        <button
+          type="button"
+          className={view === 'detail' ? 'is-active' : ''}
+          aria-pressed={view === 'detail'}
+          onClick={() => setView('detail')}
+        >
+          完整报告
+        </button>
+      </nav>
+      {view === 'summary'
+        ? <EditorialSummaryReport
+            report={props.report}
+            orchestrationMode={props.orchestrationMode}
+            onOpenDetail={() => setView('detail')}
+          />
+        : <StructuredCurrentStage4Report {...props} />}
+    </>
+  );
+}
+
+function EditorialSummaryReport({
+  report,
+  orchestrationMode,
+  onOpenDetail,
+}: {
+  report: ControlDeliverableResponse;
+  orchestrationMode?: 'single_skill' | 'multi_skill';
+  onOpenDetail(): void;
+}) {
+  const taskId = report.deliverable.taskId;
+  const attemptId = report.deliverable.attemptId;
+  const [status, setStatus] = useState<'working' | 'ready' | 'error'>('working');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{ blob: Blob; html: string } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const summaryHostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    setStatus('working');
+    setErrorMessage(null);
+    setSummary(null);
+    void loadEditorialSummary(taskId, attemptId)
+      .then(async (blob) => ({ blob, html: await blob.text() }))
+      .then((loaded) => {
+        if (!active) return;
+        setSummary(loaded);
+        setStatus('ready');
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setErrorMessage(error instanceof Error ? error.message : '未知错误');
+          setStatus('error');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [attemptId, reloadKey, taskId]);
+
+  useEffect(() => {
+    const host = summaryHostRef.current;
+    if (!host || !summary) return;
+    const parsed = new DOMParser().parseFromString(summary.html, 'text/html');
+    parsed.querySelectorAll('script').forEach((element) => element.remove());
+    parsed.querySelectorAll('*').forEach((element) => {
+      for (const attribute of [...element.attributes]) {
+        if (attribute.name.toLowerCase().startsWith('on')) element.removeAttribute(attribute.name);
+      }
+    });
+    parsed.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((anchor) => {
+      if (/^https?:\/\//iu.test(anchor.href)) {
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+      }
+    });
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+    const fragment = document.createDocumentFragment();
+    for (const style of parsed.head.querySelectorAll('style')) {
+      fragment.append(style.cloneNode(true));
+    }
+    for (const child of parsed.body.childNodes) {
+      fragment.append(child.cloneNode(true));
+    }
+    shadow.replaceChildren(fragment);
+    const openDetail = (event: Event) => {
+      const target = event.target instanceof Element
+        ? event.target.closest('[data-open-detail]')
+        : null;
+      if (!target) return;
+      event.preventDefault();
+      onOpenDetail();
+    };
+    shadow.addEventListener('click', openDetail);
+    return () => {
+      shadow.removeEventListener('click', openDetail);
+      shadow.replaceChildren();
+    };
+  }, [onOpenDetail, summary]);
+
+  function downloadSummary() {
+    if (!summary) return;
+    const url = URL.createObjectURL(summary.blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `editorial-summary-${taskId}.html`;
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  return (
+    <section className="editorial-summary" aria-label="编辑摘要">
+      <header className="editorial-summary-toolbar">
+        {orchestrationMode === undefined ? null : (
+          <span>
+            运行模式：{orchestrationMode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'}
+          </span>
+        )}
+        <div className="editorial-summary-actions">
+          <button type="button" className="btn-ghost" onClick={onOpenDetail}>查看完整报告</button>
+          {status === 'ready' ? (
+            <button type="button" className="btn-ghost" onClick={downloadSummary}>下载摘要 HTML</button>
+          ) : null}
+        </div>
+      </header>
+      {status === 'working' ? <p role="status">正在生成编辑摘要…</p> : null}
+      {status === 'error' ? (
+        <div className="report-summary-error" role="alert">
+          <p>编辑摘要生成失败：{errorMessage ?? '未知错误'}。完整报告仍然可用。</p>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => {
+              summaryRequests.delete(`${taskId}\u0000${attemptId}`);
+              setReloadKey((value) => value + 1);
+            }}
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
+      {summary ? (
+        <div
+          ref={summaryHostRef}
+          className="editorial-summary-document"
+          aria-label="编辑摘要内容"
+        />
+      ) : null}
+    </section>
+  );
+}
+
+export function StructuredCurrentStage4Report({
   report,
   taskState,
+  orchestrationMode,
 }: {
   report: ControlDeliverableResponse;
   taskState: 'completed' | 'completed_with_gaps';
+  orchestrationMode?: 'single_skill' | 'multi_skill';
 }) {
+  const modeNotice = orchestrationMode === undefined
+    ? null
+    : (
+        <p style={{ margin: '0 0 10px', color: 'var(--text-faint)', fontSize: 12 }}>
+          运行模式：{orchestrationMode === 'multi_skill' ? '多 Skill 协作' : '单 Skill'}
+        </p>
+      );
   const selected = selectCurrentStage4Renderer(report);
   const contributionView = hasCompleteContributionSidecars(report)
     ? (
@@ -170,8 +369,12 @@ export function CurrentStage4Report({
   if (selected.component === 'CurrentTextReport') {
     return (
       <>
+        {modeNotice}
         {report.presentationMode === 'multimodal'
-          ? <MultimodalResearchPlanReport report={report as MultimodalReportResponse & ResearchPlanResponse} taskState={taskState} />
+          ? <MultimodalResearchPlanReport
+              report={report as MultimodalReportResponse & ResearchPlanResponse}
+              taskState={taskState}
+            />
           : <CurrentTextReport report={report as ResearchPlanResponse} />}
         {contributionView}
       </>
@@ -180,7 +383,11 @@ export function CurrentStage4Report({
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
     return (
       <>
-        <MultimodalCurrentReport report={report} taskState={taskState} />
+        {modeNotice}
+        <MultimodalCurrentReport
+          report={report}
+          taskState={taskState}
+        />
         {contributionView}
       </>
     );
@@ -190,6 +397,7 @@ export function CurrentStage4Report({
   }
   return (
     <>
+      {modeNotice}
       <GenericTextReport report={report} />
       {contributionView}
     </>
@@ -216,7 +424,10 @@ function MultimodalResearchPlanReport({
       </nav>
       {view === 'full'
         ? <CurrentTextReport report={report} />
-        : <MultimodalCurrentReport report={report} taskState={taskState} />}
+        : <MultimodalCurrentReport
+            report={report}
+            taskState={taskState}
+          />}
     </>
   );
 }
@@ -230,7 +441,6 @@ function MultimodalCurrentReport({
 }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [htmlBundleStatus, setHtmlBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
-  const [showcaseStatus, setShowcaseStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [strategyView, setStrategyView] = useState<StrategyReportView>('answers');
   const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
@@ -243,7 +453,6 @@ function MultimodalCurrentReport({
   const standaloneHtml = report.reportPackage?.version === 'report-package-v2'
     ? report.reportPackage.standaloneHtml
     : undefined;
-  const editorialShowcase = report.editorialShowcase?.showcase;
   useEffect(() => {
     setStrategyView('answers');
   }, [taskId]);
@@ -425,23 +634,6 @@ function MultimodalCurrentReport({
     }
   }
 
-  async function downloadEditorialShowcase() {
-    setShowcaseStatus('working');
-    try {
-      const { blob } = await api.controlEditorialShowcase(taskId, report.deliverable.attemptId);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `editorial-showcase-${taskId}.html`;
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      setShowcaseStatus('idle');
-    } catch {
-      setShowcaseStatus('error');
-    }
-  }
-
   const isStrategyReport = report.deliverable.deliverableType === 'research_strategy_report';
   const strategyTabs = useMemo(
     () => isStrategyReport
@@ -482,16 +674,6 @@ function MultimodalCurrentReport({
           <button type="button" className="btn-ghost" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
             {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
           </button>
-          {editorialShowcase?.status === 'ready' ? (
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void downloadEditorialShowcase()}
-              disabled={showcaseStatus === 'working'}
-            >
-              {showcaseStatus === 'working' ? '正在下载…' : '下载编辑展示版'}
-            </button>
-          ) : null}
           {standaloneHtml?.status === 'ready' ? (
             <button
               type="button"
@@ -578,7 +760,6 @@ function MultimodalCurrentReport({
           ) : null}
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
           {htmlBundleStatus === 'error' ? <span role="alert">离线 HTML 下载失败，请重试</span> : null}
-          {showcaseStatus === 'error' ? <span role="alert">编辑展示版下载失败，请重试</span> : null}
         </>
       )}
     />

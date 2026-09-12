@@ -113,6 +113,7 @@ interface ReportDocumentViewModule {
 
 interface Stage4Module {
   CurrentStage4Report(props: { report: unknown }): unknown;
+  StructuredCurrentStage4Report(props: { report: unknown }): unknown;
   selectCurrentStage4Renderer(report: unknown): {
     component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
     reportDocument?: ReadableReportDocument;
@@ -1338,8 +1339,8 @@ test('strategy report tabs classify model-directed sections by content instead o
   assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['model-section-002']);
 });
 
-test('Stage4 dispatches multimodal, research-plan text, and generic historical text reports', async () => {
-  const { CurrentStage4Report, selectCurrentStage4Renderer } = await loadStage4Module();
+test('Stage4 makes the Editorial Summary primary and keeps existing renderers as the complete report', async () => {
+  const { CurrentStage4Report, StructuredCurrentStage4Report, selectCurrentStage4Renderer } = await loadStage4Module();
   const multimodal = multimodalReport();
   const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
   const react = requireFromWeb('react') as {
@@ -1390,8 +1391,19 @@ test('Stage4 dispatches multimodal, research-plan text, and generic historical t
         },
       };
       assert.equal(selectCurrentStage4Renderer(historicalCompetitiveReport).component, 'GenericTextReport');
-      const html = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+      const primaryHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
         report: historicalCompetitiveReport,
+        taskState: 'completed',
+        orchestrationMode: 'single_skill',
+      }));
+      assert.match(primaryHtml, />编辑摘要</u);
+      assert.match(primaryHtml, />完整报告</u);
+      assert.match(primaryHtml, /正在生成编辑摘要/u);
+      assert.doesNotMatch(primaryHtml, /历史结构化报告/u);
+
+      const html = renderToStaticMarkup(react.createElement(StructuredCurrentStage4Report, {
+        report: historicalCompetitiveReport,
+        taskState: 'completed',
       }));
       assert.match(html, /历史结构化报告/u);
       assert.match(html, /Competitive Analysis Report/u);
@@ -1424,7 +1436,7 @@ test('Stage4 dispatches multimodal, research-plan text, and generic historical t
             }],
           },
         };
-        const contributionHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+        const contributionHtml = renderToStaticMarkup(react.createElement(StructuredCurrentStage4Report, {
           report: withContributions,
           taskState: 'completed',
         }));
@@ -1438,7 +1450,20 @@ test('Stage4 dispatches multimodal, research-plan text, and generic historical t
   }
 });
 
-test('Stage4 offers the owner-bound offline HTML Bundle only when Report Package v2 marks it ready', async () => {
+test('Stage4 mounts the verified Editorial Summary in an isolated Shadow DOM without iframe rendering', async () => {
+  const source = await readFile(
+    new URL('../apps/web/src/components/stages/CurrentStage4Report.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /attachShadow\(\{ mode: 'open' \}\)/u);
+  assert.match(source, /querySelectorAll\('script'\)/u);
+  assert.match(source, /startsWith\('on'\)/u);
+  assert.doesNotMatch(source, /<iframe\b/u);
+  assert.match(source, /编辑摘要生成失败/u);
+  assert.match(source, /完整报告/u);
+});
+
+test('Stage4 requests the owner-bound Editorial Summary for either orchestration mode', async () => {
   const { CurrentStage4Report } = await loadStage4Module();
   const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
   const react = requireFromWeb('react') as {
@@ -1496,9 +1521,32 @@ test('Stage4 offers the owner-bound offline HTML Bundle only when Report Package
       },
       taskState: 'completed',
     }));
-    assert.match(readyHtml, />下载编辑展示版</u);
-    assert.match(readyHtml, />下载离线 HTML</u);
-    assert.match(readyHtml, />下载 Markdown ZIP</u);
+    assert.match(readyHtml, />编辑摘要</u);
+    assert.match(readyHtml, />完整报告</u);
+    assert.match(readyHtml, /正在生成编辑摘要/u);
+
+    const singleSkillHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+      report: {
+        ...multimodalReport(),
+        reportPackage: packageBase,
+      },
+      taskState: 'completed',
+      orchestrationMode: 'single_skill',
+    }));
+    assert.match(singleSkillHtml, /运行模式：单 Skill/u);
+    assert.match(singleSkillHtml, />编辑摘要</u);
+    assert.match(singleSkillHtml, /正在生成编辑摘要/u);
+
+    const multiSkillHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+      report: {
+        ...multimodalReport(),
+        reportPackage: packageBase,
+      },
+      taskState: 'completed',
+      orchestrationMode: 'multi_skill',
+    }));
+    assert.match(multiSkillHtml, /运行模式：多 Skill 协作/u);
+    assert.match(multiSkillHtml, />编辑摘要</u);
 
     const unavailableHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
       report: {
@@ -1513,9 +1561,8 @@ test('Stage4 offers the owner-bound offline HTML Bundle only when Report Package
       },
       taskState: 'completed_with_gaps',
     }));
-    assert.doesNotMatch(unavailableHtml, />下载离线 HTML</u);
-    assert.match(unavailableHtml, /离线 HTML 暂不可用，仍可下载 Markdown ZIP/u);
-    assert.match(unavailableHtml, />下载 Markdown ZIP</u);
+    assert.match(unavailableHtml, />编辑摘要</u);
+    assert.match(unavailableHtml, /正在生成编辑摘要/u);
   } finally {
     if (priorReact === undefined) delete globals.React;
     else globals.React = priorReact;

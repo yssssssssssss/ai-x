@@ -32,6 +32,13 @@ export type SchemaName =
   | 'report-review'
   | 'report-editorial-intent-v2'
   | 'editorial-presentation-spec-v1'
+  | 'editorial-presentation-brief-v1'
+  | 'editorial-html-source-packet-v2'
+  | 'universal-editorial-showcase-intent-v1'
+  | 'universal-editorial-presentation-spec-v1'
+  | 'universal-editorial-showcase-render-manifest-v1'
+  | 'universal-editorial-showcase-profile-v1'
+  | 'universal-editorial-showcase-golden-contract-v1'
   | 'report-package-v3';
 
 // checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。

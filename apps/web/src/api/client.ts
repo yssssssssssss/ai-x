@@ -33,14 +33,34 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
   return data as T;
 }
 
+async function reqForm<T>(path: string, form: FormData, idempotencyKey: string): Promise<T> {
+  const headers: Record<string, string> = { 'Idempotency-Key': idempotencyKey };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      data?.error ?? `HTTP ${res.status}`,
+      typeof data?.code === 'string' ? data.code : undefined,
+    );
+  }
+  return data as T;
+}
+
 async function reqBlob(path: string): Promise<Response> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`/api${path}`, { headers });
   if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string };
-    throw new ApiError(response.status, data.error ?? `HTTP ${response.status}`);
+    const data = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new ApiError(
+      response.status,
+      data.error ?? `HTTP ${response.status}`,
+      typeof data.code === 'string' ? data.code : undefined,
+    );
   }
   return response;
 }
@@ -53,6 +73,12 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+export interface DatasetUpload {
+  role: string;
+  file: File;
+  metadata: DatasetUploadMetadata;
 }
 
 // ---- 类型 ----
@@ -73,6 +99,8 @@ export type {
 export type {
   User,
   Upload,
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
   Finding,
   Report,
   ExecLogRow,
@@ -90,12 +118,17 @@ export type {
 } from '../../../../packages/api-contract/http.ts';
 
 import type {
+  DatasetUploadMetadata,
+  DatasetUploadResponse,
+} from '../../../../packages/api-contract/http.ts';
+import type {
   CurrentPlanningResponse,
 } from '../../../agent-api/src/routes/control-planning.ts';
 
 export type {
   ApprovalControlPlanRequest,
   CancelControlPlanRequest,
+  ClarifyControlTaskRequest,
   ControlApprovalRequirement,
   ControlApprovalTaskSummary,
   ControlPlanRecovery,
@@ -108,12 +141,14 @@ export type {
   CurrentTaskReadResponse,
   CurrentPlanCandidate,
   ExecutionControlPlanRequest,
+  OrchestrationModeV1,
   PlanControlTaskRequest,
   ResumeControlPlanRequest,
   ReviseControlPlanRequest,
   ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
+  TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 export type {
   CapabilityProvenance,
@@ -137,6 +172,7 @@ export type {
 import type {
   ApprovalControlPlanRequest,
   CancelControlPlanRequest,
+  ClarifyControlTaskRequest,
   ControlApprovalTaskSummary,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
@@ -149,6 +185,7 @@ import type {
   ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
+  TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -169,15 +206,6 @@ import type {
 } from '../../../../packages/api-contract/http.ts';
 import { parseControlDeliverableResponse } from '../report-package-response.ts';
 export type { ControlDeliverableResponse } from '../report-package-response.ts';
-
-
-export interface ClarifyControlTaskRequest {
-  expectedVersion: number;
-  clarificationAnswers: Record<string, unknown>;
-  assumptionEdits: Record<string, string>;
-  selectedScenarioId?: string;
-  idempotencyKey: string;
-}
 
 export interface ControlVisualAssetResponse {
   blob: Blob;
@@ -337,10 +365,47 @@ export const api = {
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
   controlTask: (taskId: string) =>
     req<CurrentTaskReadResponse>(`/control-tasks/${taskId}`),
+  listTaskMaterials: (taskId: string) => req<{ materials: TaskMaterialResponse[] }>(
+    `/control-tasks/${encodeURIComponent(taskId)}/materials`,
+  ),
+  uploadTaskVisualMaterial: (
+    taskId: string,
+    requestId: string,
+    role: string,
+    file: File,
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    form.append('requestId', requestId);
+    form.append('role', role);
+    form.append('file', file);
+    return reqForm<TaskMaterialResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/materials/visual`,
+      form,
+      idempotencyKey,
+    );
+  },
   selectControlPlan: (taskId: string, body: SelectControlPlanRequest) =>
     req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  uploadControlDataset: (
+    taskId: string,
+    planVersionId: string,
+    role: string,
+    file: File,
+    metadata: DatasetUploadMetadata,
+    idempotencyKey: string,
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('metadata', JSON.stringify(metadata));
+    return reqForm<DatasetUploadResponse>(
+      `/control-tasks/${encodeURIComponent(taskId)}/plans/${encodeURIComponent(planVersionId)}/inputs/${encodeURIComponent(role)}/dataset`,
+      form,
+      idempotencyKey,
+    );
+  },
   approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>
@@ -379,16 +444,16 @@ export const api = {
     }
     return { blob: await response.blob() };
   },
-  controlEditorialShowcase: async (
+  controlEditorialSummary: async (
     taskId: string,
     attemptId: string,
   ): Promise<ControlHtmlBundleResponse> => {
     const response = await reqBlob(
-      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-showcase.html`,
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-summary.html`,
     );
     const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (mediaType !== 'text/html') {
-      throw new ApiError(502, 'Editorial Showcase 媒体类型无效');
+      throw new ApiError(502, '编辑摘要媒体类型无效');
     }
     return { blob: await response.blob() };
   },

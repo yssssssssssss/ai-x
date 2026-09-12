@@ -14,6 +14,15 @@ tools:
     status: draft
     tier: optional        # 尚无可证明真实身份的 O2 adapter,不得进入 P0
 
+  - id: joyspace-read
+    name: Joyspace 只读知识
+    path: tools/joyspace-read/manifest.yaml
+    adapter_type: o2
+    auth_required: true
+    risk_level: low
+    status: active
+    tier: optional
+
   - id: tavily-web-search
     name: Tavily 网页检索
     path: tools/tavily-web-search/manifest.yaml
@@ -55,6 +64,15 @@ tools:
     name: 视觉注意力分析实验室
     path: tools/attention-analysis-lab/manifest.yaml
     adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active
+    tier: optional
+
+  - id: visual-analysis-suite
+    name: 多实验室视觉分析套件
+    path: tools/visual-analysis-suite/manifest.yaml
+    adapter_type: visual_suite
     auth_required: false
     risk_level: low
     status: active

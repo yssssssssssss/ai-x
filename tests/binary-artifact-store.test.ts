@@ -1167,6 +1167,39 @@ test('stores attempt and plan binaries only inside their versioned identity dire
   assert.match(plan.storageUri, /tasks\/task-1\/plans\/plan-1\/visuals\/plan\.webp$/);
 });
 
+test('stores and verifies a task-bound visual input without a Plan Version', async () => {
+  const { store } = setup();
+
+  const sealed = await store.writeBinary({
+    taskId: 'task-material',
+    kind: 'visual_input_image',
+    relativePath: 'source.png',
+    bytes: PNG,
+    schemaVersion: 'visual-input-image-v1',
+    metadata: {
+      requestId: 'target-design',
+      role: 'designImage',
+      fileName: 'source.png',
+      ownerUserId: 'owner-1',
+    },
+  });
+
+  assert.equal(sealed.state, 'SEALED');
+  assert.equal(sealed.planVersionId, null);
+  assert.equal(sealed.attemptId, null);
+  assert.match(sealed.storageUri, /tasks\/task-material\/materials\/source\.png$/);
+  assert.deepEqual(sealed.metadata, {
+    requestId: 'target-design',
+    role: 'designImage',
+    fileName: 'source.png',
+    ownerUserId: 'owner-1',
+    width: 1,
+    height: 1,
+  });
+  assert.equal((await store.verifyTaskBoundVisual(sealed.id)).id, sealed.id);
+  assert.deepEqual((await store.readVerifiedBinary(sealed.id)).bytes, PNG);
+});
+
 test('preserves legacy JSON sealing and verified reads with null media metadata', async () => {
   const { registry, store } = setup();
   const value = { legacy: true, digest: createHash('sha256').update('legacy').digest('hex') };

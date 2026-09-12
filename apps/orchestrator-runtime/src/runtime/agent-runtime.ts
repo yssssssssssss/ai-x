@@ -6,7 +6,9 @@ import { CheckpointStore } from './checkpoint-store.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { ReceiptLLMClient } from './receipt-llm-client.ts';
 import { BrowserExecutionGate } from './browser-execution-gate.ts';
+import { O2JoyspaceReadAdapter } from './o2-joyspace-read-adapter.ts';
 import { PlaywrightPageCaptureAdapter } from './playwright-page-capture-adapter.ts';
+import { VisualAnalysisSuiteAdapter } from './visual-analysis-suite-adapter.ts';
 
 // Agent Runtime:封装 Claude/OpenAI/Pi/内部网关差异的薄壳。
 // 只做装配,不含业务判断(判断在 skill + 配置 + LLM)。
@@ -72,14 +74,16 @@ function buildLLM(provider: string): LLMClient {
 }
 
 function buildToolAdapter(channel: string, browserGate?: BrowserExecutionGate): ToolAdapter {
-  // ToolRouter 按 tool manifest 的 adapter_type 分发,fake / o2 / internal_api / tavily 共存。
+  // ToolRouter 按 tool manifest 的 adapter_type 分发，visual_suite 在一个受控边界内编排现有视觉 Lab。
   // fake 与 o2 映射到 FakeO2Adapter; TOOL_ADAPTER=fake 时 tavily 也走 fake,避免离线测试打真实网络。
   const fake = new FakeO2Adapter();
   const router = new ToolRouter();
   router.registerAs('fake', fake);
-  router.registerAs('o2', fake);
+  // 离线通道保持 fake；真实通道只开放 O2JoyspaceReadAdapter 内部白名单的 search/view。
+  router.registerAs('o2', channel === 'fake' ? fake : new O2JoyspaceReadAdapter());
   router.registerAs('internal_api', new HttpApiAdapter());
   router.registerAs('rest_json', new RestJsonAdapter());
+  router.register(new VisualAnalysisSuiteAdapter());
   router.registerAs('tavily', channel === 'fake' ? fake : new TavilyAdapter());
   if (process.env.PLAYWRIGHT_CAPTURE_ENABLED === '1') {
     router.register(new PlaywrightPageCaptureAdapter({

@@ -4,6 +4,7 @@ import {
   ToolInvocationError,
   type ToolAbortReason,
   type ToolInvocationContext,
+  type ToolKnowledgeAttachment,
   type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
@@ -19,6 +20,7 @@ export interface ToolRetryAttemptResult<T = unknown> {
   receipt: ToolInvocationReceipt;
   latencyMs?: number;
   mediaAttachments?: ToolMediaAttachment[];
+  knowledgeAttachments?: ToolKnowledgeAttachment[];
 }
 
 export interface ToolRetryAttemptReceipt {
@@ -50,6 +52,7 @@ export type ToolRetryResult<T = unknown> =
       receipt: ToolInvocationReceipt;
       latencyMs?: number;
       mediaAttachments?: ToolMediaAttachment[];
+      knowledgeAttachments?: ToolKnowledgeAttachment[];
       attemptReceipts: ToolRetryAttemptReceipt[];
     }
   | {
@@ -171,6 +174,9 @@ function safeReceipt(receipt: ToolInvocationReceipt | undefined): ToolInvocation
     latencyMs: receipt.latencyMs,
     ...(receipt.attemptId === undefined ? {} : { attemptId: receipt.attemptId }),
     ...(receipt.retryOf === undefined ? {} : { retryOf: receipt.retryOf }),
+    ...(receipt.runtimeVersions === undefined
+      ? {}
+      : { runtimeVersions: { ...receipt.runtimeVersions } }),
   };
 }
 
@@ -304,6 +310,7 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
         receipt: safeReceipt(result.receipt)!,
         latencyMs: result.latencyMs,
         mediaAttachments: result.mediaAttachments,
+        knowledgeAttachments: result.knowledgeAttachments,
         attemptReceipts,
       };
     } catch (error) {

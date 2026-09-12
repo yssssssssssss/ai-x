@@ -17,7 +17,8 @@
     "version": {
       "enum": [
         "report-review-v1",
-        "report-review-v2"
+        "report-review-v2",
+        "report-review-v3"
       ]
     },
     "taskId": {
@@ -46,7 +47,7 @@
     "dimensions": {
       "type": "array",
       "minItems": 7,
-      "maxItems": 13,
+      "maxItems": 14,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -70,7 +71,16 @@
               "answer_evidence_strength",
               "decision_usefulness",
               "hypothesis_conclusion_clarity",
-              "risk_consistency"
+              "risk_consistency",
+              "ten_dimension_coverage",
+              "market_claim_strength",
+              "persona_evidence_boundary",
+              "competitor_sample_integrity",
+              "jd_diagnosis_quality",
+              "category_specificity",
+              "strategy_chain_actionability",
+              "category_asset_provenance",
+              "measurement_quality"
             ]
           },
           "passed": {
@@ -96,15 +106,28 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["id", "message", "targetNodeIds"],
+              "required": [
+                "id",
+                "message",
+                "targetNodeIds"
+              ],
               "properties": {
-                "id": { "type": "string", "minLength": 1 },
-                "message": { "type": "string", "minLength": 1 },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "targetNodeIds": {
                   "type": "array",
                   "minItems": 1,
                   "uniqueItems": true,
-                  "items": { "type": "string", "minLength": 1 }
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             }
@@ -224,8 +247,20 @@
             ]
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": "report-review-v2"
+          }
+        },
+        "required": [
+          "version"
+        ]
       },
-      "else": {
+      "then": {
         "properties": {
           "dimensions": {
             "minItems": 13,
@@ -380,6 +415,196 @@
                   "properties": {
                     "id": {
                       "const": "risk_consistency"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": "report-review-v3"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "minItems": 14,
+            "maxItems": 14,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "requirement_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "question_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "ten_dimension_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "evidence_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "market_claim_strength"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "persona_evidence_boundary"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "competitor_sample_integrity"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "jd_diagnosis_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "category_specificity"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "strategy_chain_actionability"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "category_asset_provenance"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "measurement_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "risk_disclosure"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "visual_quality"
                     }
                   },
                   "required": [

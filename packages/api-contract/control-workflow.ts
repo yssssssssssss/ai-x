@@ -33,6 +33,14 @@ export type ControlWorkflowState =
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
 
+export const ORCHESTRATION_MODES = ['single_skill', 'multi_skill'] as const;
+export type OrchestrationModeV1 = typeof ORCHESTRATION_MODES[number];
+
+export function isOrchestrationModeV1(value: unknown): value is OrchestrationModeV1 {
+  return typeof value === 'string'
+    && (ORCHESTRATION_MODES as readonly string[]).includes(value);
+}
+
 export interface PlanningGuidanceClarification {
   reasonCode: 'scenario_selection_required';
   options: Array<{ id: string; label: string }>;
@@ -67,6 +75,7 @@ export interface ActivateRequirementVersionRequest {
 export interface PlanControlTaskRequest {
   originalInput: string;
   conversationId?: string;
+  orchestrationMode: OrchestrationModeV1;
 }
 
 
@@ -76,6 +85,7 @@ export interface ControlTaskResponse {
   stateVersion: number;
   activePlanVersionId: string | null;
   currentAttemptId: string | null;
+  orchestrationMode?: OrchestrationModeV1 | null;
 }
 
 export interface CreateControlTaskRequest {
@@ -83,6 +93,40 @@ export interface CreateControlTaskRequest {
   taskType?: string;
   structuredTask?: Record<string, unknown>;
   sensitivity?: string;
+}
+
+export interface TaskMaterialBinding {
+  requestId: string;
+  materialIds: string[];
+}
+
+export interface VerifiedTaskMaterial {
+  materialId: string;
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  contentSha256: string;
+  byteSize: number;
+}
+
+export interface ProvidedTaskMaterial {
+  role: string;
+  materialIds: string[];
+  fileNames: string[];
+}
+
+export interface TaskMaterialResponse extends VerifiedTaskMaterial {
+  state: 'SEALED';
+}
+
+export interface ClarifyControlTaskRequest {
+  expectedVersion: number;
+  clarificationAnswers: Record<string, unknown>;
+  assumptionEdits: Record<string, string>;
+  selectedScenarioId?: string;
+  materialBindings?: TaskMaterialBinding[];
+  idempotencyKey: string;
 }
 
 export interface CurrentPlanCandidate {
@@ -94,6 +138,7 @@ export interface CurrentPlanCandidate {
   planHash: string;
   plan: CurrentExecutionPlan;
   pendingInputs: PendingInput[];
+  providedMaterials?: ProvidedTaskMaterial[];
 }
 
 export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
@@ -192,6 +237,8 @@ export interface ControlApprovalTaskSummary {
   state: ControlWorkflowState;
   stateVersion: number;
   activePlanVersionId: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ControlPlanRecovery {
@@ -244,7 +291,25 @@ export const REPORT_REVIEW_V2_DIMENSION_IDS = [
   ...REPORT_REVIEW_DIMENSION_IDS,
   ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
 ] as const;
-export type ReportReviewDimensionId = typeof REPORT_REVIEW_V2_DIMENSION_IDS[number];
+export const INDUSTRY_REPORT_REVIEW_DIMENSION_IDS = [
+  'requirement_coverage',
+  'question_coverage',
+  'ten_dimension_coverage',
+  'evidence_coverage',
+  'market_claim_strength',
+  'persona_evidence_boundary',
+  'competitor_sample_integrity',
+  'jd_diagnosis_quality',
+  'category_specificity',
+  'strategy_chain_actionability',
+  'category_asset_provenance',
+  'measurement_quality',
+  'risk_disclosure',
+  'visual_quality',
+] as const;
+export type ReportReviewDimensionId =
+  | typeof REPORT_REVIEW_V2_DIMENSION_IDS[number]
+  | typeof INDUSTRY_REPORT_REVIEW_DIMENSION_IDS[number];
 
 export interface ReportReviewIssue {
   id: string;
@@ -261,7 +326,7 @@ export interface ReportReviewDimension {
 }
 
 export interface ReportReviewArtifact {
-  version: 'report-review-v1' | 'report-review-v2';
+  version: 'report-review-v1' | 'report-review-v2' | 'report-review-v3';
   taskId: string;
   planVersionId: string;
   attemptId: string;
@@ -385,6 +450,7 @@ export interface CurrentTaskReadResponse {
   activatedNodes: string[];
   candidates: CurrentPlanCandidate[];
   activePlan: CurrentPlanCandidate | null;
+  taskMaterials?: TaskMaterialResponse[];
   planningGuidance?: PlanningGuidanceClarification;
   approvalRequirements?: ControlApprovalRequirement[];
   planRecovery?: ControlPlanRecovery;

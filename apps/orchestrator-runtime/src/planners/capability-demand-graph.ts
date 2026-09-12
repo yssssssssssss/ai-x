@@ -94,6 +94,7 @@ function defaultDemandType(task: ResearchTaskV2): CapabilityDemandGraphV1['deman
   if (task.task_type === 'a11y_audit') return 'accessibility';
   if (task.task_type === 'voc_diagnosis') return 'voc';
   if (task.task_type === 'user_research_planning') return 'research_method';
+  if (task.task_type === 'industry_market_analysis') return 'market_landscape';
   return 'qualitative_insight';
 }
 
@@ -110,12 +111,16 @@ const EXPLICIT_CONTRIBUTION_RULES: ReadonlyArray<{
   type: CapabilityDemandGraphV1['demands'][number]['type'];
   pattern: RegExp;
   evidenceClass?: EvidenceClass;
+  requiredAnyMaterialRoles?: readonly ('jd_screenshots' | 'competitor_screenshots')[];
 }> = [
   { type: 'market_landscape', pattern: /(?:市场|赛道|market\s+landscape)/iu },
   { type: 'competitive_analysis', pattern: /(?:竞品|竞争对手|competitive|competitor)/iu },
   { type: 'persona', pattern: /(?:persona|用户画像|用户分型)/iu },
-  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|支持动机|用户动机)/iu },
+  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|支持动机|用户动机|访问动机|用户任务|雇佣目标)/iu },
+  { type: 'journey', pattern: /(?:用户旅程|体验地图|端到端链路|用户路径|journey)/iu },
   { type: 'metrics', pattern: /(?:核心体验指标|体验指标|metrics?)/iu },
+  { type: 'design_audit', pattern: /(?:设计走查|启发式|频道现状诊断|视觉分析|视觉对照)/iu, requiredAnyMaterialRoles: ['jd_screenshots', 'competitor_screenshots'] },
+  { type: 'prioritization', pattern: /(?:优先级|先做|排序|priority|prioritization)/iu },
   { type: 'virtual_user_hypothesis', pattern: /(?:虚拟用户|合成模拟|synthetic\s+user|virtual\s+user)/iu, evidenceClass: 'simulation' },
 ];
 
@@ -125,8 +130,18 @@ function requestedContributionTypes(task: ResearchTaskV2): typeof EXPLICIT_CONTR
     ...task.scope,
     ...task.success_criteria.map(({ statement }) => statement),
     ...task.constraints.map(({ statement }) => statement),
+    task.industry_scope?.decision_goal ?? '',
+    task.industry_scope?.primary_focus ?? '',
+    ...(task.industry_scope?.secondary_focuses ?? []),
   ].join(' ');
-  return EXPLICIT_CONTRIBUTION_RULES.filter(({ pattern }) => pattern.test(text));
+  const availableMaterials = new Set(task.available_material_roles ?? []);
+  return EXPLICIT_CONTRIBUTION_RULES.filter(({ type, pattern, requiredAnyMaterialRoles }) => {
+    const hasRequiredMaterial = !requiredAnyMaterialRoles
+      || requiredAnyMaterialRoles.some((role) => availableMaterials.has(role));
+    const materialActivatesVisualAudit = type === 'design_audit'
+      && requiredAnyMaterialRoles?.some((role) => availableMaterials.has(role)) === true;
+    return hasRequiredMaterial && (pattern.test(text) || materialActivatesVisualAudit);
+  });
 }
 
 /** Deterministic fallback used until a model-suggested graph passes the same validator. */
@@ -134,6 +149,9 @@ export function deriveCapabilityDemandGraph(
   task: ResearchTaskV2,
   problemGraph: ProblemGraph,
 ): CapabilityDemandGraphV1 {
+  const availableVisualRoles = (task.available_material_roles ?? []).filter((role) => (
+    role === 'jd_screenshots' || role === 'competitor_screenshots'
+  ));
   const demands: CapabilityDemandGraphV1['demands'] = problemGraph.questions.map((question) => {
     const type = demandTypeForQuestion(task, question);
     const requiredEvidenceClasses = [...acceptedEvidenceClasses(question)];
@@ -145,6 +163,9 @@ export function deriveCapabilityDemandGraph(
       requiredEvidenceClasses,
       requiredInputRoles: [
         'research_goal',
+        ...(task.task_type === 'industry_market_analysis' && type === 'design_audit'
+          ? availableVisualRoles.length > 0 ? availableVisualRoles : ['jd_screenshots']
+          : []),
         ...(type === 'metrics' && isQuantitativeFactQuestion(question) ? ['analytics_dataset'] : []),
       ],
       priority: question.priority,
@@ -172,7 +193,12 @@ export function deriveCapabilityDemandGraph(
       requiredEvidenceClasses: requested.evidenceClass
         ? [requested.evidenceClass]
         : [...acceptedEvidenceClasses(targetQuestion)],
-      requiredInputRoles: ['research_goal'],
+      requiredInputRoles: [
+        'research_goal',
+        ...(requested.requiredAnyMaterialRoles
+          ? availableVisualRoles.length > 0 ? availableVisualRoles : [requested.requiredAnyMaterialRoles[0]!]
+          : []),
+      ],
       priority: 'required',
     });
   }

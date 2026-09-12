@@ -44,31 +44,45 @@ test('HTML Bundle client uses only encoded Task and Attempt bindings', async () 
   );
 });
 
-test('Editorial Showcase client uses encoded bindings and requires HTML', async () => {
+test('Editorial Summary client uses encoded bindings and requires HTML', async () => {
   installLocalStorage();
   let requestedUrl = '';
   globalThis.fetch = async (input) => {
     requestedUrl = String(input);
-    return new Response('<!doctype html><title>Showcase</title>', {
+    return new Response('<!doctype html><title>Editorial Summary</title>', {
       status: 200,
       headers: { 'content-type': 'text/html; charset=utf-8' },
     });
   };
 
-  const response = await api.controlEditorialShowcase('task/one', 'attempt?two');
+  const response = await api.controlEditorialSummary('task/one', 'attempt?two');
   assert.equal(
     requestedUrl,
-    '/api/control-tasks/task%2Fone/reports/attempt%3Ftwo/editorial-showcase.html',
+    '/api/control-tasks/task%2Fone/reports/attempt%3Ftwo/editorial-summary.html',
   );
-  assert.match(await response.blob.text(), /Showcase/u);
+  assert.match(await response.blob.text(), /Editorial Summary/u);
 
   globalThis.fetch = async () => new Response('{}', {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
   await assert.rejects(
-    api.controlEditorialShowcase('task-1', 'attempt-1'),
+    api.controlEditorialSummary('task-1', 'attempt-1'),
     (error: unknown) => error instanceof ApiError && error.status === 502,
+  );
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: '编辑摘要生成失败',
+    code: 'editorial_summary_generation_failed',
+  }), {
+    status: 409,
+    headers: { 'content-type': 'application/json' },
+  });
+  await assert.rejects(
+    api.controlEditorialSummary('task-1', 'attempt-1'),
+    (error: unknown) => error instanceof ApiError
+      && error.status === 409
+      && error.code === 'editorial_summary_generation_failed',
   );
 });
 

@@ -1,0 +1,16 @@
+id: joyspace-read
+name: Joyspace 只读知识
+adapter_type: o2
+entrypoint: webcli joyspace
+auth_required: true
+risk_level: low
+approver_rule: none
+timeout_seconds: 90
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 2
+input_schema: tools/joyspace-read/input.schema.json
+output_schema: tools/joyspace-read/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

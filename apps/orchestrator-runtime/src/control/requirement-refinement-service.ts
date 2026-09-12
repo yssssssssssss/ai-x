@@ -7,9 +7,17 @@ import type {
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type {
   ControlRequirementVersion,
+  OrchestrationModeV1,
   PlanningGuidanceClarification,
+  TaskMaterialBinding,
+  VerifiedTaskMaterial,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type { PlanProgress, RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type {
+  PlanProgress,
+  RequestedArtifact,
+  ResearchTaskV2,
+  TaskMaterialRequest,
+} from '../../../../packages/api-contract/plan.ts';
 import { canonicalizeGeneratedExpectedDeliverables } from '../report/deliverable-registry.ts';
 import {
   isPlanningGuidanceClarification,
@@ -30,13 +38,20 @@ function redactRequirementValidationError(error: unknown): string {
 }
 
 const RESEARCH_TASK_FIELDS = [
-  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'business_domain',
+  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'industry_scope',
+  'available_material_roles', 'unavailable_material_roles', 'material_requests', 'business_domain',
   'research_goal', 'comparison_dimensions', 'target_audience', 'scope', 'constraints',
   'success_criteria', 'expected_deliverables', 'assumptions', 'ambiguities',
   'clarification_questions', 'blocking_issues', 'sensitivity', 'pii_detected',
 ] as const;
 const RESEARCH_TASK_REQUIRED_FIELDS = RESEARCH_TASK_FIELDS.filter((field) => (
-  field !== 'outcome_mode' && field !== 'requested_artifacts' && field !== 'comparison_dimensions'
+  field !== 'outcome_mode'
+  && field !== 'requested_artifacts'
+  && field !== 'comparison_dimensions'
+  && field !== 'industry_scope'
+  && field !== 'available_material_roles'
+  && field !== 'unavailable_material_roles'
+  && field !== 'material_requests'
 ));
 
 function researchTaskCandidate(value: unknown): unknown {
@@ -91,8 +106,10 @@ export interface ConversationAdapter {
 export interface RequirementPlanner {
   plan(input: {
     originalInput: string;
+    orchestrationMode: OrchestrationModeV1;
     requirement: ResearchTaskV2;
     selectedScenarioId?: ScenarioId;
+    materials?: readonly VerifiedTaskMaterial[];
   }, onProgress?: (event: PlanProgress) => void): Promise<CurrentResearchPlanningOutcome | void>;
 }
 
@@ -101,6 +118,7 @@ export interface UnderstandInput {
   conversationId: string;
   ownerUserId: string;
   originalInput: string;
+  orchestrationMode?: OrchestrationModeV1;
   expectedVersion?: number;
   expectedStateVersion?: number;
 }
@@ -110,6 +128,8 @@ export interface ClarifyInput {
   conversationId: string;
   ownerUserId: string;
   answers: Record<string, unknown>;
+  materialBindings?: TaskMaterialBinding[];
+  materials?: VerifiedTaskMaterial[];
   selectedScenarioId?: string;
   expectedVersion?: number;
   expectedStateVersion?: number;
@@ -167,7 +187,8 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；设计走查、设计审计、页面体验分析、视觉分析或基于截图判断问题时，使用独立的 material_requests 声明图片需求，不得把上传要求伪装成 clarification_questions；Design Audit 默认声明 role=designImage、kind=visual、required=true、multiple=false；完整的行业、市场、赛道或品类分析使用 task_type=industry_market_analysis，并填写 industry_scope、available_material_roles、unavailable_material_roles；Industry 的资料角色只能使用 jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset 这五个机器 ID，不得写自然语言名称；行业任务应确认品类/子类、排除范围、轻中重档、主次聚焦、决策读者、决策目标、时间窗口和可提供资料；只做单项竞品对比时仍使用 competitive_research；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const CLARIFICATION_RESOLUTION_PROMPT = `context.clarification 包含用户此前各轮的累计显式回答；必须把这些回答视为权威约束并完整保留，不得重复已回答的问题或换 key 重问同一事项。仅当回答本身仍不明确，或引入新的权限、隐私、合规、安全、外部发布或不可逆操作阻塞时，才能继续生成 clarification_questions；其他不确定性写入 assumptions 或 non-blocking ambiguities。`;
 
 const PLAN_OUTCOME_SIGNALS = [
   /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈方案|问卷方案|样本方案|研究排期)/u,
@@ -217,7 +238,10 @@ const SPECIALIST_INTENT_SIGNALS: ReadonlyArray<{
   },
   {
     taskType: 'design_audit',
-    patterns: [/(?:设计走查|设计审计|界面走查|\bdesign audit\b)/iu],
+    patterns: [
+      /(?:设计走查|设计审计|界面走查|\bdesign audit\b)/iu,
+      /(?:电商|商品|店铺|页面|界面|PDP)[\s\S]{0,16}(?:设计分析|体验分析|视觉分析|设计评估)/iu,
+    ],
   },
   {
     taskType: 'a11y_audit',
@@ -226,13 +250,29 @@ const SPECIALIST_INTENT_SIGNALS: ReadonlyArray<{
 ];
 
 const STRATEGY_DELIVERABLE_SIGNAL = /(?:研究策略报告|综合策略报告|策略答案|策略地图|心智模型|设计原则|\bresearch strategy report\b|\bstrategy map\b|\bmental model\b|\bdesign principles?\b)/iu;
+const INDUSTRY_DELIVERABLE_SIGNAL = /(?:行业(?:与)?市场分析|行业分析|市场分析|赛道分析|品类分析|频道(?:年度)?规划|从行业到设计策略|\bindustry market analysis\b|\bcategory analysis\b|\bmarket landscape\b)/iu;
+const INDUSTRY_BREADTH_SIGNALS = [
+  /(?:行业|市场|赛道|品类)/u,
+  /(?:用户|人群|persona)/iu,
+  /(?:竞品|竞争对手|benchmark)/iu,
+  /(?:京东|频道|现状|内诊)/u,
+  /(?:策略|机会|改版|设计)/u,
+] as const;
 
-type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report';
+function hasStrongIndustryIntent(input: string): boolean {
+  return INDUSTRY_DELIVERABLE_SIGNAL.test(input)
+    || INDUSTRY_BREADTH_SIGNALS.filter((pattern) => pattern.test(input)).length >= 4;
+}
+
+type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report' | 'industry_market_analysis_report';
 
 function clarificationDeliverableIntent(clarification: unknown): DeliverableIntent | null {
   if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
   const value = String((clarification as Record<string, unknown>).deliverable_intent ?? '');
   if (value === 'competitive_analysis_report' || /竞品分析/u.test(value)) return 'competitive_analysis_report';
+  if (value === 'industry_market_analysis_report' || /(?:行业|市场|赛道|品类).{0,8}(?:分析|报告)/u.test(value)) {
+    return 'industry_market_analysis_report';
+  }
   if (value === 'research_strategy_report' || /(?:综合|研究)?策略报告|策略答案/u.test(value)) {
     return 'research_strategy_report';
   }
@@ -300,6 +340,13 @@ function actionableBlockingIssues(
   });
 }
 
+function assertIndustryRequirementContract(requirement: ResearchTaskV2): void {
+  if (requirement.task_type !== 'industry_market_analysis') return;
+  const available = new Set(requirement.available_material_roles ?? []);
+  const overlap = (requirement.unavailable_material_roles ?? []).find((role) => available.has(role));
+  if (overlap) throw new Error(`industry material role ${overlap} cannot be both available and unavailable`);
+}
+
 export function normalizeOutcomeRequirement(
   requirement: ResearchTaskV2,
   originalInput: string,
@@ -322,8 +369,31 @@ export function normalizeOutcomeRequirement(
   ])];
   const specialistTaskType = explicitSpecialistTaskType(originalInput);
   const strongStrategySignal = STRATEGY_DELIVERABLE_SIGNAL.test(originalInput);
+  const strongIndustrySignal = hasStrongIndustryIntent(originalInput);
   const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
     || requirement.task_type === 'research_synthesis';
+
+  if (selectedDeliverable === 'industry_market_analysis_report') {
+    return {
+      ...requirement,
+      task_type: 'industry_market_analysis',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : ['research_report', 'opportunity_backlog', 'prioritized_actions', 'action_plan'],
+      expected_deliverables: ['industry_market_analysis_report'],
+      blocking_issues: actionableBlockingIssues(requirement, originalInput, 'answer'),
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(({ key, ambiguity_id }) => (
+        key !== 'deliverable_intent'
+        && key !== 'outcome_mode'
+        && (
+          ambiguity_id === undefined
+          || requirement.ambiguities.some(({ id, blocking }) => id === ambiguity_id && blocking)
+        )
+      )),
+    };
+  }
 
   if (selectedDeliverable) {
     const strategy = selectedDeliverable === 'research_strategy_report';
@@ -341,9 +411,14 @@ export function normalizeOutcomeRequirement(
         ? actionableBlockingIssues(requirement, originalInput, 'answer')
         : requirement.blocking_issues,
       ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
-      clarification_questions: requirement.clarification_questions.filter(
-        ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
-      ),
+      clarification_questions: requirement.clarification_questions.filter(({ key, ambiguity_id }) => (
+        key !== 'deliverable_intent'
+        && key !== 'outcome_mode'
+        && (
+          ambiguity_id === undefined
+          || requirement.ambiguities.some(({ id, blocking }) => id === ambiguity_id && blocking)
+        )
+      )),
     };
   }
   if (ambiguous) {
@@ -362,6 +437,23 @@ export function normalizeOutcomeRequirement(
         question,
         ...requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
       ],
+    };
+  }
+
+  if (selectedByUser === null && !planSignal && strongIndustrySignal) {
+    return {
+      ...requirement,
+      task_type: 'industry_market_analysis',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : ['research_report', 'opportunity_backlog', 'prioritized_actions', 'action_plan'],
+      expected_deliverables: ['industry_market_analysis_report'],
+      blocking_issues: actionableBlockingIssues(requirement, originalInput, 'answer'),
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(({ key }) => (
+        key !== 'deliverable_intent' && key !== 'outcome_mode'
+      )),
     };
   }
 
@@ -415,9 +507,12 @@ export function normalizeOutcomeRequirement(
       : planSignal && !answerSignal
         ? 'plan'
         : inferred ?? (requirement.task_type === 'research_synthesis' ? 'answer' : 'plan'));
+  const normalizedTaskType = mode === 'answer'
+    ? specialistTaskType ?? 'research_synthesis'
+    : 'user_research_planning';
   return {
     ...requirement,
-    task_type: mode === 'answer' ? 'research_synthesis' : 'user_research_planning',
+    task_type: normalizedTaskType,
     outcome_mode: mode,
     requested_artifacts: requested.length > 0
       ? requested
@@ -519,13 +614,64 @@ function normalizeClarificationGuidance(requirement: ResearchTaskV2): ResearchTa
   return { ...requirement, clarification_questions: questions };
 }
 
+function normalizeTaskMaterialRequests(requirement: ResearchTaskV2): ResearchTaskV2 {
+  if (
+    requirement.task_type !== 'design_audit'
+    || !requirement.expected_deliverables.includes('design_audit_report')
+  ) return requirement;
+  const requests = requirement.material_requests ?? [];
+  const designRequest = requests.find(({ role, kind }) => role === 'designImage' && kind === 'visual');
+  const materialRequests = designRequest
+    ? requests.map((request) => request === designRequest
+      ? { ...request, required: true, multiple: false }
+      : request)
+    : [{
+        id: 'target-design',
+        role: 'designImage',
+        kind: 'visual' as const,
+        label: '目标页面截图',
+        required: true,
+        multiple: false,
+        reason: 'Design Audit 必须基于实际页面截图并生成问题标注',
+      }];
+  const visualMaterialSignal = /(?:截图|图片|设计稿|image|screenshot)/iu;
+  const materialQuestionIds = new Set(requirement.clarification_questions.flatMap((question) => (
+    visualMaterialSignal.test(`${question.question} ${question.rationale}`)
+      ? question.ambiguity_id ? [question.ambiguity_id] : []
+      : []
+  )));
+  return {
+    ...requirement,
+    material_requests: materialRequests,
+    clarification_questions: requirement.clarification_questions.filter((question) => (
+      !visualMaterialSignal.test(`${question.question} ${question.rationale}`)
+    )),
+    ambiguities: requirement.ambiguities.filter(({ id }) => !materialQuestionIds.has(id)),
+    blocking_issues: requirement.blocking_issues.filter(({ key, kind, reason }) => (
+      !(
+        (kind === 'missing_required_material' || kind === 'missing_material')
+        && visualMaterialSignal.test(`${key} ${reason}`)
+      )
+    )),
+  };
+}
+
 function hasBlockingAmbiguity(requirement: ResearchTaskV2): boolean {
   return requirement.ambiguities.some((ambiguity) => ambiguity.blocking);
 }
 
 
-function needsClarification(requirement: ResearchTaskV2): boolean {
-  return hasBlockingAmbiguity(requirement) || requirement.clarification_questions.length > 0;
+function needsClarification(
+  requirement: ResearchTaskV2,
+  materials: readonly VerifiedTaskMaterial[] = [],
+): boolean {
+  const providedRequestIds = new Set(materials.map(({ requestId }) => requestId));
+  const missingRequiredMaterial = requirement.material_requests?.some(
+    ({ id, required }) => required && !providedRequestIds.has(id),
+  ) === true;
+  return hasBlockingAmbiguity(requirement)
+    || requirement.clarification_questions.length > 0
+    || missingRequiredMaterial;
 }
 
 function stableValue(value: unknown): unknown {
@@ -597,15 +743,30 @@ function withoutScenarioSelection(value: unknown): unknown {
   return rest;
 }
 
+function materialBindingsFor(materials: readonly VerifiedTaskMaterial[] | undefined): TaskMaterialBinding[] {
+  if (!materials || materials.length === 0) return [];
+  const byRequest = new Map<string, string[]>();
+  for (const material of materials) {
+    const current = byRequest.get(material.requestId) ?? [];
+    current.push(material.materialId);
+    byRequest.set(material.requestId, current);
+  }
+  return [...byRequest].map(([requestId, materialIds]) => ({ requestId, materialIds }));
+}
+
 function storedScenarioSelection(
   planningGuidance: PlanningGuidanceClarification,
   selectedScenarioId: ScenarioId,
   answers?: Record<string, unknown>,
+  materialBindings?: readonly TaskMaterialBinding[],
 ): Record<string, unknown> {
   return {
     planningGuidance,
     selectedScenarioId,
     ...(answers ? { answers } : {}),
+    ...(materialBindings && materialBindings.length > 0
+      ? { materialBindings: structuredClone(materialBindings) }
+      : {}),
   };
 }
 
@@ -648,6 +809,7 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
+      orchestrationMode: input.orchestrationMode ?? 'single_skill',
       clarification: null,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
@@ -664,6 +826,7 @@ export class RequirementRefinementService {
     });
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     if (!task) throw new Error(`task ${input.taskId} does not exist`);
+    const orchestrationMode = task.orchestrationMode ?? 'single_skill';
     const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
     if (!active) throw new Error(`task ${input.taskId} has no active requirement version to clarify`);
     const expectedVersion = input.expectedVersion ?? input.expectedStateVersion;
@@ -697,6 +860,7 @@ export class RequirementRefinementService {
         activePlanningGuidance,
         selectedScenarioId,
         input.answers,
+        input.materialBindings,
       );
       if (
         expectedVersion !== undefined
@@ -710,11 +874,13 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: active.id,
           stateVersion: task.stateVersion,
           rawInputHash: active.rawInputHash,
           selectedScenarioId,
+          materials: input.materials,
         }, onProgress);
       }
       if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
@@ -740,11 +906,13 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: active.id,
           stateVersion: task.stateVersion,
           rawInputHash: active.rawInputHash,
           selectedScenarioId,
+          materials: input.materials,
         }, onProgress);
       }
       if (unchanged) {
@@ -762,11 +930,13 @@ export class RequirementRefinementService {
           conversationId: input.conversationId,
           ownerUserId: input.ownerUserId,
           originalInput: task.originalInput,
+          orchestrationMode,
           requirement: active.structuredTask,
           requirementVersionId: activated.version.id,
           stateVersion: activated.task.stateVersion,
           rawInputHash: active.rawInputHash,
           selectedScenarioId,
+          materials: input.materials,
         }, onProgress);
       }
       return this.refine({
@@ -774,9 +944,12 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         clarification: { ...input.answers, selectedScenarioId },
         persistedClarification: storedSelection,
         selectedScenarioId,
+        materials: input.materials,
+        materialRequests: active.structuredTask.material_requests,
         expectedVersion: input.expectedVersion,
         expectedStateVersion: input.expectedStateVersion,
       }, onProgress);
@@ -784,6 +957,18 @@ export class RequirementRefinementService {
     if (input.selectedScenarioId !== undefined) {
       throw new InvalidScenarioSelectionError('当前任务不接受研究方向选择');
     }
+    const priorRecord = active.clarification
+      && typeof active.clarification === 'object'
+      && !Array.isArray(active.clarification)
+      ? active.clarification as Record<string, unknown>
+      : {};
+    const clarificationAnswers = { ...priorRecord, ...input.answers };
+    const persistedClarification = {
+      ...clarificationAnswers,
+      ...(input.materialBindings && input.materialBindings.length > 0
+        ? { materialBindings: structuredClone(input.materialBindings) }
+        : {}),
+    };
     const unchangedClarification = hasNoClarificationChanges(
       input.answers,
       active.structuredTask,
@@ -792,14 +977,42 @@ export class RequirementRefinementService {
       expectedVersion !== undefined
       && task.stateVersion === expectedVersion
       && matchesActiveRequirement
-      && !needsClarification(active.structuredTask)
+      && !needsClarification(active.structuredTask, input.materials)
       && unchangedClarification
     ) {
+      const materialBindingsChanged = Boolean(
+        input.materialBindings?.length
+        && !sameStoredValue(active.clarification, persistedClarification),
+      );
+      if (materialBindingsChanged) {
+        const activated = await this.dependencies.repository.createAndActivateRequirementVersion({
+          taskId: input.taskId,
+          ownerUserId: input.ownerUserId,
+          expectedVersion,
+          rawInputHash: active.rawInputHash,
+          clarification: persistedClarification,
+          structuredTask: active.structuredTask,
+          modelCallId: null,
+        });
+        return this.finishRefinement({
+          taskId: input.taskId,
+          conversationId: input.conversationId,
+          ownerUserId: input.ownerUserId,
+          originalInput: task.originalInput,
+          orchestrationMode,
+          requirement: active.structuredTask,
+          requirementVersionId: activated.version.id,
+          stateVersion: activated.task.stateVersion,
+          rawInputHash: active.rawInputHash,
+          materials: input.materials,
+        }, onProgress);
+      }
       return this.finishRefinement({
         taskId: input.taskId,
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
         stateVersion: task.stateVersion,
@@ -808,12 +1021,13 @@ export class RequirementRefinementService {
           mode: 'latest_finalized_requirement',
           activeRequirementVersionId: active.id,
         },
+        materials: input.materials,
       }, onProgress);
     }
     if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
       const resumesActivatedRequirement = matchesActiveRequirement
         && task.stateVersion === expectedVersion + 1
-        && sameStoredValue(active.clarification, input.answers);
+        && sameStoredValue(active.clarification, persistedClarification);
       if (!resumesActivatedRequirement) {
         throw new ControlPlaneConflictError(
           `task ${input.taskId} has no matching activated clarification at version ${expectedVersion + 1}`,
@@ -824,10 +1038,12 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
+        orchestrationMode,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
         stateVersion: task.stateVersion,
         rawInputHash: active.rawInputHash,
+        materials: input.materials,
       }, onProgress);
     }
     return this.refine({
@@ -835,7 +1051,11 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: task.originalInput,
-      clarification: input.answers,
+      orchestrationMode,
+      clarification: clarificationAnswers,
+      persistedClarification,
+      materials: input.materials,
+      materialRequests: active.structuredTask.material_requests,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
     }, onProgress);
@@ -849,11 +1069,13 @@ export class RequirementRefinementService {
     requirement: ResearchTaskV2;
     requirementVersionId: string;
     stateVersion: number;
+    orchestrationMode: OrchestrationModeV1;
     rawInputHash: string;
     selectedScenarioId?: ScenarioId;
     clarificationRecovery?: ClarificationRecoveryContext;
+    materials?: readonly VerifiedTaskMaterial[];
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
-    const status = needsClarification(input.requirement)
+    const status = needsClarification(input.requirement, input.materials)
       ? 'clarification_required'
       : 'ready_to_plan';
     if (status === 'clarification_required') {
@@ -869,7 +1091,11 @@ export class RequirementRefinementService {
       ? await this.dependencies.planner.plan({
           originalInput: input.originalInput,
           requirement: input.requirement,
+          orchestrationMode: input.orchestrationMode,
           ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
+          ...(input.materials && input.materials.length > 0
+            ? { materials: input.materials }
+            : {}),
         }, onProgress)
       : undefined;
     if (isPlanningGuidanceClarification(planningOutcome)) {
@@ -878,7 +1104,12 @@ export class RequirementRefinementService {
         ownerUserId: input.ownerUserId,
         expectedVersion: input.stateVersion,
         rawInputHash: input.rawInputHash,
-        clarification: { planningGuidance: planningOutcome.planningGuidance },
+        clarification: {
+          planningGuidance: planningOutcome.planningGuidance,
+          ...(materialBindingsFor(input.materials).length > 0
+            ? { materialBindings: materialBindingsFor(input.materials) }
+            : {}),
+        },
         structuredTask: input.requirement,
         modelCallId: null,
       });
@@ -922,9 +1153,12 @@ export class RequirementRefinementService {
     conversationId: string;
     ownerUserId: string;
     originalInput: string;
+    orchestrationMode: OrchestrationModeV1;
     clarification: unknown;
     persistedClarification?: unknown;
     selectedScenarioId?: ScenarioId;
+    materials?: readonly VerifiedTaskMaterial[];
+    materialRequests?: readonly TaskMaterialRequest[];
     expectedVersion?: number;
     expectedStateVersion?: number;
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
@@ -945,7 +1179,9 @@ export class RequirementRefinementService {
         ? { ...context, validation_feedback: validationFeedback }
         : context;
       const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
-        prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`
+        prompt: `${REQUIREMENT_PROMPT}`
+          + (input.clarification === null ? '' : `\n${CLARIFICATION_RESOLUTION_PROMPT}`)
+          + `\n用户当前输入:${input.originalInput}`
           + (validationFeedback ? `\n上一次结构化需求未通过校验，请只修正以下问题：${validationFeedback}` : ''),
         schema: researchTaskSchema(),
         schemaName: 'research-task-v2',
@@ -965,7 +1201,18 @@ export class RequirementRefinementService {
           input.originalInput,
           input.clarification,
         );
-        canonicalRequirement = canonicalizeGeneratedExpectedDeliverables(requirement);
+        assertIndustryRequirementContract(requirement);
+        this.dependencies.validator.validateOrThrow('research-task-v2', requirement);
+        const normalized = normalizeTaskMaterialRequests(
+          canonicalizeGeneratedExpectedDeliverables(requirement),
+        );
+        canonicalRequirement = input.materialRequests && normalized.task_type === 'design_audit'
+          ? {
+              ...normalized,
+              material_requests: input.materialRequests.map((request) => ({ ...request })),
+            }
+          : normalized;
+        this.dependencies.validator.validateOrThrow('research-task-v2', canonicalRequirement);
         break;
       } catch (error) {
         if (round === 1) throw error;
@@ -1015,10 +1262,12 @@ export class RequirementRefinementService {
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
       requirement: canonicalRequirement,
+      orchestrationMode: input.orchestrationMode,
       requirementVersionId: activated.version.id,
       stateVersion: activated.task.stateVersion,
       rawInputHash: activated.version.rawInputHash,
       ...(selectedScenarioId ? { selectedScenarioId } : {}),
+      ...(input.materials ? { materials: input.materials } : {}),
     }, onProgress);
   }
 }

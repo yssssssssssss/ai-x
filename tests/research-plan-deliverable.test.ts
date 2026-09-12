@@ -102,7 +102,7 @@ test('ResearchPlanPayload 拒绝缺失 comparisonDimensions', () => {
   );
 });
 
-test('Evidence Policy 保留历史竞品方案并提供六类 canonical mappings', () => {
+test('Evidence Policy 保留历史竞品方案并提供七类 canonical mappings', () => {
   const policy = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/evidence-policy.yaml'), 'utf8')) as {
     version: number;
     policies: Array<{
@@ -192,10 +192,20 @@ test('Evidence Policy 保留历史竞品方案并提供六类 canonical mappings
         required: true,
       }],
     },
+    {
+      task_type: 'industry_market_analysis',
+      deliverable_type: 'industry_market_analysis_report',
+      requirements: [{
+        id: 'industry-market-analysis-report',
+        accepted_classes: ['public_source', 'screenshot', 'knowledge', 'user_input', 'dataset'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
   ]);
 });
 
-test('Deliverable Registry 将六类 active deliverable 绑定到冻结 payload schema', () => {
+test('Deliverable Registry 将七类 active deliverable 绑定到冻结 payload schema', () => {
   const registry = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/deliverable-registry.yaml'), 'utf8')) as {
     version: number;
     deliverables: Array<{
@@ -248,6 +258,12 @@ test('Deliverable Registry 将六类 active deliverable 绑定到冻结 payload 
       status: 'active',
       envelope_version: 'research-deliverable-v1',
       payload_schema: 'schemas/deliverables/accessibility-audit-report.schema.json',
+    },
+    {
+      id: 'industry_market_analysis_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/industry-market-analysis-report.schema.json',
     },
   ]);
 });

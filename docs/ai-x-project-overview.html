@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>ai-x（用研 AI 专项）项目说明报告</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #667085;
+      --soft: #f3f6fa;
+      --paper: #ffffff;
+      --line: #dde4ee;
+      --navy: #12233f;
+      --blue: #2166f3;
+      --cyan: #0c9cb4;
+      --violet: #7657d7;
+      --green: #198754;
+      --amber: #b76d00;
+      --red: #bb3d4a;
+      --shadow: 0 16px 44px rgba(21, 34, 56, .10);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 88% 2%, rgba(33, 102, 243, .10), transparent 26rem),
+        linear-gradient(180deg, #f8fafc 0, #eef3f8 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      padding: .12rem .35rem;
+      border: 1px solid #d9e1eb;
+      border-radius: 6px;
+      background: #f3f6f9;
+      color: #34445d;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .9em;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      border-right: 1px solid rgba(178, 191, 211, .58);
+      background: rgba(248, 250, 252, .82);
+      backdrop-filter: blur(14px);
+      overflow: auto;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 24px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--violet));
+      box-shadow: 0 8px 20px rgba(33, 102, 243, .25);
+    }
+    .nav-title {
+      margin: 22px 0 8px;
+      color: #8994a7;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    nav a {
+      display: block;
+      margin: 2px 0;
+      padding: 8px 10px;
+      border-radius: 9px;
+      color: #526078;
+      font-size: 13px;
+    }
+    nav a:hover { background: #e8eef7; color: var(--blue); text-decoration: none; }
+    .aside-note {
+      margin-top: 26px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: #7c8799;
+      font-size: 11px;
+    }
+    main { min-width: 0; padding: 30px 44px 70px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 56px 58px 48px;
+      border-radius: 28px;
+      color: white;
+      background:
+        radial-gradient(circle at 86% 12%, rgba(88, 191, 255, .34), transparent 20rem),
+        radial-gradient(circle at 12% 110%, rgba(118, 87, 215, .55), transparent 26rem),
+        linear-gradient(135deg, #101d34 0%, #163765 56%, #155b79 100%);
+      box-shadow: 0 28px 70px rgba(18, 35, 63, .22);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -70px;
+      bottom: -120px;
+      width: 330px;
+      height: 330px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 50%;
+      box-shadow: 0 0 0 38px rgba(255,255,255,.035), 0 0 0 76px rgba(255,255,255,.025);
+    }
+    .eyebrow {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 850px;
+      margin: 22px 0 14px;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 1.08;
+      letter-spacing: -.045em;
+    }
+    .hero-lead {
+      position: relative;
+      z-index: 1;
+      max-width: 870px;
+      margin: 0;
+      color: rgba(255,255,255,.82);
+      font-size: 18px;
+    }
+    .hero-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-top: 22px;
+      color: rgba(255,255,255,.68);
+      font: 12px/1.5 "SFMono-Regular", Consolas, monospace;
+    }
+    .metrics {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 34px;
+    }
+    .metric {
+      padding: 17px 18px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 15px;
+      background: rgba(255,255,255,.08);
+      backdrop-filter: blur(8px);
+    }
+    .metric strong { display: block; font-size: 27px; line-height: 1.15; }
+    .metric span { color: rgba(255,255,255,.7); font-size: 12px; }
+    .scope-note {
+      margin: 22px 0 0;
+      padding: 15px 18px;
+      border: 1px solid #cbd9ee;
+      border-left: 4px solid var(--blue);
+      border-radius: 12px;
+      background: #f5f8fd;
+      color: #526078;
+      font-size: 13px;
+    }
+    section {
+      margin-top: 28px;
+      padding: 34px 38px;
+      border: 1px solid rgba(210, 219, 232, .85);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.94);
+      box-shadow: var(--shadow);
+    }
+    section > h2 {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin: 0 0 22px;
+      font-size: 27px;
+      line-height: 1.25;
+      letter-spacing: -.025em;
+    }
+    section > h2 .no {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      color: white;
+      background: var(--navy);
+      font-size: 13px;
+    }
+    h3 { margin: 26px 0 10px; color: #263a59; font-size: 19px; }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li { margin: 5px 0; }
+    .lead {
+      color: #40516c;
+      font-size: 17px;
+      line-height: 1.86;
+    }
+    .callout {
+      margin: 18px 0;
+      padding: 18px 20px;
+      border-radius: 13px;
+      background: linear-gradient(90deg, #eef4ff, #f4f3ff);
+      color: #314568;
+      font-weight: 600;
+    }
+    .grid { display: grid; gap: 14px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fff, #fafbfd);
+    }
+    .card h3 { margin: 0 0 8px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .tag {
+      display: inline-block;
+      margin-bottom: 9px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: #1854c6;
+      background: #eaf1ff;
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .tag.green { color: #146b42; background: #e8f6ef; }
+    .tag.amber { color: #875200; background: #fff3d9; }
+    .tag.violet { color: #5b3fb1; background: #f0ebff; }
+    .table-wrap { overflow-x: auto; margin: 16px 0 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 12px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #45536a; background: #f2f5f9; font-size: 12px; white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    .diagram {
+      margin: 18px 0;
+      padding: 22px;
+      overflow-x: auto;
+      border: 1px solid #283b57;
+      border-radius: 15px;
+      color: #d9e8ff;
+      background: #122039;
+      font: 12.5px/1.62 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      white-space: pre;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 11px;
+      margin: 18px 0;
+      counter-reset: stage;
+    }
+    .flow-item {
+      position: relative;
+      min-height: 116px;
+      padding: 15px 15px 14px;
+      border: 1px solid #d9e1ec;
+      border-radius: 13px;
+      background: #fafcff;
+      counter-increment: stage;
+    }
+    .flow-item::before {
+      content: counter(stage, decimal-leading-zero);
+      display: inline-block;
+      margin-bottom: 8px;
+      color: var(--blue);
+      font: 750 11px/1 "SFMono-Regular", monospace;
+      letter-spacing: .1em;
+    }
+    .flow-item strong { display: block; margin-bottom: 4px; font-size: 14px; }
+    .flow-item span { color: var(--muted); font-size: 12px; }
+    .mode {
+      padding: 21px;
+      border-radius: 15px;
+      color: #31415b;
+      background: #f5f8fc;
+      border-top: 4px solid var(--blue);
+    }
+    .mode.multi { border-top-color: var(--violet); }
+    .mode h3 { margin-top: 0; }
+    .mode-path { color: #596a82; font: 12px/1.7 "SFMono-Regular", Consolas, monospace; }
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+      margin: 16px 0;
+    }
+    .state {
+      padding: 6px 9px;
+      border: 1px solid #d7e0ec;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #41516a;
+      font: 11px/1.2 "SFMono-Regular", monospace;
+    }
+    .arrow { color: #92a0b4; }
+    .good { color: var(--green); }
+    .warn { color: var(--amber); }
+    .risk { color: var(--red); }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { position: relative; padding-left: 25px; }
+    .checklist li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+    .warning-list { list-style: none; padding: 0; }
+    .warning-list li { position: relative; padding: 10px 12px 10px 34px; border-bottom: 1px solid var(--line); }
+    .warning-list li::before { content: "!"; position: absolute; left: 8px; top: 11px; display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; color: white; background: var(--amber); font-size: 11px; font-weight: 800; }
+    .conclusion {
+      color: white;
+      background:
+        radial-gradient(circle at 90% 20%, rgba(46, 208, 199, .20), transparent 18rem),
+        linear-gradient(135deg, #14243e, #173f55);
+    }
+    .conclusion > h2 { color: white; }
+    .conclusion > h2 .no { color: var(--navy); background: white; }
+    .conclusion p, .conclusion li { color: rgba(255,255,255,.82); }
+    .conclusion strong { color: white; }
+    .sources a { word-break: break-all; }
+    footer { padding: 30px 8px 10px; color: #7d8899; font-size: 12px; text-align: center; }
+    @media (max-width: 1080px) {
+      .layout { display: block; }
+      aside { display: none; }
+      main { padding: 20px; }
+      .metrics, .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+      main { padding: 10px; }
+      .hero { padding: 34px 24px; border-radius: 18px; }
+      section { padding: 25px 20px; }
+      .metrics, .flow, .grid.two, .grid.three, .split { grid-template-columns: 1fr; }
+      h1 { font-size: 37px; }
+      .hero-lead { font-size: 16px; }
+    }
+    @media print {
+      body { background: white; }
+      .layout { display: block; max-width: none; }
+      aside { display: none; }
+      main { padding: 0; }
+      .hero, section { box-shadow: none; break-inside: avoid; }
+      .hero { border-radius: 0; }
+      section { border-color: #ccd3dc; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand"><span class="brand-mark">A</span><span>ai-x · Project Brief</span></div>
+      <div class="nav-title">内容导航</div>
+      <nav aria-label="报告导航">
+        <a href="#overview">01 · 项目概览</a>
+        <a href="#capabilities">02 · 核心能力</a>
+        <a href="#technology">03 · 技术特点</a>
+        <a href="#architecture">04 · 项目架构</a>
+        <a href="#workflow">05 · 核心流程</a>
+        <a href="#reports">06 · 报告体系</a>
+        <a href="#stack">07 · 技术栈与目录</a>
+        <a href="#governance">08 · 治理与恢复</a>
+        <a href="#maturity">09 · 成熟度与边界</a>
+        <a href="#conclusion">10 · 结论</a>
+        <a href="#references">11 · 主要依据</a>
+      </nav>
+      <div class="aside-note">
+        当前工作树快照<br />
+        <code>ff97f5c</code><br />
+        2026-09-10 · CST
+      </div>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div class="eyebrow">Project Overview · Current Snapshot</div>
+        <h1>ai-x<br />用研 AI 专项</h1>
+        <p class="hero-lead">从自然语言研究需求到可验证交付物：覆盖澄清、方案选择、Skill／Tool 编排、证据治理、报告审校与多形态发布的可信研究任务平台。</p>
+        <div class="hero-meta">
+          <span>package user-research-ai@0.0.1</span>
+          <span>branch fix/single-skill-v2-gap-reconciliation</span>
+          <span>Node.js 22+ · TypeScript · PostgreSQL</span>
+        </div>
+        <div class="metrics" aria-label="项目规模">
+          <div class="metric"><strong>25</strong><span>Active Skills · 6 Compiled</span></div>
+          <div class="metric"><strong>8</strong><span>Active Tools · 1 Core</span></div>
+          <div class="metric"><strong>7</strong><span>正式 Deliverables</span></div>
+          <div class="metric"><strong>216</strong><span>自动化测试文件</span></div>
+        </div>
+      </header>
+
+      <p class="scope-note"><strong>报告口径：</strong>结论依据 <code>CONTEXT.md</code>、Accepted ADR、当前代码、active Registry 与数据库迁移。代码中存在但默认关闭的开关、draft Tool 和计划文档，不视为当前部署已经启用的能力。</p>
+
+      <section id="overview">
+        <h2><span class="no">01</span>项目概览</h2>
+        <p class="lead">ai-x 不是“把问题发送给大模型，再返回一段文本”的聊天应用，而是一套面向用户研究工作的 <strong>AI 任务编排与可信交付平台</strong>。它把需求变成版本化合同，把能力变成确认前可见的执行 DAG，把执行结果变成带 Evidence、Review 和 lineage 的正式研究产物。</p>
+        <div class="callout">核心判断：技术运行成功 ≠ 研究结果可用。系统最终追求的是“真实能力闭环”——真实输入、真实 LLM、真实 Tool、可追溯报告，以及独立研究员对结果可用性的判断。</div>
+        <div class="grid three">
+          <article class="card"><span class="tag">Input</span><h3>需求可确认</h3><p>显式区分研究规划与直接回答，记录范围、假设、歧义、成功标准、敏感性与 PII。</p></article>
+          <article class="card"><span class="tag violet">Execution</span><h3>过程可审计</h3><p>计划、Skill、Tool、Knowledge、LLM、审批、Evidence 和 Artifact 都绑定 Task／Plan／Attempt。</p></article>
+          <article class="card"><span class="tag green">Delivery</span><h3>结果可追溯</h3><p>Reviewed Canonical 是唯一事实源；完整报告负责审计，编辑摘要负责决策阅读。</p></article>
+        </div>
+        <h3>业务定位</h3>
+        <ul>
+          <li>规划用户研究：目标、方法、样本、排期、采集模板和验收标准；</li>
+          <li>基于现有 Evidence 直接回答业务问题，形成策略与优先行动；</li>
+          <li>支持竞品、行业市场、VOC、设计走查和无障碍审计；</li>
+          <li>组合方法知识、公开检索、数据集、截图和专业分析工具；</li>
+          <li>为研究员与决策者分别提供完整底稿和编辑摘要。</li>
+        </ul>
+      </section>
+
+      <section id="capabilities">
+        <h2><span class="no">02</span>核心能力</h2>
+        <div class="grid two">
+          <article class="card"><span class="tag">Requirement</span><h3>需求理解与多轮澄清</h3><p>自然语言输入先进入 <code>ResearchTaskV2</code>；不能安全推断的关键内容进入 <code>awaiting_clarification</code>，回答后形成新的 Requirement Version。</p></article>
+          <article class="card"><span class="tag">Planning</span><h3>问题图与方案比较</h3><p>生成 ProblemGraph、Evidence Policy、Capability Demand，并提供 2～4 个候选方案；至少包含 speed／depth，只有推荐、没有自动替用户选择。</p></article>
+          <article class="card"><span class="tag violet">Modes</span><h3>任务级双编排</h3><p><code>single_skill</code> 使用 Plan v2 且恰好一个 Invocation；<code>multi_skill</code> 使用 Plan v3、Portfolio、Contribution、唯一 Synthesizer 与 Ledger。</p></article>
+          <article class="card"><span class="tag violet">DAG</span><h3>可见且冻结的执行图</h3><p>Compiled Skill 在确认前展开 Knowledge／Tool／LLM／Skill／Reviewer 阶段；执行时不得临时加入隐藏步骤或嵌套 Agent。</p></article>
+          <article class="card"><span class="tag green">Evidence</span><h3>证据约束</h3><p>公开来源、截图、用户输入、Knowledge、数据集、模拟和派生结果分级；Required Evidence 与 Core Tool Evidence 不满足时失败关闭。</p></article>
+          <article class="card"><span class="tag green">Report</span><h3>Canonical + 双报告集</h3><p>Reviewed Canonical 是唯一事实源；Canonical Detail 保留完整内容，Editorial Summary 提供安全、无脚本的决策摘要。</p></article>
+          <article class="card"><span class="tag amber">Multimodal</span><h3>多模态与数据输入</h3><p>计划级图片、截图、数据集 Gate；支持安全图像校验、标注、Chart SVG、Manifest、lineage 与导出策略。</p></article>
+          <article class="card"><span class="tag amber">Control</span><h3>长任务治理</h3><p>JWT、owner 隔离、状态版本、命令幂等、Lease、Heartbeat、Retry、Replan、Cancel、Checkpoint 与 <code>completed_with_gaps</code>。</p></article>
+        </div>
+
+        <h3>七类正式研究交付</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Task Type</th><th>Deliverable</th><th>主要输出</th><th>最低 Evidence</th></tr></thead>
+            <tbody>
+              <tr><td><code>user_research_planning</code></td><td><code>research_plan</code></td><td>目标、方法、样本、排期、模板、质量标准</td><td>用户输入 / Knowledge / 公开来源</td></tr>
+              <tr><td><code>research_synthesis</code></td><td><code>research_strategy_report</code></td><td>直接答案、Finding、策略地图、心智模型、原则、机会与行动</td><td>公开来源 / Knowledge / 用户输入 / 数据集</td></tr>
+              <tr><td><code>competitive_research</code></td><td><code>competitive_analysis_report</code></td><td>竞品样本、维度、事实证据、差异与建议</td><td>公开来源 / 截图</td></tr>
+              <tr><td><code>voc_diagnosis</code></td><td><code>voc_diagnosis_report</code></td><td>反馈编码、主题、问题诊断与优先级</td><td>数据集 / 用户输入 / 公开来源</td></tr>
+              <tr><td><code>design_audit</code></td><td><code>design_audit_report</code></td><td>设计走查、问题定位、视觉证据与整改</td><td>截图 / 用户输入 / 公开来源</td></tr>
+              <tr><td><code>a11y_audit</code></td><td><code>accessibility_audit_report</code></td><td>无障碍问题、影响与整改建议</td><td>截图 / 用户输入 / 公开来源</td></tr>
+              <tr><td><code>industry_market_analysis</code></td><td><code>industry_market_analysis_report</code></td><td>行业、用户、供给、竞品、京东现状、机会、策略、度量</td><td>公开来源 / 截图 / Knowledge / 用户输入 / 数据集</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>当前能力目录</h3>
+        <div class="split">
+          <div>
+            <ul class="checklist">
+              <li><strong>Skill：</strong>26 个 Registry 条目，25 active；其中 6 compiled、19 legacy single-call。</li>
+              <li><strong>Core Tool：</strong><code>tavily-web-search</code>，承担公开事实主检索。</li>
+              <li><strong>Optional Tool：</strong>Joyspace、AI Spider 与五类分析实验室。</li>
+              <li><strong>Draft Tool：</strong>O2 Web Search、Playwright Page Capture，默认不参与生产选择。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="tag green">Knowledge</span>
+            <h3>方法知识中枢</h3>
+            <p>导航式检索：README → 分区 Index → 叶子。Knowledge Base README 盘点为 182 篇方法／模型／素材与 20 个知识库 Skill；生产 Loader 排除 candidate／deprecated。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="technology">
+        <h2><span class="no">03</span>技术特点</h2>
+        <div class="grid two">
+          <article class="card"><h3>Contract-first</h3><p>TypeScript、JSON Schema、YAML Registry 和数据库约束共同定义边界。Prompt 负责语义，不负责偷偷改变协议。</p></article>
+          <article class="card"><h3>Plan before Execute</h3><p>成本、风险、输入与审批在真实调用前显式化；用户确认的是最终冻结 DAG。</p></article>
+          <article class="card"><h3>Fail-closed Content</h3><p>Evidence、来源身份、Coverage、Review 或 Artifact 完整性错误阻断交付；布局与可选视觉能力才允许降级。</p></article>
+          <article class="card"><h3>Immutable Provenance</h3><p>SEALED Artifact 绑定 Schema、SHA-256、字节大小、敏感级别、Task／Plan／Attempt 和父子 lineage。</p></article>
+          <article class="card"><h3>Model / System 分权</h3><p>模型处理语义；系统处理 ID、引用、Hash、状态、Coverage、授权和发布；Renderer 不重新研究。</p></article>
+          <article class="card"><h3>Recoverable Parallelism</h3><p>DAG 按依赖分 wave 并发执行；Lease 心跳、fencing、检查点复用和精确失败动作支撑长任务恢复。</p></article>
+        </div>
+        <h3>关键不变量</h3>
+        <ol>
+          <li>用户选择编排模式和执行方案；推荐不等于自动选择。</li>
+          <li>模式随 Task 冻结，单／多 Skill 不跨模式 fallback。</li>
+          <li>所有真实 LLM 与 Tool 调用都必须留下可验证回执。</li>
+          <li>supported 事实必须绑定有效 Evidence；虚拟用户只产生 simulation 假设。</li>
+          <li>Final Review 之后的 Reviewed Canonical 是唯一正式事实源。</li>
+          <li>Summary 可以概括，不能新增事实；Summary 失败不阻断 Detail。</li>
+        </ol>
+      </section>
+
+      <section id="architecture">
+        <h2><span class="no">04</span>项目架构</h2>
+        <pre class="diagram">┌──────────────────────────────────────────────────────────────────────┐
+│ React Web / Vite                                                    │
+│ 登录 · 需求 · 澄清 · 方案 · 执行进度 · 报告 / 导出 / 历史          │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │ JWT + REST + SSE / Polling
+┌───────────────────────────────▼──────────────────────────────────────┐
+│ Express Agent API                                                   │
+│ Auth · Control Tasks · Planning · Assets · Reports · Zero           │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+┌───────────────────────────────▼──────────────────────────────────────┐
+│ Control Runtime                                                     │
+│ Requirement · Planning · Workflow · Lease Engine · Evidence · Report│
+└───────────────┬─────────────────────┬──────────────────────┬─────────┘
+                │                     │                      │
+┌───────────────▼──────────┐ ┌────────▼─────────┐ ┌──────────▼─────────┐
+│ Git Contracts & Registry │ │ PostgreSQL       │ │ Artifact Workspace │
+│ YAML · Schema · Skill    │ │ Task/Plan/Lease  │ │ JSON/HTML/Image    │
+│ Tool · Knowledge · ADR   │ │ Gate/Receipt     │ │ SHA-256 / Package  │
+└───────────────┬──────────┘ └──────────────────┘ └────────────────────┘
+                │
+┌───────────────▼──────────────────────────────────────────────────────┐
+│ LLM Gateway · Tavily · Joyspace · AI Spider · Labs · Zero           │
+└──────────────────────────────────────────────────────────────────────┘</pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>层</th><th>主要目录</th><th>职责</th></tr></thead>
+            <tbody>
+              <tr><td>Web 产品层</td><td><code>apps/web/</code></td><td>工作台、阶段状态机、输入、执行进度、报告阅读与导出</td></tr>
+              <tr><td>API 边界层</td><td><code>apps/agent-api/</code></td><td>JWT、owner 鉴权、REST／SSE、Control Runtime 装配、Zero</td></tr>
+              <tr><td>需求与规划层</td><td><code>control/</code>、<code>planners/</code></td><td>Requirement、ProblemGraph、Demand、Capability／Portfolio、Plan 编译</td></tr>
+              <tr><td>执行层</td><td><code>lease-execution-engine.ts</code>、<code>runners/</code>、<code>skills/</code></td><td>Lease、DAG、Actor 执行、Retry、Gap、Checkpoint</td></tr>
+              <tr><td>证据与报告层</td><td><code>evidence/</code>、<code>report/</code></td><td>Evidence、Canonical、Review、Layout、HTML、Package、Summary</td></tr>
+              <tr><td>公共合同层</td><td><code>packages/api-contract/</code>、<code>schemas/</code></td><td>前后端共享的版本化类型与 Schema</td></tr>
+              <tr><td>配置能力层</td><td><code>orchestrator/</code>、<code>tools/</code>、<code>knowledge-base/</code></td><td>Registry、Policy、Prompt、Rubric、Execution Contract、方法知识</td></tr>
+              <tr><td>持久化层</td><td><code>database/</code>、<code>run-workspaces/</code></td><td>控制平面、迁移、文件 Artifact、Hash 与恢复数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>控制平面数据关系</h3>
+        <pre class="diagram">Conversation
+  └─ ControlTask (state + stateVersion + orchestrationMode)
+       ├─ RequirementVersion
+       ├─ PlanVersion (candidate + planHash + pendingInputs)
+       ├─ GateRecord / Command (approval + idempotency)
+       └─ ExecutionAttempt (lease + retryOf)
+            ├─ ExecutionStep
+            ├─ ModelCall Receipt
+            └─ ControlArtifact (STAGING / SEALED / FAILED)
+                 ├─ Evidence Manifest
+                 ├─ Contribution / Ledger
+                 ├─ Canonical Deliverable / Review
+                 └─ ReportDocument / HTML / ReportPackage</pre>
+        <p>PostgreSQL 保存任务控制事实；大体积 JSON、图片、SVG、HTML 和报告包位于 Artifact Workspace。配置与能力定义保留在 Git，不写入业务数据库。</p>
+        <div class="callout"><strong>当前可信执行主路径：</strong>Agent API → TaskWorkflowService → LeaseExecutionEngine → SEALED Artifact / Evidence / Review / Report Package。仓库仍保留 Legacy 四段流和历史 Reader，但 Legacy 路径被禁止调用真实 LLM／Tool。</div>
+      </section>
+
+      <section id="workflow">
+        <h2><span class="no">05</span>核心流程</h2>
+        <div class="flow">
+          <div class="flow-item"><strong>输入与模式</strong><span>提交研究目标，并选择 single_skill 或 multi_skill。</span></div>
+          <div class="flow-item"><strong>需求冻结</strong><span>形成 ResearchTaskV2；必要时多轮澄清并版本化。</span></div>
+          <div class="flow-item"><strong>问题与能力</strong><span>ProblemGraph、Evidence Policy、Demand、Capability Resolution。</span></div>
+          <div class="flow-item"><strong>候选计划</strong><span>生成 2～4 方案，编译并保存 Plan v2／v3 与 hash。</span></div>
+          <div class="flow-item"><strong>选择与 Gate</strong><span>用户选择、确认输入、上传图片／数据集并完成审批。</span></div>
+          <div class="flow-item"><strong>Lease 执行</strong><span>按 DAG wave 运行 Knowledge、Tool、LLM、Skill、Reviewer。</span></div>
+          <div class="flow-item"><strong>证据与审校</strong><span>封存 Evidence Manifest、Canonical，执行 Final Review。</span></div>
+          <div class="flow-item"><strong>报告与发布</strong><span>Detail、Summary、Markdown／ZIP／HTML，以及可选 Zero。</span></div>
+        </div>
+
+        <h3>任务状态机</h3>
+        <div class="status-line" aria-label="任务主状态">
+          <span class="state">awaiting_clarification</span><span class="arrow">→</span>
+          <span class="state">awaiting_selection</span><span class="arrow">→</span>
+          <span class="state">awaiting_confirmation</span><span class="arrow">→</span>
+          <span class="state">awaiting_approval / ready</span><span class="arrow">→</span>
+          <span class="state">executing</span><span class="arrow">→</span>
+          <span class="state">reviewing</span><span class="arrow">→</span>
+          <span class="state">composing_report</span><span class="arrow">→</span>
+          <span class="state good">completed(_with_gaps)</span>
+        </div>
+        <p>执行过程还可以进入 <code>paused</code>、<code>failed</code>、<code>cancelled</code> 或 <code>rejected</code>。所有状态变更使用 <code>stateVersion</code> 做乐观并发控制。</p>
+
+        <div class="grid two">
+          <article class="mode">
+            <h3>Single Skill · Plan v2</h3>
+            <p class="mode-path">Requirement → Capability Resolver → 1 Skill Invocation → compiled stages / legacy call → Evidence → Canonical → Review → Reports</p>
+            <p>关键保证是 Task 中恰好一个 Skill Invocation；失败时不得自动切换到多 Skill。</p>
+          </article>
+          <article class="mode multi">
+            <h3>Multi Skill · Plan v3</h3>
+            <p class="mode-path">Requirement → Demand Graph → Portfolio → Contributors → Bundle → Synthesizer → Cross Review → Ledger → Canonical → Reports</p>
+            <p>每个 Question + Contribution Type 有唯一主责；Ledger 记录 included、merged、conflicted 或 omitted。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="reports">
+        <h2><span class="no">06</span>报告与交付架构</h2>
+        <pre class="diagram">Step Outputs / Research Contributions
+                ↓
+          Evidence Manifest
+                ↓
+           Semantic Draft
+                ↓  Typed Patch（仅修改授权目标）
+       Reviewed Canonical Deliverable
+          ┌─────┴──────────────────────┐
+          ↓                            ↓
+Canonical Detail Report       Editorial Summary Report
+完整内容 · Evidence · 审计     决策摘要 · 无脚本 HTML
+          └─────┬──────────────────────┘
+                ↓
+ Web / Markdown / ZIP / Standalone HTML / Optional Zero</pre>
+        <div class="grid two">
+          <article class="card"><span class="tag green">Truth</span><h3>Canonical Detail</h3><p>正式研究交付和追溯入口，保留 Direct Answer、Finding、请求交付物、Evidence、行动、限制、风险和多 Skill 审计。</p></article>
+          <article class="card"><span class="tag violet">Reading</span><h3>Editorial Summary</h3><p>从冻结 Source Bundle 派生，可合并重复信息，但不能新增事实、数字、日期、URL 或提高证据确定性；失败不影响 Detail。</p></article>
+        </div>
+        <h3>完整性门禁</h3>
+        <ul class="checklist">
+          <li>每个必答问题都有 Direct Answer，或明确标记为未回答；</li>
+          <li>supported 事实绑定已验证 Evidence；Recommendation 可回溯至 Finding／Summary；</li>
+          <li>请求交付物形成结构化内容，而不是只出现在清单中；</li>
+          <li>ReportDocument 覆盖 Canonical 中要求展示的内容叶子；</li>
+          <li>Chart、图片、标注验证 Asset、Manifest、Spec、Evidence 和 lineage；</li>
+          <li>生产 Summary 禁止 JavaScript、事件属性和运行时网络请求。</li>
+        </ul>
+      </section>
+
+      <section id="stack">
+        <h2><span class="no">07</span>技术栈与目录</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>领域</th><th>技术</th><th>用途</th></tr></thead>
+            <tbody>
+              <tr><td>语言 / 运行时</td><td>TypeScript 5.7、Node.js 22+、ESM</td><td>服务端、编排、脚本、测试和共享合同</td></tr>
+              <tr><td>Web</td><td>React 18、Vite 6</td><td>单页工作台、任务阶段、报告渲染</td></tr>
+              <tr><td>API</td><td>Express 5</td><td>REST、SSE、认证、资产和报告接口</td></tr>
+              <tr><td>数据</td><td>PostgreSQL、<code>pg</code></td><td>Task、Plan、Gate、Lease、Receipt、Artifact 元数据</td></tr>
+              <tr><td>合同校验</td><td>AJV 8、JSON Schema</td><td>LLM 输出、配置、计划、交付与报告</td></tr>
+              <tr><td>LLM</td><td>OpenAI-compatible Gateway、原生 fetch</td><td>结构化生成、模型池、超时、回执与漂移检查</td></tr>
+              <tr><td>Tool</td><td>ToolRouter + HTTP / REST / Tavily / O2 / Playwright</td><td>检索、知识、页面取证和实验室能力</td></tr>
+              <tr><td>文件 / 图像</td><td>fs-safe、Sharp、image-size</td><td>安全 Artifact IO、图像验证和衍生资产</td></tr>
+              <tr><td>可视化 / 导出</td><td>ECharts、fflate</td><td>Chart、结构化阅读和 ZIP 报告包</td></tr>
+              <tr><td>安全</td><td>JWT、bcryptjs、owner check、redaction</td><td>身份、访问隔离和敏感信息保护</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>关键目录</h3>
+        <div class="grid three">
+          <article class="card"><h3><code>apps/agent-api/</code></h3><p>API、认证、Current Runtime 装配、报告与发布入口。</p></article>
+          <article class="card"><h3><code>apps/orchestrator-runtime/</code></h3><p>需求、规划、执行、Evidence、Skill、报告和审计核心。</p></article>
+          <article class="card"><h3><code>apps/web/</code></h3><p>React 工作台、Current 状态机与报告阅读器。</p></article>
+          <article class="card"><h3><code>packages/</code> + <code>schemas/</code></h3><p>共享 API、Plan、Deliverable、Report 和 Publication 合同。</p></article>
+          <article class="card"><h3><code>orchestrator/</code></h3><p>Registry、Decision Graph、Policy、Prompt、Rubric 和 Skill Contract。</p></article>
+          <article class="card"><h3><code>database/</code> + <code>run-workspaces/</code></h3><p>控制平面、迁移、文件 Artifact、Hash 与恢复数据。</p></article>
+        </div>
+        <h3>常用命令</h3>
+        <pre class="diagram">pnpm db:migrate
+pnpm db:seed
+pnpm dev:stack start       # API :3010 + Web :5180
+pnpm typecheck
+pnpm test
+pnpm quality               # typecheck + registry/knowledge lint + tests
+pnpm smoke:current:real
+pnpm gold:run</pre>
+      </section>
+
+      <section id="governance">
+        <h2><span class="no">08</span>治理、失败与恢复</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>场景</th><th>系统行为</th></tr></thead>
+            <tbody>
+              <tr><td>Requirement 不完整</td><td>停在澄清，不生成正式计划，不调用真实 Tool。</td></tr>
+              <tr><td>审批或输入未完成</td><td>停在确认／审批，不获取执行 Lease。</td></tr>
+              <tr><td>Optional Tool／Contributor 不可用</td><td>按合同形成 Gap；可继续并最终成为 <code>completed_with_gaps</code>。</td></tr>
+              <tr><td>Core Tool／Required Evidence 不足</td><td class="risk">失败关闭，不生成正式报告。</td></tr>
+              <tr><td>Skill／Knowledge／Contract hash 漂移</td><td>要求 Replan，不静默使用新版本。</td></tr>
+              <tr><td>可重试外部故障</td><td>进入 <code>paused</code>，保留失败类型与允许动作。</td></tr>
+              <tr><td>Final Review 不通过</td><td>暂停；只允许受控目标化修订，不允许任意全文重写。</td></tr>
+              <tr><td>Layout／可选展示失败</td><td>确定性降级，不改变 Canonical 内容。</td></tr>
+              <tr><td>Lease 丢失／发布未完成</td><td>停止写入、失效未完成 Artifact，由恢复逻辑处理。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid two">
+          <article class="card"><span class="tag">Identity</span><h3>身份与并发</h3><p>Bearer JWT、用户状态检查、Task／Conversation owner 校验、State Version 和 Command Idempotency。</p></article>
+          <article class="card"><span class="tag green">Trace</span><h3>调用回执</h3><p>记录 provider、endpoint、requested／actual model、prompt hash、context hash、trace、token 与失败；model drift 失败关闭。</p></article>
+          <article class="card"><span class="tag amber">Artifact</span><h3>文件安全</h3><p>安全根路径、文件身份、大小和 hash 复验；限制图像字节与像素，拒绝 SVG 脚本、事件和外部资源。</p></article>
+          <article class="card"><span class="tag violet">Gold</span><h3>真实能力验收</h3><p>金标路径要求三次全真运行、真实 Gateway 与 Tool、独立研究员评审；来源伪造、泄密和绕过确认属于硬失败。</p></article>
+        </div>
+      </section>
+
+      <section id="maturity">
+        <h2><span class="no">09</span>当前成熟度与边界</h2>
+        <div class="split">
+          <div>
+            <h3 class="good">已经形成的基础</h3>
+            <ul class="checklist">
+              <li>需求到交付的 Current 全链路具有明确模块和合同；</li>
+              <li>单／多 Skill、Plan v2／v3、Evidence、Review、Canonical 和 ReportPackage 均有实现；</li>
+              <li>控制平面覆盖状态、幂等、Lease、Artifact、模型回执和恢复；</li>
+              <li>62 份 JSON Schema、15 个迁移、11 份 ADR、216 个测试文件；</li>
+              <li>行业市场分析已进入 active Deliverable 与 compiled Skill；</li>
+              <li>Web 统一新任务与 Current 历史任务恢复主链。</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="warn">必须正确理解的边界</h3>
+            <ul class="warning-list">
+              <li>示例配置中 Multi Skill、Report v3、Editorial Experience、Showcase、Standalone HTML 与 Zero 默认关闭。</li>
+              <li>真实闭环依赖 Gateway、Tavily、PostgreSQL 和相应凭证；fake Tool 不构成真实证据。</li>
+              <li>25 个 active Skill 中 19 个仍是 Legacy，阶段级审计与恢复粒度较弱。</li>
+              <li>Optional Lab 与内部 API 不保证常在，缺失时必须诚实形成 Gap。</li>
+              <li>多代 Plan／ReportDocument／ReportPackage Reader 并存，提高维护复杂度。</li>
+              <li>自动 Review 不能替代独立研究员的业务可用性判断。</li>
+            </ul>
+          </div>
+        </div>
+        <h3>默认开关状态（<code>.env.example</code>）</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力</th><th>示例默认</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td>Multi Skill Portfolio Writer</td><td><code>false</code></td><td>代码存在；部署未显式开启时不能创建多 Skill Task。</td></tr>
+              <tr><td>Report v3 / Editorial Experience / Showcase</td><td><code>false</code></td><td>高级结构化与编辑展示采用分级启用。</td></tr>
+              <tr><td>Standalone HTML Bundle</td><td><code>false</code></td><td>独立 HTML 报告包需要部署开关。</td></tr>
+              <tr><td>Zero Publication</td><td><code>false</code></td><td>外部发布是可选集成，不是核心交付前提。</td></tr>
+              <tr><td>Tool Adapter</td><td><code>fake</code></td><td>默认适合离线开发；真实验收必须切换真实 Tool 通道。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="conclusion" class="conclusion">
+        <h2><span class="no">10</span>结论</h2>
+        <p class="lead">ai-x 的本质是一套<strong>以 Evidence 和可审计执行为核心的用户研究生产系统</strong>。它的价值不只在于生成报告，而在于把研究工作转化为可确认的需求、可比较的方案、可冻结的执行合同、可追溯的证据和可审校的正式交付。</p>
+        <p>项目最突出的能力是单／多 Skill 双合同、完整 provenance、内容失败与布局降级分离、Canonical 双报告集，以及由 State Version、Idempotency、Lease、Hash 和 Schema 支撑的长任务恢复。</p>
+        <p>当前最需要持续关注的不是增加更多抽象，而是让现有能力在真实环境稳定闭环：提高 active Skill 的 compiled 比例，明确部署开关，保持 Core Evidence 通道可用，并持续用真实任务与独立研究员评审验证研究可用性。</p>
+        <p><strong>综合判断：</strong>项目已经超出原型式“LLM + Prompt + 页面”，进入“研究任务控制平面、专业能力编排与可信报告基础设施”阶段。其成熟度应由真实证据链和研究员可用性衡量，而不能只看接口成功、测试通过或页面完整。</p>
+      </section>
+
+      <section id="references" class="sources">
+        <h2><span class="no">11</span>主要依据</h2>
+        <ul>
+          <li><a href="../CONTEXT.md"><code>CONTEXT.md</code></a>：领域术语、业务不变量和验收口径；</li>
+          <li><a href="adr/"><code>docs/adr/</code></a>：Skill 编译、答案型报告、多 Skill、双引擎和双报告集决策；</li>
+          <li><a href="../package.json"><code>package.json</code></a>：运行时、依赖与命令；</li>
+          <li><a href="../apps/agent-api/src/server.ts"><code>apps/agent-api/src/server.ts</code></a> 与 <a href="../apps/agent-api/src/control-runtime.ts"><code>control-runtime.ts</code></a>；</li>
+          <li><a href="../apps/orchestrator-runtime/src/control/task-workflow.ts"><code>task-workflow.ts</code></a> 与 <a href="../apps/orchestrator-runtime/src/control/lease-execution-engine.ts"><code>lease-execution-engine.ts</code></a>；</li>
+          <li><a href="../orchestrator/skill-registry.yaml"><code>skill-registry.yaml</code></a>、<a href="../orchestrator/tool-registry.yaml"><code>tool-registry.yaml</code></a>、<a href="../orchestrator/deliverable-registry.yaml"><code>deliverable-registry.yaml</code></a>；</li>
+          <li><a href="../database/migrations/"><code>database/migrations/</code></a>：控制平面与发布数据模型；</li>
+          <li><a href="../apps/web/src/hooks/useTaskFlow.ts"><code>useTaskFlow.ts</code></a> 与 <a href="../apps/web/src/components/stages/CurrentStage4Report.tsx"><code>CurrentStage4Report.tsx</code></a>。</li>
+        </ul>
+        <p><a href="ai-x-project-overview.md">查看同内容的 Markdown 详细版 →</a></p>
+      </section>
+
+      <footer>ai-x · 用研 AI 专项项目说明报告 · Generated from repository evidence · 2026-09-10</footer>
+    </main>
+  </div>
+</body>
+</html>

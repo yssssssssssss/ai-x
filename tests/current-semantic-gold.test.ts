@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ControlTaskDetail } from '../database/control-plane.ts';
-import type { ControlRequirementVersion } from '../packages/api-contract/control-workflow.ts';
+import type {
+  ControlRequirementVersion,
+  VerifiedTaskMaterial,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { RequirementRefinementService } from '../apps/orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import { resolveCapabilities } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
@@ -167,6 +170,19 @@ class ScenarioRequirementRepository {
 
   async getTaskDetail(): Promise<ControlTaskDetail> {
     const active = this.versions.at(-1);
+    const clarification = active?.clarification;
+    const materialBindings = clarification
+      && typeof clarification === 'object'
+      && !Array.isArray(clarification)
+      && Array.isArray((clarification as { materialBindings?: unknown }).materialBindings)
+      ? (clarification as { materialBindings: Array<{ requestId?: unknown }> }).materialBindings
+      : [];
+    const boundRequestIds = new Set(materialBindings.flatMap(({ requestId }) => (
+      typeof requestId === 'string' ? [requestId] : []
+    )));
+    const hasMissingRequiredMaterial = active?.structuredTask.material_requests?.some(
+      ({ id, required }) => required && !boundRequestIds.has(id),
+    ) === true;
     return {
       id: `task-${this.scenario.id}`,
       conversationId: `conversation-${this.scenario.id}`,
@@ -175,6 +191,7 @@ class ScenarioRequirementRepository {
       conversationOwnerUserId: 'semantic-gold-owner',
       structuredTask: active?.structuredTask ?? null,
       state: active?.structuredTask.ambiguities.some((ambiguity) => ambiguity.blocking)
+        || hasMissingRequiredMaterial
         ? 'awaiting_clarification'
         : 'awaiting_selection',
       stateVersion: this.stateVersion,
@@ -246,7 +263,9 @@ async function refineScenario(scenario: GoldScenario): Promise<{
     ownerUserId: 'semantic-gold-owner',
   };
   const understood = await service.understand({ ...input, originalInput: scenario.input });
-  if (scenario.clarificationKeys.length === 0) {
+  const materialRequests = (understood.requirement.material_requests ?? []).filter(({ required }) => required);
+  const requiresClarification = scenario.clarificationKeys.length > 0 || materialRequests.length > 0;
+  if (!requiresClarification) {
     assert.equal(understood.status, 'ready_to_plan', scenario.id);
     return { task: understood.requirement, llm, repository };
   }
@@ -262,11 +281,27 @@ async function refineScenario(scenario: GoldScenario): Promise<{
     scenario.clarificationThemes,
     scenario.id,
   );
+  const materials: VerifiedTaskMaterial[] = materialRequests.map((request, index) => ({
+    materialId: `material-${scenario.id}-${index + 1}`,
+    requestId: request.id,
+    role: request.role,
+    fileName: `${request.id}.png`,
+    mediaType: 'image/png',
+    contentSha256: `sha256:${String((index + 1) % 10).repeat(64)}`,
+    byteSize: 68,
+  }));
+  const currentTask = await repository.getTaskDetail();
   const clarified = await service.clarify({
     ...input,
     answers: Object.fromEntries(
       scenario.clarificationKeys.map((key, index) => [key, scenario.clarificationThemes[index] ?? key]),
     ),
+    materialBindings: materialRequests.map((request, index) => ({
+      requestId: request.id,
+      materialIds: [materials[index]!.materialId],
+    })),
+    materials,
+    expectedVersion: currentTask.stateVersion,
   });
   assert.equal(clarified.status, 'ready_to_plan', scenario.id);
   return { task: clarified.requirement, llm, repository };
@@ -444,7 +479,9 @@ test('every semantic Gold scenario exercises requirement, planning, capability, 
     );
     assert.equal(
       refinement.repository.versions.length,
-      scenario.clarificationKeys.length > 0 ? 2 : 1,
+      scenario.clarificationKeys.length > 0 || task.material_requests?.some(({ required }) => required)
+        ? 2
+        : 1,
       scenario.id,
     );
     const planned = resolvePlanningDeliverableSelection(task);

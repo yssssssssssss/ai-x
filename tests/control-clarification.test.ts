@@ -202,10 +202,10 @@ test('plan returns clarification_required union and SSE emits conversation befor
   app.use('/api/control-tasks', createControlPlanningRouter(port));
   const { server, baseUrl } = await listen(app);
   try {
-    const response = await post(baseUrl, '/api/control-tasks/plan', ownerToken, { originalInput: 'ambiguous request' });
+    const response = await post(baseUrl, '/api/control-tasks/plan', ownerToken, { originalInput: 'ambiguous request', orchestrationMode: 'single_skill' });
     assert.equal((await response.json() as { status?: unknown }).status, 'clarification_required');
 
-    const stream = await post(baseUrl, '/api/control-tasks/plan/stream', ownerToken, { originalInput: 'ambiguous request' });
+    const stream = await post(baseUrl, '/api/control-tasks/plan/stream', ownerToken, { originalInput: 'ambiguous request', orchestrationMode: 'single_skill' });
     const text = await stream.text();
     assert.ok(text.indexOf('event: conversation') < text.indexOf('event: result'));
     assert.match(text, /clarification_required/);
@@ -238,6 +238,127 @@ test('foreign and missing clarification tasks are both 404', async () => {
     server.close();
   }
 });
+test('owner uploads and lists a declared Task-bound visual Material during clarification', async () => {
+  const designTask: ControlTaskDetail = {
+    ...task,
+    id: 'task-design-material',
+    structuredTask: {
+      ...requirement,
+      task_type: 'design_audit',
+      expected_deliverables: ['design_audit_report'],
+      material_requests: [{
+        id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+        required: true, multiple: false, reason: '用于设计问题标注',
+      }],
+    },
+  };
+  const calls: unknown[] = [];
+  const material = {
+    materialId: 'material-1', requestId: 'target-design', role: 'designImage', fileName: 'page.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED' as const,
+  };
+  const runtime = {
+    repository: { getTaskDetail: async (id: string) => id === designTask.id ? designTask : null },
+    workflow: {},
+    getDeliverable: async () => null,
+    uploadTaskVisualMaterial: async (input: unknown) => { calls.push(input); return material; },
+    listTaskMaterials: async () => [material],
+  } as unknown as ControlTasksRuntime;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  const { server, baseUrl } = await listen(app);
+  try {
+    const form = new FormData();
+    form.append('requestId', 'target-design');
+    form.append('role', 'designImage');
+    form.append('file', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'page.png');
+    const response = await fetch(`${baseUrl}/api/control-tasks/${designTask.id}/materials/visual`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'Idempotency-Key': 'material-upload-1' },
+      body: form,
+    });
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.deepEqual(await response.json(), material);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], {
+      taskId: designTask.id,
+      ownerUserId: owner.id,
+      idempotencyKey: 'material-upload-1',
+      requestId: 'target-design',
+      role: 'designImage',
+      fileName: 'page.png',
+      mediaType: 'image/png',
+      bytes: Buffer.from('89504e470d0a1a0a', 'hex'),
+    });
+
+    const listed = await fetch(`${baseUrl}/api/control-tasks/${designTask.id}/materials`, {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), { materials: [material] });
+  } finally {
+    server.close();
+  }
+});
+
+test('clarification binds only server-verified Task Materials before planning', async () => {
+  const designTask: ControlTaskDetail = {
+    ...task,
+    id: 'task-design-binding',
+    structuredTask: {
+      ...requirement,
+      task_type: 'design_audit',
+      expected_deliverables: ['design_audit_report'],
+      ambiguities: [],
+      clarification_questions: [],
+      material_requests: [{
+        id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+        required: true, multiple: false, reason: '用于设计问题标注',
+      }],
+    },
+  };
+  const materials = [{
+    materialId: 'material-1', requestId: 'target-design', role: 'designImage', fileName: 'page.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68,
+  }];
+  const clarificationCalls: Array<Record<string, unknown>> = [];
+  const repository = clarificationRepository(async (id) => id === designTask.id ? designTask : null);
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    resolveTaskMaterials: async () => materials,
+    clarification: {
+      clarify: async (input: Record<string, unknown>) => {
+        clarificationCalls.push(input);
+        return candidatesResult;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  const { server, baseUrl } = await listen(app);
+  try {
+    const response = await post(baseUrl, `/api/control-tasks/${designTask.id}/clarify`, ownerToken, {
+      expectedVersion: 1,
+      clarificationAnswers: {},
+      assumptionEdits: {},
+      materialBindings: [{ requestId: 'target-design', materialIds: ['material-1'] }],
+      idempotencyKey: 'bind-material-1',
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(clarificationCalls.length, 1);
+    assert.deepEqual(clarificationCalls[0]?.materialBindings, [
+      { requestId: 'target-design', materialIds: ['material-1'] },
+    ]);
+    assert.deepEqual(clarificationCalls[0]?.materials, materials);
+  } finally {
+    server.close();
+  }
+});
+
 test('clarify preserves a retryable Gateway 429 response instead of hiding it as 500', async () => {
   const repository = clarificationRepository(async () => task);
   const runtime = {

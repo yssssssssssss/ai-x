@@ -532,13 +532,24 @@ export function extractResearchStrategyContentDraft(
   const envelope = record(skill.value);
   if (envelope?.version !== 'skill-output-v2') fail('research strategy Skill output version is invalid');
   const finalReviews = materials
-    .filter(({ actorType, stepNo }) => actorType === 'reviewer' && stepNo > skill.stepNo)
+    .filter(({ actorType, actorId, stepNo }) => (
+      actorType === 'reviewer'
+      && actorId === 'reviewer.research-lead'
+      && stepNo > skill.stepNo
+    ))
     .sort((left, right) => right.stepNo - left.stepNo);
   if (finalReviews.length === 0) fail('research strategy Skill output has no final Reviewer material');
   const review = record(finalReviews[0]!.value);
   if (review?.version !== 'reviewer-step-output-v1') fail('final research strategy Reviewer output is invalid');
-  if (review.verdict !== 'pass' && review.verdict !== 'pass_with_conditions') {
+  if (
+    review.verdict !== 'pass'
+    && review.verdict !== 'pass_with_conditions'
+    && review.verdict !== 'revise'
+  ) {
     fail(`final research strategy Reviewer verdict ${String(review.verdict)} does not permit assembly`);
+  }
+  if (review.verdict === 'revise' && (!Array.isArray(review.conditions) || review.conditions.length === 0)) {
+    fail('final research strategy Reviewer revise verdict has no explicit conditions');
   }
   const payload = envelope.payload;
   if (!record(payload)) fail('research strategy Skill output has no payload');

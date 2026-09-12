@@ -91,6 +91,19 @@ interface ControlRuntimeHarness {
       ownerUserId: string;
     }): Promise<ControlPlanCandidatesResponse>;
   };
+  resolveTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<Array<{
+    materialId: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    contentSha256: string;
+    byteSize: number;
+  }>>;
 }
 
 interface ControlRuntimeModule {
@@ -437,6 +450,25 @@ class PlanningModelFixtureLLM implements LLMClient {
         requires_approval: false,
         fallback_actor_ids: [],
       });
+      const skillStep = () => {
+        const skillId = this.requirement.task_type === 'competitive_research'
+          ? 'competitive-analysis'
+          : 'generate-interview-guide';
+        return {
+          step_no: 99,
+          step_name: skillId,
+          actor_type: 'skill' as const,
+          actor_id: skillId,
+          question_ids: ['model-receipt-question'],
+          depends_on: [],
+          input: { research_goal: this.requirement.research_goal },
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/payload', description: 'skill result' }],
+          acceptance_criteria: ['研究计划可执行'],
+          requires_approval: false,
+          fallback_actor_ids: [],
+        };
+      };
       const specialtyCandidate = (
         id: Exclude<CandidateProfile, 'speed' | 'depth'>,
         title: string,
@@ -446,8 +478,8 @@ class PlanningModelFixtureLLM implements LLMClient {
         rationale: `按${title}组织研究路径`,
         tradeoffs: '针对性增强，需要对应能力可用',
         steps: [{
-          ...systemStep('llm', 'research-synthesis', []),
-          input: { profile_contract: id },
+          ...skillStep(),
+          input: { research_goal: this.requirement.research_goal, profile_contract: id },
         }],
         assumptions: [],
       });
@@ -456,7 +488,7 @@ class PlanningModelFixtureLLM implements LLMClient {
         title: string;
         rationale: string;
         tradeoffs: string;
-        steps: ReturnType<typeof systemStep>[];
+        steps: Array<ReturnType<typeof systemStep> | ReturnType<typeof skillStep>>;
         assumptions: never[];
       }>([
         ['depth', {
@@ -465,7 +497,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           rationale: '包含复核',
           tradeoffs: '耗时更长',
           steps: [
-            systemStep('llm', 'research-synthesis', []),
+            skillStep(),
             systemStep('reviewer', 'evidence-reviewer', [1]),
           ],
           assumptions: [],
@@ -475,7 +507,7 @@ class PlanningModelFixtureLLM implements LLMClient {
           title: '快速研究',
           rationale: '最短路径',
           tradeoffs: '复核较少',
-          steps: [systemStep('llm', 'research-synthesis', [])],
+          steps: [skillStep()],
           assumptions: [],
         }],
         ['breadth', specialtyCandidate('breadth', '广度扫描')],
@@ -1124,6 +1156,313 @@ after(async () => {
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
 });
 
+test('production Task Material API seals one owner-bound image and replays idempotently', async () => {
+  const structuredTask: ResearchTaskV2 = {
+    version: 'research-task-v2',
+    task_type: 'design_audit',
+    outcome_mode: 'answer',
+    business_domain: 'commerce',
+    research_goal: '走查商品详情页设计并标注问题',
+    target_audience: ['设计团队'],
+    scope: ['商品详情页'],
+    constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '形成截图绑定的问题标注' }],
+    expected_deliverables: ['design_audit_report'],
+    assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+    material_requests: [{
+      id: 'target-design', role: 'designImage', kind: 'visual', label: '目标页面截图',
+      required: true, multiple: false, reason: '用于设计问题标注',
+    }],
+    sensitivity: 'internal', pii_detected: false,
+  };
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: structuredTask.research_goal,
+    taskType: null,
+    structuredTask,
+    state: 'awaiting_clarification',
+    orchestrationMode: 'single_skill',
+  });
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: { async plan() { throw new Error('planning must not run during Material upload'); } },
+    tools: new ToolRouter(),
+    llm: new MockLLMClient(),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: 'mock-model-v1',
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const upload = () => {
+    const form = new FormData();
+    form.append('requestId', 'target-design');
+    form.append('role', 'designImage');
+    form.append('file', new Blob([png], { type: 'image/png' }), 'page.png');
+    return fetch(`${app.baseUrl}/api/control-tasks/${task.id}/materials/visual`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key },
+      body: form,
+    });
+  };
+  try {
+    const missing = await postJson(app.baseUrl, `/api/control-tasks/${task.id}/clarify`, token, {
+      expectedVersion: task.stateVersion,
+      clarificationAnswers: {},
+      assumptionEdits: {},
+      materialBindings: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(missing.status, 422);
+    assert.match(String((await missing.json() as { error?: string }).error), /required clarification materials/u);
+
+    const first = await upload();
+    assert.equal(first.status, 201, await first.clone().text());
+    const firstBody = await first.json() as { materialId: string; state: string };
+    assert.equal(firstBody.state, 'SEALED');
+    const resolved = await runtime.resolveTaskMaterials({
+      taskId: task.id,
+      ownerUserId,
+      bindings: [{ requestId: 'target-design', materialIds: [firstBody.materialId] }],
+    });
+    assert.deepEqual(resolved.map(({ materialId, requestId, role, fileName }) => ({
+      materialId, requestId, role, fileName,
+    })), [{
+      materialId: firstBody.materialId,
+      requestId: 'target-design',
+      role: 'designImage',
+      fileName: 'page.png',
+    }]);
+
+    const replay = await upload();
+    assert.equal(replay.status, 201, await replay.clone().text());
+    assert.equal((await replay.json() as { materialId: string }).materialId, firstBody.materialId);
+
+    const listed = await fetch(`${app.baseUrl}/api/control-tasks/${task.id}/materials`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(listed.status, 200);
+    const listedBody = await listed.json() as { materials: Array<{ materialId: string }> };
+    assert.deepEqual(listedBody.materials.map(({ materialId }) => materialId), [firstBody.materialId]);
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const stored = await connection.query(
+        `SELECT plan_version_id, attempt_id, kind, state
+         FROM control_artifacts WHERE id = $1`,
+        [firstBody.materialId],
+      );
+      assert.equal(stored.rows[0]?.plan_version_id, null);
+      assert.equal(stored.rows[0]?.attempt_id, null);
+      assert.equal(stored.rows[0]?.kind, 'visual_input_image');
+      assert.equal(stored.rows[0]?.state, 'SEALED');
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('production clarification flow reuses one Task-bound image through Plan confirmation', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const expectedModel = 'task-material-planning-model';
+  const designRequirement: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'design_audit', outcome_mode: 'answer',
+    business_domain: 'commerce', research_goal: '走查商品详情页设计并标注问题',
+    target_audience: ['设计团队'], scope: ['商品详情页'], constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '形成截图绑定的问题标注' }],
+    expected_deliverables: ['design_audit_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+  };
+  const visualSuite: ToolAdapter = {
+    adapterType: 'visual_suite',
+    implementationId: 'visual-suite-plan-fixture-v1',
+    executionMode: 'real',
+    endpointHost: () => 'visual-suite.fixture.test',
+    async invoke() { throw new Error('execution is outside this test'); },
+  };
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter().register(visualSuite),
+    llm: new PlanningModelFixtureLLM(expectedModel, expectedModel, designRequirement),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts,
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  try {
+    const planned = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput: `$design-experience-review ${designRequirement.research_goal}`,
+      orchestrationMode: 'single_skill',
+    });
+    assert.equal(planned.status, 200, await planned.clone().text());
+    const clarification = await planned.json() as CurrentPlanningResponse;
+    assert.equal(clarification.status, 'clarification_required');
+    assert.equal(clarification.structuredTask.material_requests?.[0]?.role, 'designImage');
+
+    const form = new FormData();
+    form.append('requestId', 'target-design');
+    form.append('role', 'designImage');
+    form.append('file', new Blob([Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )], { type: 'image/png' }), 'page.png');
+    const upload = await fetch(
+      `${app.baseUrl}/api/control-tasks/${clarification.task.id}/materials/visual`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': randomUUID() }, body: form },
+    );
+    assert.equal(upload.status, 201, await upload.clone().text());
+    const material = await upload.json() as { materialId: string };
+
+    const clarified = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${clarification.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: clarification.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+        materialBindings: [{ requestId: 'target-design', materialIds: [material.materialId] }],
+        idempotencyKey: randomUUID(),
+      },
+    );
+    assert.equal(clarified.status, 200, await clarified.clone().text());
+    const candidates = await clarified.json() as ControlPlanCandidatesResponse & { status?: string };
+    assert.equal(candidates.kind, 'current');
+    assert.ok(candidates.candidates.length >= 2);
+    assert.deepEqual(candidates.candidates[0]?.providedMaterials?.[0]?.materialIds, [material.materialId]);
+    assert.equal(candidates.candidates[0]?.pendingInputs.find(({ role }) => role === 'designImage')?.kind, 'visual');
+
+    const selectedCandidate = candidates.candidates[0]!;
+    const selected = await postJson(app.baseUrl, `/api/control-tasks/${clarification.task.id}/select`, token, {
+      expectedVersion: candidates.task.stateVersion,
+      planVersionId: selectedCandidate.planVersionId,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(selected.status, 200, await selected.clone().text());
+    const selectedBody = await selected.json() as { stateVersion: number };
+    const restored = await fetch(`${app.baseUrl}/api/control-tasks/${clarification.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(restored.status, 200);
+    const restoredBody = await restored.json() as CurrentTaskReadResponse;
+    assert.deepEqual(restoredBody.taskMaterials?.map(({ materialId }) => materialId), [material.materialId]);
+    assert.deepEqual(restoredBody.activePlan?.providedMaterials?.[0]?.materialIds, [material.materialId]);
+
+    const confirmed = await postJson(app.baseUrl, `/api/control-tasks/${clarification.task.id}/confirm`, token, {
+      expectedVersion: selectedBody.stateVersion,
+      planVersionId: selectedCandidate.planVersionId,
+      confirmationAnswers: {},
+      inputValues: {},
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(confirmed.status, 200, await confirmed.clone().text());
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const imageCount = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts
+         WHERE task_id = $1 AND kind = 'visual_input_image'`,
+        [clarification.task.id],
+      );
+      assert.equal(imageCount.rows[0]?.count, 1);
+      const gates = await repository.listGateRecords(clarification.task.id, selectedCandidate.planVersionId);
+      const visualGate = gates.find(({ gateKey }) => gateKey === 'designImage');
+      assert.ok(visualGate?.evidenceRef);
+      const manifest = await artifacts.readVerifiedBoundJson<{ images: Array<{ artifactId: string }> }>(visualGate.evidenceRef);
+      assert.deepEqual(manifest.value.images.map(({ artifactId }) => artifactId), [material.materialId]);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('Dataset multipart upload forwards the owner-bound Idempotency-Key and parsed CSV metadata', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'dataset route',
+    taskType: 'industry_market_analysis',
+    structuredTask: { research_goal: '验证 Dataset 上传路由' },
+    state: 'awaiting_confirmation',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: 'sha256:dataset-route-plan',
+    pendingInputs: [],
+  });
+  const calls: unknown[] = [];
+  const runtime = {
+    repository,
+    workflow: {} as TaskWorkflowService,
+    getDeliverable: async () => null,
+    uploadDataset: async (input: unknown) => {
+      calls.push(input);
+      return {
+        datasetInputId: 'dataset-1', fileName: 'users.csv', contentSha256: `sha256:${'1'.repeat(64)}`,
+        byteSize: 26, rowCount: 1, columns: ['sample_id', 'quote'],
+      };
+    },
+  } as unknown as ControlTasksRuntime;
+  const local = await listenLocalApp(controlTasksApp(runtime));
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const key = randomUUID();
+  try {
+    const form = new FormData();
+    form.append('metadata', JSON.stringify({
+      rowMeaning: '一行一位匿名用户', timeRange: '2026-Q3', fieldNotes: {}, units: {},
+      sampling: '访谈样本', piiConfirmedAbsent: true,
+    }));
+    form.append('file', new Blob(['sample_id,quote\nu1,很好\n'], { type: 'text/csv' }), 'users.csv');
+    const response = await fetch(
+      `${local.baseUrl}/api/control-tasks/${task.id}/plans/${plan.id}/inputs/user_research_dataset/dataset`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}`, 'Idempotency-Key': key }, body: form },
+    );
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(response.headers.get('Idempotency-Key'), key);
+    assert.equal(calls.length, 1);
+    const call = calls[0] as {
+      taskId: string; planVersionId: string; role: string; ownerUserId: string;
+      idempotencyKey: string; fileName: string; mediaType: string; bytes: Uint8Array;
+    };
+    assert.deepEqual({
+      taskId: call.taskId, planVersionId: call.planVersionId, role: call.role,
+      ownerUserId: call.ownerUserId, idempotencyKey: call.idempotencyKey,
+      fileName: call.fileName, mediaType: call.mediaType, content: Buffer.from(call.bytes).toString('utf8'),
+    }, {
+      taskId: task.id, planVersionId: plan.id, role: 'user_research_dataset',
+      ownerUserId, idempotencyKey: key, fileName: 'users.csv', mediaType: 'text/csv',
+      content: 'sample_id,quote\nu1,很好\n',
+    });
+  } finally {
+    await closeLocalServer(local.server);
+  }
+});
+
 test('GET /api/control-tasks lists only tasks owned by the authenticated user', async () => {
   const ownerTask = await repository.createTask({
     conversationId,
@@ -1253,20 +1592,23 @@ test('production control runtime returns the revised final deliverable ID for pa
   const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
     originalInput,
     conversationId,
+    orchestrationMode: 'single_skill',
   });
   assert.equal(planResponse.status, 200, await planResponse.clone().text());
   const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
+  assert.equal(planned.task.orchestrationMode, 'single_skill');
   const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
     headers: { authorization: `Bearer ${ownerToken}` },
   });
   assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
   const refreshed = await refreshedResponse.json() as {
-    task: { originalInput: string; structuredTask: unknown };
+    task: { originalInput: string; structuredTask: unknown; orchestrationMode?: string };
     activatedNodes: string[];
     candidates: ControlPlanCandidatesResponse['candidates'];
   };
   assert.equal(refreshed.task.originalInput, originalInput);
+  assert.equal(refreshed.task.orchestrationMode, 'single_skill');
   assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
   assert.deepEqual(refreshed.activatedNodes, planned.activatedNodes);
   assert.deepEqual(
@@ -1696,6 +2038,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
     originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
     conversationId,
+    orchestrationMode: 'single_skill',
   });
   assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
   const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
@@ -1797,7 +2140,11 @@ test('production plan stream stops at the explicit direction gate before plannin
       app.baseUrl,
       '/api/control-tasks/plan/stream',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput: `progress-stream-${randomUUID()}`, conversationId },
+      {
+        originalInput: `progress-stream-${randomUUID()}`,
+        conversationId,
+        orchestrationMode: 'single_skill',
+      },
     );
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
@@ -1856,6 +2203,7 @@ test('production API persists Scenario selection guidance and resumes planning a
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -1977,7 +2325,7 @@ test('production Current planning rejects model drift before candidate persisten
       app.baseUrl,
       '/api/control-tasks/plan',
       signToken({ userId: ownerUserId, email: 'owner@test.local' }),
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 502);
     assert.match(await response.text(), /model drift/i);
@@ -2055,7 +2403,7 @@ test('production Current planning persists candidates only when every receipt ma
       app.baseUrl,
       '/api/control-tasks/plan',
       token,
-      { originalInput, conversationId },
+      { originalInput, conversationId, orchestrationMode: 'single_skill' },
     );
     assert.equal(response.status, 200, await response.clone().text());
     const direction = await response.json() as CurrentPlanningResponse;
@@ -2180,8 +2528,8 @@ test('supplied foreign and missing planning conversations return 404 before crea
   );
   const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const cases = [
-    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}` },
-    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}` },
+    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
+    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}`, orchestrationMode: 'single_skill' },
   ];
   try {
     for (const target of cases) {
@@ -2392,6 +2740,38 @@ test('migration 012 fails only incomplete clarification shells and is idempotent
     await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
   }
 });
+
+test('migration 015 adds task orchestration mode idempotently', async () => {
+  const compatibilitySchema = `task_orchestration_mode_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_tasks (
+        id UUID PRIMARY KEY,
+        state TEXT NOT NULL
+      )
+    `);
+    const migration = readFileSync(
+      join(process.cwd(), 'database', 'migrations', '015_add_task_orchestration_mode.sql'),
+      'utf8',
+    );
+    await client.query(migration);
+    await client.query(migration);
+    const columns = await client.query(
+      `SELECT column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'control_tasks' AND column_name = 'orchestration_mode'`,
+      [compatibilitySchema],
+    );
+    assert.deepEqual(columns.rows, [{ column_name: 'orchestration_mode', data_type: 'text' }]);
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
 test('clarification idempotency is durable across concurrent and newly created routers', async () => {
 
   const created = await repository.createTask({
@@ -2561,6 +2941,7 @@ test('post-activation clarification failure reclaims the same command without an
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2681,6 +3062,7 @@ test('latest-version fresh-key clarification recovers hydrated unchanged assumpt
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;
@@ -2820,6 +3202,7 @@ test('response delivery failure after atomic clarification commit replays the pe
     const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
       originalInput: `response-delivery-replay-${randomUUID()}`,
       conversationId,
+      orchestrationMode: 'single_skill',
     });
     assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
     const planned = await plannedResponse.json() as CurrentPlanningResponse;

@@ -1,14 +1,20 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { pool } from '../../../database/db.ts';
 import {
   ControlPlaneAuthorizationError,
+  ControlPlaneConflictError,
   ControlPlaneRepository,
   type ControlArtifact,
 } from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
-import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
+import {
+  assertDesignAuditPlanMaterialContract,
+  ControlPlanningService,
+} from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
 import {
   CandidateProfileNoLongerEligibleError,
@@ -24,12 +30,16 @@ import {
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
   isPlanningGuidanceClarification,
+  OrchestrationModePlanningError,
   ResearchPlanningService,
   resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningOutcome,
   type ResearchPlanningInput,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
-import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
+import {
+  assertSingleSkillExecutionPlan,
+  PlanCompiler,
+} from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
 import {
   isCandidateProfile,
   type CandidateProfile,
@@ -37,7 +47,13 @@ import {
   type PlanProgress,
   type ResearchTaskV2,
 } from '../../../packages/api-contract/plan.ts';
-import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
+import type {
+  CurrentReportPackageResponse,
+  OrchestrationModeV1,
+  TaskMaterialBinding,
+  TaskMaterialResponse,
+  VerifiedTaskMaterial,
+} from '../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceClass,
@@ -72,6 +88,7 @@ import {
   VisualAssetService,
   type VerifiedVisualAsset,
 } from '../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { createEditorialSummaryPipeline } from '../../orchestrator-runtime/src/editorial-summary-runtime.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { VisualInputMaterializer } from '../../orchestrator-runtime/src/report/visual-input-materializer.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
@@ -79,6 +96,11 @@ import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
+import {
+  DatasetInputGateError,
+  DatasetInputGateStore,
+  type DatasetUploadResult,
+} from '../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
 import { LocalZeroMcpClient } from './integrations/zero/zero-mcp-client.ts';
@@ -87,6 +109,187 @@ import {
   type ZeroPublicationMcp,
 } from './integrations/zero/zero-publication-service.ts';
 
+
+export class TaskMaterialValidationError extends Error {
+  readonly code = 'task_material_invalid';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskMaterialValidationError';
+  }
+}
+
+interface StoredTaskMaterialMetadata {
+  requestId: string;
+  role: string;
+  fileName: string;
+  ownerUserId: string;
+}
+
+function storedTaskMaterialMetadata(artifact: ControlArtifact): StoredTaskMaterialMetadata {
+  const metadata = artifact.metadata;
+  if (
+    !metadata
+    || typeof metadata.requestId !== 'string'
+    || !metadata.requestId.trim()
+    || typeof metadata.role !== 'string'
+    || !metadata.role.trim()
+    || typeof metadata.fileName !== 'string'
+    || !metadata.fileName.trim()
+    || typeof metadata.ownerUserId !== 'string'
+    || !metadata.ownerUserId.trim()
+  ) throw new TaskMaterialValidationError(`Task Material ${artifact.id} metadata is invalid`);
+  return {
+    requestId: metadata.requestId,
+    role: metadata.role,
+    fileName: metadata.fileName,
+    ownerUserId: metadata.ownerUserId,
+  };
+}
+
+function taskMaterialResponse(artifact: ControlArtifact): TaskMaterialResponse {
+  const metadata = storedTaskMaterialMetadata(artifact);
+  if (
+    artifact.state !== 'SEALED'
+    || artifact.planVersionId !== null
+    || artifact.attemptId !== null
+    || artifact.kind !== 'visual_input_image'
+    || artifact.schemaVersion !== 'visual-input-image-v1'
+    || (artifact.mediaType !== 'image/png'
+      && artifact.mediaType !== 'image/jpeg'
+      && artifact.mediaType !== 'image/webp')
+    || !artifact.contentSha256
+    || artifact.byteSize === null
+  ) throw new TaskMaterialValidationError(`Task Material ${artifact.id} binding is invalid`);
+  return {
+    materialId: artifact.id,
+    requestId: metadata.requestId,
+    role: metadata.role,
+    fileName: metadata.fileName,
+    mediaType: artifact.mediaType,
+    contentSha256: artifact.contentSha256,
+    byteSize: artifact.byteSize,
+    state: 'SEALED',
+  };
+}
+
+function safeMaterialFileName(value: string): string {
+  const fileName = value.trim().split(/[\\/]/u).at(-1)?.trim() ?? '';
+  if (!fileName || fileName.length > 255 || /[\0\r\n]/u.test(fileName)) {
+    throw new TaskMaterialValidationError('Task Material file name is invalid');
+  }
+  return fileName;
+}
+
+function taskMaterialUploadHash(input: {
+  taskId: string;
+  ownerUserId: string;
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify({
+    taskId: input.taskId,
+    ownerUserId: input.ownerUserId,
+    requestId: input.requestId,
+    role: input.role,
+    fileName: safeMaterialFileName(input.fileName),
+    mediaType: input.mediaType,
+    contentSha256: `sha256:${createHash('sha256').update(input.bytes).digest('hex')}`,
+  })).digest('hex')}`;
+}
+
+function taskMaterialReplay(value: unknown): TaskMaterialResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TaskMaterialValidationError('Task Material upload replay is malformed');
+  }
+  const candidate = value as Partial<TaskMaterialResponse>;
+  if (
+    typeof candidate.materialId !== 'string'
+    || typeof candidate.requestId !== 'string'
+    || typeof candidate.role !== 'string'
+    || typeof candidate.fileName !== 'string'
+    || (candidate.mediaType !== 'image/png'
+      && candidate.mediaType !== 'image/jpeg'
+      && candidate.mediaType !== 'image/webp')
+    || typeof candidate.contentSha256 !== 'string'
+    || typeof candidate.byteSize !== 'number'
+    || candidate.state !== 'SEALED'
+  ) throw new TaskMaterialValidationError('Task Material upload replay is malformed');
+  return candidate as TaskMaterialResponse;
+}
+
+function storedTaskMaterialBindings(value: unknown): TaskMaterialBinding[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const bindings = (value as { materialBindings?: unknown }).materialBindings;
+  if (!Array.isArray(bindings)) return [];
+  return bindings.flatMap((candidate): TaskMaterialBinding[] => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+    const binding = candidate as { requestId?: unknown; materialIds?: unknown };
+    if (
+      typeof binding.requestId !== 'string'
+      || !binding.requestId.trim()
+      || !Array.isArray(binding.materialIds)
+      || binding.materialIds.length === 0
+      || binding.materialIds.some((materialId) => typeof materialId !== 'string' || !materialId.trim())
+    ) return [];
+    return [{ requestId: binding.requestId, materialIds: [...binding.materialIds] as string[] }];
+  });
+}
+
+function datasetUploadHash(input: {
+  taskId: string;
+  planVersionId: string;
+  role: string;
+  ownerUserId: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Uint8Array;
+  metadata: {
+    rowMeaning: string;
+    timeRange: string;
+    fieldNotes: Record<string, string>;
+    units: Record<string, string>;
+    sampling: string;
+    piiConfirmedAbsent: boolean;
+  };
+}): string {
+  const sortRecord = (value: Record<string, string>) => Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const request = JSON.stringify({
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    role: input.role,
+    ownerUserId: input.ownerUserId,
+    fileName: input.fileName,
+    mediaType: input.mediaType,
+    contentSha256: `sha256:${createHash('sha256').update(input.bytes).digest('hex')}`,
+    metadata: {
+      ...input.metadata,
+      fieldNotes: sortRecord(input.metadata.fieldNotes),
+      units: sortRecord(input.metadata.units),
+    },
+  });
+  return `sha256:${createHash('sha256').update(request).digest('hex')}`;
+}
+
+function datasetUploadReplay(value: unknown): DatasetUploadResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('dataset upload replay is malformed');
+  const result = value as Partial<DatasetUploadResult>;
+  if (
+    typeof result.datasetInputId !== 'string'
+    || typeof result.fileName !== 'string'
+    || typeof result.contentSha256 !== 'string'
+    || typeof result.byteSize !== 'number'
+    || typeof result.rowCount !== 'number'
+    || !Array.isArray(result.columns)
+    || result.columns.some((column) => typeof column !== 'string')
+  ) throw new Error('dataset upload replay is malformed');
+  return result as DatasetUploadResult;
+}
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
   skill: true,
@@ -314,7 +517,7 @@ type RuntimeConversationAdapter = {
 
 interface PlanningAdapter {
   plan(
-    input: ResearchPlanningInput,
+    input: ResearchPlanningInput & { orchestrationMode: OrchestrationModeV1 },
     onProgress?: (event: PlanProgress) => void,
   ): Promise<CurrentResearchPlanningOutcome>;
 }
@@ -357,11 +560,55 @@ export interface ControlRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<Uint8Array | null>;
-  readEditorialShowcaseHtml(input: {
+  readEditorialSummaryHtml(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadTaskVisualMaterial(input: {
+    taskId: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+  }): Promise<TaskMaterialResponse>;
+  listTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<TaskMaterialResponse[]>;
+  resolveTaskMaterials(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<VerifiedTaskMaterial[]>;
+  uploadDataset(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+    metadata: {
+      rowMeaning: string;
+      timeRange: string;
+      fieldNotes: Record<string, string>;
+      units: Record<string, string>;
+      sampling: string;
+      piiConfirmedAbsent: boolean;
+    };
+  }): Promise<{
+    datasetInputId: string;
+    fileName: string;
+    contentSha256: string;
+    byteSize: number;
+    rowCount: number;
+    columns: string[];
+  }>;
 }
 
 export function visualAssetManifestStorageUri(storageUri: string): string | null {
@@ -429,6 +676,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     root: join(process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces', 'current-control'),
     registry: repository,
   });
+  const workspaceRoot = process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces';
   const visualAssets = new VisualAssetService({ artifacts });
   const imageAnnotations = new ImageAnnotationService({ assets: visualAssets, artifacts });
   const expectedActualModel = overrides.expectedActualModel
@@ -438,10 +686,23 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   if (!expectedActualModel) {
     throw new Error('LLM_EXPECTED_ACTUAL_MODEL is required for the production control runtime');
   }
+  const receiptLlm = new ReceiptLLMClient(llm, repository);
+  const gatewayBaseUrl = process.env.LLM_GATEWAY_BASE_URL?.trim();
+  const endpointUrl = gatewayBaseUrl
+    ? `${gatewayBaseUrl.replace(/\/$/u, '')}/chat/completions`
+    : undefined;
+  const editorialSummary = createEditorialSummaryPipeline({
+    repository,
+    artifacts,
+    workspaceRoot,
+    llm: receiptLlm,
+    expectedActualModel,
+    ...(typeof endpointUrl === 'string' ? { endpointUrl } : {}),
+  });
   // planning 与 deliverable 的 LLM 都经 ReceiptLLMClient 包装:逐次记录模型调用回执,
   // actual≠expected(drift)或回执写库失败时 fail-closed。planning receipt 锚定 actual model pin。
   const planningService = overrides.planning ? null : new ResearchPlanningService({
-    llm: new ReceiptLLMClient(llm, repository),
+    llm: receiptLlm,
     validator,
     skillLoader,
     tools,
@@ -456,11 +717,15 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!input.requirement) {
         throw new Error('Current planning requires finalized ResearchTaskV2');
       }
+      if (!input.orchestrationMode) {
+        throw new OrchestrationModePlanningError('missing');
+      }
       return planningService!.planCurrentFromRequirementOutcome(
         input.requirement,
         input.originalInput,
         onProgress,
         {
+          orchestrationMode: input.orchestrationMode,
           ...(input.selectedScenarioId
             ? { selectedScenarioId: input.selectedScenarioId }
             : {}),
@@ -468,12 +733,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             ? { requireExplicitScenarioSelection: true }
             : {}),
           ...(input.requiredProfileId ? { requiredProfileId: input.requiredProfileId } : {}),
+          ...(input.materials && input.materials.length > 0 ? { materials: input.materials } : {}),
         },
       );
     },
   };
   const planning = {
-    async plan(input: ResearchPlanningInput, onProgress?: (event: PlanProgress) => void) {
+    async plan(
+      input: ResearchPlanningInput & { orchestrationMode: OrchestrationModeV1 },
+      onProgress?: (event: PlanProgress) => void,
+    ) {
       const result = await planningSource.plan(input, onProgress);
       if (isPlanningGuidanceClarification(result)) {
         throw new Error(`Planning Guidance requires clarification: ${result.planningGuidance.reasonCode}`);
@@ -585,6 +854,22 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     artifacts,
     reportPackages: reportPackageV2Artifacts,
   });
+  const fixedReportPackageV1Root = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<ControlArtifact | null> => {
+    const candidates = (await repository.listArtifactsForAttempt({
+      ...binding,
+      kinds: ['report_package'],
+    })).filter((artifact) => (
+      artifact.state === 'SEALED'
+      && artifact.schemaVersion === 'report-package-v1'
+      && artifact.storageUri.endsWith('/reports/report-package.json')
+    ));
+    if (candidates.length > 1) throw new HtmlBundleIntegrityError();
+    return candidates[0] ?? null;
+  };
   const fixedReportPackageV2Root = async (binding: {
     taskId: string;
     planVersionId: string;
@@ -617,7 +902,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       && artifact.storageUri.endsWith('/reports/report-package-v3.json')
     ));
     if (candidates.length > 1) throw new HtmlBundleIntegrityError();
-    return candidates[0] ?? fixedReportPackageV2Root(binding);
+    return candidates[0]
+      ?? await fixedReportPackageV2Root(binding)
+      ?? await fixedReportPackageV1Root(binding);
   };
   const readFrozenReportPackage = async (input: {
     artifact: ControlArtifact;
@@ -684,6 +971,64 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     artifacts,
   });
   const visualInputGates = new VisualInputGateStore(artifacts);
+  const datasetInputGates = new DatasetInputGateStore(artifacts);
+  const resolveTaskMaterials: ControlRuntime['resolveTaskMaterials'] = async (input) => {
+    const task = await repository.getTaskDetail(input.taskId);
+    if (
+      !task
+      || task.ownerUserId !== input.ownerUserId
+      || task.conversationOwnerUserId !== input.ownerUserId
+    ) throw new ControlPlaneConflictError('Task Material binding target is unavailable');
+    const requests = new Map(
+      ((task.structuredTask as Partial<ResearchTaskV2>).material_requests ?? [])
+        .map((request) => [request.id, request]),
+    );
+    const bindingByRequest = new Map<string, string[]>();
+    const allMaterialIds = new Set<string>();
+    for (const binding of input.bindings) {
+      const request = requests.get(binding.requestId);
+      if (!request || bindingByRequest.has(binding.requestId)) {
+        throw new TaskMaterialValidationError('Task Material binding references an unknown or duplicate request');
+      }
+      if (
+        binding.materialIds.length === 0
+        || (!request.multiple && binding.materialIds.length !== 1)
+        || new Set(binding.materialIds).size !== binding.materialIds.length
+      ) throw new TaskMaterialValidationError(`Task Material count is invalid for ${request.id}`);
+      for (const materialId of binding.materialIds) {
+        if (allMaterialIds.has(materialId)) {
+          throw new TaskMaterialValidationError(`Task Material ${materialId} is bound more than once`);
+        }
+        allMaterialIds.add(materialId);
+      }
+      bindingByRequest.set(binding.requestId, [...binding.materialIds]);
+    }
+    const missing = [...requests.values()]
+      .filter(({ required }) => required)
+      .filter(({ id }) => !bindingByRequest.has(id))
+      .map(({ id }) => id);
+    if (missing.length > 0) {
+      throw new TaskMaterialValidationError(`required clarification materials are missing: ${missing.join(', ')}`);
+    }
+    const verified: VerifiedTaskMaterial[] = [];
+    for (const [requestId, materialIds] of bindingByRequest) {
+      const request = requests.get(requestId)!;
+      for (const materialId of materialIds) {
+        const artifact = await artifacts.verifyTaskBoundVisual(materialId);
+        const response = taskMaterialResponse(artifact);
+        const metadata = storedTaskMaterialMetadata(artifact);
+        if (
+          artifact.taskId !== task.id
+          || metadata.ownerUserId !== input.ownerUserId
+          || response.requestId !== request.id
+          || response.role !== request.role
+        ) throw new TaskMaterialValidationError(`Task Material ${materialId} does not match its declared request`);
+        const { state: _state, ...material } = response;
+        verified.push(material);
+      }
+    }
+    return verified;
+  };
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -699,12 +1044,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     standaloneHtmlBundleV1Enabled,
     visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
     visualInputGates,
+    datasetInputGates,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {
       const task = await repository.getTaskDetail(input.taskId);
       if (!task || task.activePlanVersionId !== input.activePlanVersionId) {
         throw new Error(`task ${input.taskId} has no matching active plan`);
+      }
+      if (!task.orchestrationMode) {
+        throw new OrchestrationModePlanningError('missing');
       }
       validator.validateOrThrow('research-task-v2', task.structuredTask);
       const structuredTask = task.structuredTask as ResearchTaskV2;
@@ -719,6 +1068,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         throw new Error(`active plan ${activePlan.id} has no controlled candidate profile`);
       }
       const deliverableSelection = resolvePlanningDeliverableSelection(structuredTask);
+      const activeRequirement = structuredTask.material_requests?.length
+        ? await repository.getActiveRequirementVersion(task.id)
+        : null;
+      const materials = structuredTask.material_requests?.length
+        ? await resolveTaskMaterials({
+            taskId: task.id,
+            ownerUserId: task.ownerUserId,
+            bindings: storedTaskMaterialBindings(activeRequirement?.clarification),
+          })
+        : [];
       if (!await repository.isPlanPendingInputQuarantined(activePlan.id)) {
         assertRevisionSourceContract({ activePlan, deliverableSelection, validator });
       }
@@ -741,7 +1100,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const planningResult = await planning.plan({
         originalInput: `${input.instruction.trim()}\n\nOriginal research goal: ${researchGoal}`,
         requirement: structuredTask,
+        orchestrationMode: task.orchestrationMode,
         ...(activeScenarioId ? { selectedScenarioId: activeScenarioId } : {}),
+        ...(materials.length > 0 ? { materials } : {}),
         requiredProfileId: activePlan.candidateId,
       });
       const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);
@@ -777,6 +1138,15 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
             planning_provenance: planningResult.planningProvenance,
             requireCompetitiveWeightContract: true,
           });
+      if (task.orchestrationMode === 'single_skill') {
+        assertSingleSkillExecutionPlan(compiled.plan);
+      }
+      assertDesignAuditPlanMaterialContract({
+        deliverableId: deliverableSelection.deliverableId,
+        plan: compiled.plan,
+        pendingInputs: compiled.pending_inputs,
+        providedMaterials: planningResult.providedMaterials,
+      });
       return {
         plan: { ...compiled.plan, task_id: task.id },
         pendingInputs: compiled.pending_inputs,
@@ -788,7 +1158,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       lease,
       expectedModel: expectedActualModel,
     }),
-  }, planRevisionDriver, artifacts, visualInputGates);
+  }, planRevisionDriver, artifacts, visualInputGates, datasetInputGates);
   const zeroPublicationEnabled = overrides.zeroPublicationEnabled
     ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
   const zeroPublication = zeroPublicationEnabled
@@ -830,6 +1200,286 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     repository,
     artifacts,
     ...(zeroPublication ? { zeroPublication } : {}),
+    uploadTaskVisualMaterial: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_clarification'
+      ) throw new ControlPlaneConflictError('Task Material upload target is unavailable');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      if (structuredTask.pii_detected === true || structuredTask.sensitivity === 'confidential') {
+        throw new TaskMaterialValidationError('PII or confidential Material cannot enter the current model path');
+      }
+      const request = structuredTask.material_requests?.find(({ id }) => id === input.requestId);
+      if (!request || request.kind !== 'visual' || request.role !== input.role) {
+        throw new TaskMaterialValidationError('Task Material request or role is not declared by the active Requirement');
+      }
+      if (
+        input.mediaType !== 'image/png'
+        && input.mediaType !== 'image/jpeg'
+        && input.mediaType !== 'image/webp'
+      ) throw new TaskMaterialValidationError('Task Material must be PNG, JPEG, or WebP');
+      const fileName = safeMaterialFileName(input.fileName);
+      const commandType = `material_upload:${input.requestId}`;
+      const requestHash = taskMaterialUploadHash({ ...input, fileName });
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') {
+          throw new ControlPlaneConflictError('Task Material upload idempotency key conflicts');
+        }
+        if (reservation.status === 'replay') return taskMaterialReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') {
+            throw new ControlPlaneConflictError('Task Material upload idempotency key conflicts');
+          }
+          if (waited.status === 'replay') return taskMaterialReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let artifact: ControlArtifact | null = null;
+      try {
+        artifact = await artifacts.writeBinary({
+          taskId: task.id,
+          kind: 'visual_input_image',
+          relativePath: `${randomUUID()}.image`,
+          schemaVersion: 'visual-input-image-v1',
+          sensitivity: structuredTask.sensitivity ?? 'internal',
+          redactionPolicyVersion: 'v1',
+          bytes: input.bytes,
+          metadata: {
+            requestId: request.id,
+            role: request.role,
+            fileName,
+            ownerUserId: input.ownerUserId,
+          },
+        });
+        if (artifact.mediaType !== input.mediaType) {
+          throw new TaskMaterialValidationError('Task Material MIME type does not match its content');
+        }
+        const response = taskMaterialResponse(artifact);
+        await repository.completeCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          stateAfter: task.state,
+          response,
+        });
+        return response;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return taskMaterialReplay(completed.response);
+          }
+        }
+        if (artifact) {
+          await artifacts.invalidateArtifactPublication(
+            artifact.id,
+            'Task Material upload command did not commit',
+          );
+        }
+        throw error;
+      }
+    },
+    listTaskMaterials: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+      ) throw new ControlPlaneAuthorizationError('Task Material is unavailable');
+      const stored = await repository.listTaskMaterialArtifacts(task.id);
+      return stored.flatMap((artifact) => {
+        try {
+          const metadata = storedTaskMaterialMetadata(artifact);
+          return metadata.ownerUserId === input.ownerUserId ? [taskMaterialResponse(artifact)] : [];
+        } catch {
+          return [];
+        }
+      });
+    },
+    resolveTaskMaterials: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+      ) throw new ControlPlaneConflictError('Task Material binding target is unavailable');
+      const requests = new Map(
+        ((task.structuredTask as Partial<ResearchTaskV2>).material_requests ?? [])
+          .map((request) => [request.id, request]),
+      );
+      const bindingByRequest = new Map<string, string[]>();
+      const allMaterialIds = new Set<string>();
+      for (const binding of input.bindings) {
+        const request = requests.get(binding.requestId);
+        if (!request || bindingByRequest.has(binding.requestId)) {
+          throw new TaskMaterialValidationError('Task Material binding references an unknown or duplicate request');
+        }
+        if (
+          binding.materialIds.length === 0
+          || (!request.multiple && binding.materialIds.length !== 1)
+          || new Set(binding.materialIds).size !== binding.materialIds.length
+        ) throw new TaskMaterialValidationError(`Task Material count is invalid for ${request.id}`);
+        for (const materialId of binding.materialIds) {
+          if (allMaterialIds.has(materialId)) {
+            throw new TaskMaterialValidationError(`Task Material ${materialId} is bound more than once`);
+          }
+          allMaterialIds.add(materialId);
+        }
+        bindingByRequest.set(binding.requestId, [...binding.materialIds]);
+      }
+      const missing = [...requests.values()]
+        .filter(({ required }) => required)
+        .filter(({ id }) => !bindingByRequest.has(id))
+        .map(({ id }) => id);
+      if (missing.length > 0) {
+        throw new TaskMaterialValidationError(`required clarification materials are missing: ${missing.join(', ')}`);
+      }
+      const verified: VerifiedTaskMaterial[] = [];
+      for (const [requestId, materialIds] of bindingByRequest) {
+        const request = requests.get(requestId)!;
+        for (const materialId of materialIds) {
+          const artifact = await artifacts.verifyTaskBoundVisual(materialId);
+          const response = taskMaterialResponse(artifact);
+          const metadata = storedTaskMaterialMetadata(artifact);
+          if (
+            artifact.taskId !== task.id
+            || metadata.ownerUserId !== input.ownerUserId
+            || response.requestId !== request.id
+            || response.role !== request.role
+          ) throw new TaskMaterialValidationError(`Task Material ${materialId} does not match its declared request`);
+          const { state: _state, ...material } = response;
+          verified.push(material);
+        }
+      }
+      return verified;
+    },
+    uploadDataset: async (input) => {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || task.state !== 'awaiting_confirmation'
+        || task.activePlanVersionId !== input.planVersionId
+      ) throw new ControlPlaneConflictError('dataset input task or active plan is unavailable');
+      const plan = await repository.getPlanVersionDetail(input.planVersionId);
+      if (!plan || plan.taskId !== task.id) throw new ControlPlaneConflictError('dataset input plan is unavailable');
+      const structuredTask = task.structuredTask as Partial<ResearchTaskV2>;
+      if (structuredTask.pii_detected === true) {
+        throw new DatasetInputGateError('Task is marked as containing PII', 'dataset_pii_detected');
+      }
+      const pending = parsePendingInputContracts(plan.pendingInputs).find(({ role }) => role === input.role);
+      if (!pending || pending.kind !== 'dataset' || pending.multiple) {
+        throw new DatasetInputGateError(`dataset input role ${input.role} is not pending on the active plan`);
+      }
+
+      const commandType = `dataset_upload:${input.role}`;
+      const requestHash = datasetUploadHash(input);
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          actorUserId: input.ownerUserId,
+        });
+        if (reservation.status === 'conflict') throw new ControlPlaneConflictError('dataset upload idempotency key conflicts');
+        if (reservation.status === 'replay') return datasetUploadReplay(reservation.response);
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand({
+            taskId: task.id,
+            commandType,
+            idempotencyKey: input.idempotencyKey,
+            requestHash,
+          });
+          if (waited.status === 'conflict') throw new ControlPlaneConflictError('dataset upload idempotency key conflicts');
+          if (waited.status === 'replay') return datasetUploadReplay(waited.response);
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      let prepared: Awaited<ReturnType<DatasetInputGateStore['prepareBinding']>> | null = null;
+      try {
+        const uploaded = await datasetInputGates.upload({
+          ...input,
+          taskSensitivity: structuredTask.sensitivity === 'public' || structuredTask.sensitivity === 'confidential'
+            ? structuredTask.sensitivity
+            : 'internal',
+        });
+        prepared = await datasetInputGates.prepareBinding({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: input.role,
+          ownerUserId: input.ownerUserId,
+          datasetInputId: uploaded.datasetInputId,
+        });
+        await repository.completeDatasetUploadCommand({
+          taskId: task.id,
+          planVersionId: plan.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+          response: uploaded,
+        });
+        return uploaded;
+      } catch (error) {
+        const released = await repository.releaseCommand({
+          taskId: task.id,
+          commandType,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          expectedVersion: task.stateVersion,
+          reservationToken,
+        });
+        if (!released) {
+          const completed = await repository.getCommand(task.id, commandType, input.idempotencyKey);
+          if (completed?.requestHash === requestHash && completed.response) {
+            return datasetUploadReplay(completed.response);
+          }
+        }
+        if (prepared) {
+          await datasetInputGates.invalidate(prepared, 'dataset upload command did not commit');
+        }
+        throw error;
+      }
+    },
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
@@ -886,7 +1536,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         reportPackageArtifactId: packageArtifact.id,
       });
     },
-    async readEditorialShowcaseHtml(input) {
+    async readEditorialSummaryHtml(input) {
       const task = await repository.getTaskDetail(input.taskId);
       if (
         !task
@@ -898,36 +1548,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ) {
         return null;
       }
-      const binding = {
-        taskId: task.id,
-        planVersionId: task.activePlanVersionId,
-        attemptId: input.attemptId,
-      };
-      const packageArtifact = await fixedReportPackageRoot(binding);
-      if (!packageArtifact || packageArtifact.schemaVersion !== 'report-package-v3') {
-        throw new HtmlBundleUnavailableError();
-      }
-      const verified = await reportPackageV3Artifacts.verify({
-        artifactId: packageArtifact.id,
-        ...binding,
-      });
-      if (verified.value.showcase.status !== 'ready') {
-        throw new HtmlBundleUnavailableError();
-      }
-      const html = await artifacts.readVerifiedBoundText(
-        verified.value.showcase.htmlArtifactId,
-      );
-      if (
-        html.artifact.kind !== 'editorial_showcase_html'
-        || html.artifact.schemaVersion !== 'editorial-showcase-html-v1'
-        || html.artifact.mediaType !== 'text/html; charset=utf-8'
-        || html.artifact.taskId !== binding.taskId
-        || html.artifact.planVersionId !== binding.planVersionId
-        || html.artifact.attemptId !== binding.attemptId
-      ) {
-        throw new HtmlBundleIntegrityError();
-      }
-      return html.content;
+      const publication = await editorialSummary.generate({ taskId: task.id });
+      return readFile(publication.reportPath, 'utf8');
     },
     async readVisualAsset(input) {
       const task = await repository.getTaskDetail(input.taskId);

@@ -25,6 +25,46 @@ import { loadSkillExecutionContract } from '../apps/orchestrator-runtime/src/ski
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { CurrentPlanStep } from '../packages/api-contract/research-deliverable.ts';
 
+test('compiled Industry Market Analysis loads one reviewed nine-stage execution contract', () => {
+  const loaded = new SkillLoader().loadSkillExecution('industry-market-analysis');
+  assert.ok(loaded);
+  assert.equal(loaded.contract.skill_id, 'industry-market-analysis');
+  assert.deepEqual(loaded.contract.stages.map(({ stage_id }) => stage_id), [
+    'load-industry-methods',
+    'collect-public-evidence',
+    'inventory-inputs-and-evidence',
+    'analyze-market-users-and-supply',
+    'diagnose-jd-and-competitors',
+    'cross-validate-findings',
+    'synthesize-opportunities-and-assets',
+    'compose-industry-content-draft',
+    'self-review',
+  ]);
+  assert.equal(loaded.contract.output_stage_id, 'compose-industry-content-draft');
+  assert.deepEqual(loaded.contract.skill_references, ['references/industry-method.md']);
+});
+
+test('compiled execution contract rejects a hidden second Skill actor', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-contract-hidden-skill-'));
+  const path = 'orchestrator/skill-executions/industry-market-analysis.yaml';
+  mkdirSync(join(root, 'orchestrator/skill-executions'), { recursive: true });
+  const source = readFileSync(join(originalRoot, path), 'utf8');
+  setConfigRoot(root);
+  try {
+    writeFileSync(join(root, path), source.replace(
+      '    actor_type: llm\n    actor_id: llm.openai.gpt-4o',
+      '    actor_type: skill\n    actor_id: generate-persona',
+    ), 'utf8');
+    assert.throws(
+      () => loadSkillExecutionContract(path, 'industry-market-analysis'),
+      /hidden Skill actor/u,
+    );
+  } finally {
+    setConfigRoot(originalRoot);
+  }
+});
+
 test('compiled generate-research-plan loads one validated acyclic execution contract', () => {
   const loaded = new SkillLoader().loadSkillExecution('generate-research-plan');
   assert.ok(loaded);
@@ -406,7 +446,7 @@ test('PlanCompiler persists seven stages and rejects frozen actor, dependency, i
     'design-sampling-and-schedule', 'compose-plan', 'self-review',
   ]);
   const invocation = compiled.plan.skill_invocations?.[0];
-  assert.ok(invocation);
+  assert.ok(invocation && invocation.execution_mode === 'compiled');
   const prepare = (frozenExecution: {
     contractHash: string;
     referenceHashes: Array<{ path: string; hash: string }>;
@@ -439,6 +479,11 @@ test('PlanCompiler persists seven stages and rejects frozen actor, dependency, i
   }), SkillRuntimeDriftError);
 
   const frozen = { ...compiled.plan, task_id: 'task-compiled-plan-1' };
+  const compiledInvocation = (plan: typeof frozen) => {
+    const value = plan.skill_invocations?.[0];
+    assert.ok(value && value.execution_mode === 'compiled');
+    return value;
+  };
   assert.deepEqual(validateCurrentPlanRevision({
     plan: frozen,
     task,
@@ -448,21 +493,22 @@ test('PlanCompiler persists seven stages and rejects frozen actor, dependency, i
   }), frozen);
 
   const tamperCases: Array<[string, (plan: typeof frozen) => void]> = [
-    ['contract hash drift', (plan) => { plan.skill_invocations![0]!.contract_hash = `sha256:${'0'.repeat(64)}`; }],
-    ['reference hash drift', (plan) => { plan.skill_invocations![0]!.skill_reference_hashes[0]!.hash = `sha256:${'0'.repeat(64)}`; }],
-    ['Knowledge binding drift', (plan) => { plan.skill_invocations![0]!.knowledge_references.pop(); }],
+    ['contract hash drift', (plan) => { compiledInvocation(plan).contract_hash = `sha256:${'0'.repeat(64)}`; }],
+    ['reference hash drift', (plan) => { compiledInvocation(plan).skill_reference_hashes[0]!.hash = `sha256:${'0'.repeat(64)}`; }],
+    ['Knowledge binding drift', (plan) => { compiledInvocation(plan).knowledge_references.pop(); }],
     ['stage actor drift', (plan) => { plan.steps[0]!.actor_id = 'another-tool'; }],
     ['stage dependency drift', (plan) => { plan.steps[2]!.depends_on = []; }],
     ['stage input binding drift', (plan) => { plan.steps[2]!.input_bindings.reverse(); }],
     ['stage immutable input drift', (plan) => { plan.steps[2]!.input.unexpected = true; }],
     ['stage acceptance drift', (plan) => { plan.steps[2]!.acceptance_criteria[0] = 'changed'; }],
     ['dynamic Knowledge query swap', (plan) => {
-      const collection = plan.skill_invocations![0]!.knowledge_references.find(({ queryId }) => queryId === 'collection-methods');
-      const analysis = plan.skill_invocations![0]!.knowledge_references.find(({ queryId }) => queryId === 'analysis-methods');
+      const targetInvocation = compiledInvocation(plan);
+      const collection = targetInvocation.knowledge_references.find(({ queryId }) => queryId === 'collection-methods');
+      const analysis = targetInvocation.knowledge_references.find(({ queryId }) => queryId === 'analysis-methods');
       if (!collection || !analysis) throw new Error('query fixtures missing');
       [collection.queryId, analysis.queryId] = [analysis.queryId, collection.queryId];
       const knowledgeStep = plan.steps.find(({ skill_stage_id }) => skill_stage_id === 'load-standards')!;
-      knowledgeStep.input.references = structuredClone(plan.skill_invocations![0]!.knowledge_references);
+      knowledgeStep.input.references = structuredClone(targetInvocation.knowledge_references);
     }],
     ['stage output drift', (plan) => { plan.steps[2]!.expected_outputs[0]!.pointer = '/other'; }],
     ['Tool ownership drift', (plan) => { plan.capability_decisions.eligible[0]!.skill.required_tools = []; }],
@@ -479,13 +525,14 @@ test('PlanCompiler persists seven stages and rejects frozen actor, dependency, i
     }), label);
   }
 
+  const frozenContractHash = invocation.contract_hash;
   class DisallowedDynamicStatusLoader extends SkillLoader {
     override loadSkillExecution(id: string) {
       const loaded = super.loadSkillExecution(id);
       if (!loaded || id !== 'generate-research-plan') return loaded;
       return {
         ...loaded,
-        hash: invocation.contract_hash,
+        hash: frozenContractHash,
         contract: {
           ...loaded.contract,
           resource_queries: (loaded.contract.resource_queries ?? []).map((query) => (

@@ -1,3 +1,4 @@
+import Busboy from 'busboy';
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
@@ -7,6 +8,12 @@ import {
   type ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  ProvidedTaskMaterial,
+  TaskMaterialBinding,
+  TaskMaterialResponse,
+  VerifiedTaskMaterial,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
@@ -18,17 +25,22 @@ import {
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { EditorialSummaryPipelineError } from '../../../orchestrator-runtime/src/report/editorial-summary-pipeline.ts';
+import { EditorialSummaryStoreError } from '../../../orchestrator-runtime/src/report/editorial-summary-store.ts';
 import {
   HtmlBundleIntegrityError,
   HtmlBundleUnavailableError,
 } from '../../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
+import { BinaryArtifactValidationError } from '../../../orchestrator-runtime/src/control/artifact-store.ts';
+import { DatasetInputGateError } from '../../../orchestrator-runtime/src/control/dataset-input-gate-store.ts';
 import {
   InvalidScenarioSelectionError,
   planningGuidanceFromStored,
 } from '../../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
+import { TaskMaterialValidationError } from '../control-runtime.ts';
 import { requireAuth } from '../middleware.ts';
 
 const currentRequirementValidator = new SchemaValidator();
@@ -41,6 +53,8 @@ export interface ControlClarificationPort {
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
     selectedScenarioId?: string;
+    materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+    materials: VerifiedTaskMaterial[];
     expectedVersion: number;
     commandReservation: {
       commandType: 'clarification';
@@ -72,11 +86,48 @@ export interface ControlTasksRuntime {
     attemptId: string;
     ownerUserId: string;
   }): Promise<Uint8Array | null>;
-  readEditorialShowcaseHtml?(input: {
+  readEditorialSummaryHtml?(input: {
     taskId: string;
     attemptId: string;
     ownerUserId: string;
   }): Promise<string | null>;
+  uploadTaskVisualMaterial?(input: {
+    taskId: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    requestId: string;
+    role: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+  }): Promise<TaskMaterialResponse>;
+  listTaskMaterials?(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<TaskMaterialResponse[]>;
+  resolveTaskMaterials?(input: {
+    taskId: string;
+    ownerUserId: string;
+    bindings: Array<{ requestId: string; materialIds: string[] }>;
+  }): Promise<VerifiedTaskMaterial[]>;
+  uploadDataset?(input: {
+    taskId: string;
+    planVersionId: string;
+    role: string;
+    ownerUserId: string;
+    idempotencyKey: string;
+    fileName: string;
+    mediaType: string;
+    bytes: Uint8Array;
+    metadata: {
+      rowMeaning: string;
+      timeRange: string;
+      fieldNotes: Record<string, string>;
+      units: Record<string, string>;
+      sampling: string;
+      piiConfirmedAbsent: boolean;
+    };
+  }): Promise<unknown>;
   clarification?: ControlClarificationPort;
 }
 
@@ -113,6 +164,67 @@ function clarificationRequirement(value: unknown): ResearchTaskV2 | null {
     })
   ) return null;
   return candidate as unknown as ResearchTaskV2;
+}
+
+function parsedMaterialBindings(value: unknown): Array<{ requestId: string; materialIds: string[] }> | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const bindings: Array<{ requestId: string; materialIds: string[] }> = [];
+  for (const candidate of value) {
+    const item = record(candidate);
+    const requestId = string(item?.requestId);
+    const materialIds = item?.materialIds;
+    if (
+      !item
+      || Object.keys(item).some((key) => key !== 'requestId' && key !== 'materialIds')
+      || !requestId
+      || !Array.isArray(materialIds)
+      || materialIds.length === 0
+      || materialIds.some((materialId) => string(materialId) === null)
+    ) return null;
+    bindings.push({ requestId, materialIds: materialIds as string[] });
+  }
+  return bindings;
+}
+
+function storedMaterialBindings(value: unknown): TaskMaterialBinding[] {
+  const candidate = record(value);
+  const parsed = parsedMaterialBindings(candidate?.materialBindings);
+  return parsed ?? [];
+}
+
+function providedMaterialsView(
+  materials: readonly VerifiedTaskMaterial[],
+  bindings: readonly TaskMaterialBinding[],
+): ProvidedTaskMaterial[] {
+  const materialsById = new Map(materials.map((material) => [material.materialId, material]));
+  return bindings.flatMap((binding): ProvidedTaskMaterial[] => {
+    const selected = binding.materialIds.flatMap((materialId) => {
+      const material = materialsById.get(materialId);
+      return material && material.requestId === binding.requestId ? [material] : [];
+    });
+    if (selected.length === 0) return [];
+    return [{
+      role: selected[0]!.role,
+      materialIds: selected.map(({ materialId }) => materialId),
+      fileNames: selected.map(({ fileName }) => fileName),
+    }];
+  });
+}
+
+function withVerifiedMaterials(
+  response: CurrentPlanningResponse,
+  materials: readonly VerifiedTaskMaterial[],
+  bindings: readonly TaskMaterialBinding[],
+): CurrentPlanningResponse {
+  if (materials.length === 0) return response;
+  const taskMaterials: TaskMaterialResponse[] = materials.map((material) => ({ ...material, state: 'SEALED' }));
+  if (response.status === 'clarification_required') return { ...response, taskMaterials };
+  const providedMaterials = providedMaterialsView(materials, bindings);
+  return {
+    ...response,
+    candidates: response.candidates.map((candidate) => ({ ...candidate, providedMaterials })),
+  };
 }
 
 function version(value: unknown): number | null {
@@ -181,6 +293,18 @@ function publicError(error: unknown): {
   status: number;
   body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
 } {
+  if (error instanceof TaskMaterialValidationError || error instanceof BinaryArtifactValidationError) {
+    return {
+      status: 422,
+      body: {
+        error: error.message,
+        code: error instanceof TaskMaterialValidationError ? error.code : 'task_material_binary_invalid',
+      },
+    };
+  }
+  if (error instanceof DatasetInputGateError) {
+    return { status: 422, body: { error: error.message, code: error.code } };
+  }
   if (error instanceof TaskWorkflowGateError) {
     return { status: 422, body: { error: error.message, unresolved: error.unresolved } };
   }
@@ -273,6 +397,8 @@ interface PreparedClarification {
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
   selectedScenarioId?: string;
+  materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+  materials: VerifiedTaskMaterial[];
   idempotencyKey: string;
   requestHash: string;
 }
@@ -299,11 +425,13 @@ async function prepareClarification(
   const assumptionEdits = record(body?.assumptionEdits);
   const hasSelectedScenarioId = body !== null && Object.hasOwn(body, 'selectedScenarioId');
   const selectedScenarioId = string(body?.selectedScenarioId);
+  const materialBindings = parsedMaterialBindings(body?.materialBindings);
   const key = idempotencyKey(req);
   if (
     expectedVersion == null
     || !clarificationAnswers
     || !assumptionEdits
+    || materialBindings === null
     || !key
     || (hasSelectedScenarioId && !selectedScenarioId)
     || Object.values(assumptionEdits).some((value) => typeof value !== 'string')
@@ -318,11 +446,31 @@ async function prepareClarification(
     res.status(404).json({ error: '任务不存在' });
     return null;
   }
+  let materials: VerifiedTaskMaterial[] = [];
+  const requirement = clarificationRequirement(task.structuredTask);
+  const requiresMaterials = requirement?.material_requests?.some(({ required }) => required) === true;
+  if (materialBindings.length > 0 || requiresMaterials) {
+    if (!runtime.resolveTaskMaterials) {
+      res.status(503).json({ error: 'Task Material binding is unavailable' });
+      return null;
+    }
+    try {
+      materials = await runtime.resolveTaskMaterials({
+        taskId: task.id,
+        ownerUserId: actor.userId,
+        bindings: materialBindings,
+      });
+    } catch (error) {
+      responseError(res, error);
+      return null;
+    }
+  }
   const requestHash = clarificationRequestHash({
     expectedVersion,
     clarificationAnswers,
     assumptionEdits,
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
+    ...(materialBindings.length > 0 ? { materialBindings } : {}),
   });
   const existingCommand = await runtime.repository.getCommand(task.id, 'clarification', key);
   const resumesExistingCommand = existingCommand?.requestHash === requestHash;
@@ -379,6 +527,8 @@ async function prepareClarification(
       Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
     ),
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
+    materialBindings,
+    materials,
     idempotencyKey: key,
     requestHash,
   };
@@ -408,7 +558,11 @@ async function runClarification(
       );
     }
     if (reservation.status === 'replay') {
-      return reservation.response as CurrentPlanningResponse;
+      return withVerifiedMaterials(
+        reservation.response as CurrentPlanningResponse,
+        prepared.materials,
+        prepared.materialBindings,
+      );
     }
     if (reservation.status === 'pending') {
       const waited = await runtime.repository.waitForCommand(command);
@@ -418,7 +572,11 @@ async function runClarification(
         );
       }
       if (waited.status === 'replay') {
-        return waited.response as CurrentPlanningResponse;
+        return withVerifiedMaterials(
+          waited.response as CurrentPlanningResponse,
+          prepared.materials,
+          prepared.materialBindings,
+        );
       }
       continue;
     }
@@ -433,6 +591,8 @@ async function runClarification(
       answers: prepared.clarificationAnswers,
       assumptionEdits: prepared.assumptionEdits,
       ...(prepared.selectedScenarioId ? { selectedScenarioId: prepared.selectedScenarioId } : {}),
+      materialBindings: prepared.materialBindings,
+      materials: prepared.materials,
       expectedVersion: prepared.expectedVersion,
       commandReservation: {
         ...command,
@@ -448,11 +608,180 @@ async function runClarification(
         response,
       });
     }
-    return response;
+    return withVerifiedMaterials(response, prepared.materials, prepared.materialBindings);
   } catch (error) {
     await runtime.repository.recoverCommandAfterFailure({ ...command, reservationToken });
     throw error;
   }
+}
+
+interface ParsedVisualMaterialUpload {
+  requestId: string;
+  role: string;
+  fileName: string;
+  mediaType: string;
+  bytes: Buffer;
+}
+
+function readVisualMaterialMultipart(req: Request): Promise<ParsedVisualMaterialUpload> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 1, fields: 2, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(new TaskMaterialValidationError(
+        error instanceof Error ? error.message : 'invalid visual Material multipart request',
+      ));
+      return;
+    }
+    let fileName: string | null = null;
+    let mediaType: string | null = null;
+    let requestId: string | null = null;
+    let role: string | null = null;
+    let fileSeen = false;
+    let truncated = false;
+    const chunks: Buffer[] = [];
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file' || fileSeen) {
+        stream.resume();
+        reject(new TaskMaterialValidationError('multipart request must contain exactly one file field'));
+        return;
+      }
+      fileSeen = true;
+      fileName = info.filename;
+      mediaType = info.mimeType;
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on('limit', () => { truncated = true; });
+      stream.on('error', reject);
+    });
+    parser.on('field', (fieldName, value) => {
+      if (fieldName === 'requestId' && requestId === null) requestId = value;
+      else if (fieldName === 'role' && role === null) role = value;
+      else reject(new TaskMaterialValidationError('multipart request contains invalid or duplicate fields'));
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      if (truncated) {
+        reject(new TaskMaterialValidationError('visual Material exceeds 10 MiB'));
+        return;
+      }
+      if (!fileSeen || !fileName || !mediaType || !requestId?.trim() || !role?.trim()) {
+        reject(new TaskMaterialValidationError('file、requestId 和 role 必填'));
+        return;
+      }
+      resolve({
+        requestId: requestId.trim(),
+        role: role.trim(),
+        fileName,
+        mediaType,
+        bytes: Buffer.concat(chunks),
+      });
+    });
+    req.pipe(parser);
+  });
+}
+
+interface ParsedDatasetUpload {
+  fileName: string;
+  mediaType: string;
+  bytes: Buffer;
+  metadata: {
+    rowMeaning: string;
+    timeRange: string;
+    fieldNotes: Record<string, string>;
+    units: Record<string, string>;
+    sampling: string;
+    piiConfirmedAbsent: boolean;
+  };
+}
+
+function parseDatasetMetadata(value: string): ParsedDatasetUpload['metadata'] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new DatasetInputGateError('metadata must be valid JSON');
+  }
+  const candidate = record(parsed);
+  if (
+    !candidate
+    || typeof candidate.rowMeaning !== 'string'
+    || typeof candidate.timeRange !== 'string'
+    || typeof candidate.sampling !== 'string'
+    || typeof candidate.piiConfirmedAbsent !== 'boolean'
+    || !record(candidate.fieldNotes)
+    || !record(candidate.units)
+  ) throw new DatasetInputGateError('metadata fields are malformed');
+  const stringRecord = (value: Record<string, unknown>, field: string): Record<string, string> => {
+    if (Object.values(value).some((item) => typeof item !== 'string')) {
+      throw new DatasetInputGateError(`${field} must contain only string values`);
+    }
+    return value as Record<string, string>;
+  };
+  return {
+    rowMeaning: candidate.rowMeaning,
+    timeRange: candidate.timeRange,
+    fieldNotes: stringRecord(record(candidate.fieldNotes)!, 'fieldNotes'),
+    units: stringRecord(record(candidate.units)!, 'units'),
+    sampling: candidate.sampling,
+    piiConfirmedAbsent: candidate.piiConfirmedAbsent,
+  };
+}
+
+function readDatasetMultipart(req: Request): Promise<ParsedDatasetUpload> {
+  return new Promise((resolve, reject) => {
+    let parser: ReturnType<typeof Busboy>;
+    try {
+      parser = Busboy({ headers: req.headers, limits: { files: 1, fields: 1, fileSize: 10 * 1024 * 1024 } });
+    } catch (error) {
+      reject(new DatasetInputGateError(error instanceof Error ? error.message : 'invalid multipart request'));
+      return;
+    }
+    let fileName: string | null = null;
+    let mediaType: string | null = null;
+    let fileSeen = false;
+    let fileTooLarge = false;
+    let metadataText: string | null = null;
+    const chunks: Buffer[] = [];
+    parser.on('file', (fieldName, stream, info) => {
+      if (fieldName !== 'file' || fileSeen) {
+        stream.resume();
+        reject(new DatasetInputGateError('multipart request must contain exactly one file field'));
+        return;
+      }
+      fileSeen = true;
+      fileName = info.filename;
+      mediaType = info.mimeType;
+      stream.on('limit', () => { fileTooLarge = true; });
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.on('error', reject);
+    });
+    parser.on('field', (fieldName, value) => {
+      if (fieldName !== 'metadata' || metadataText !== null) {
+        reject(new DatasetInputGateError('multipart request must contain one metadata field'));
+        return;
+      }
+      metadataText = value;
+    });
+    parser.on('error', reject);
+    parser.on('finish', () => {
+      try {
+        if (!fileSeen || !fileName || !mediaType || fileTooLarge) {
+          throw new DatasetInputGateError(fileTooLarge ? 'CSV byte size exceeds 10 MiB' : 'file field is required');
+        }
+        if (metadataText === null) throw new DatasetInputGateError('metadata field is required');
+        resolve({
+          fileName,
+          mediaType,
+          bytes: Buffer.concat(chunks),
+          metadata: parseDatasetMetadata(metadataText),
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.pipe(parser);
+  });
 }
 
 export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
@@ -599,16 +928,16 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
-  router.get('/:id/reports/:attemptId/editorial-showcase.html', async (req, res) => {
+  router.get('/:id/reports/:attemptId/editorial-summary.html', async (req, res) => {
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
     if (!await ensureOwnedTask(runtime, req, res, actor, '报告不存在')) return;
-    if (!runtime.readEditorialShowcaseHtml) {
-      res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+    if (!runtime.readEditorialSummaryHtml) {
+      res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
       return;
     }
     try {
-      const html = await runtime.readEditorialShowcaseHtml({
+      const html = await runtime.readEditorialSummaryHtml({
         taskId: req.params.id,
         attemptId: req.params.attemptId,
         ownerUserId: actor.userId,
@@ -619,19 +948,27 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       }
       res.set({
         'Cache-Control': 'private, no-store',
-        'Content-Disposition': 'inline; filename="editorial-showcase.html"',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Disposition': 'inline; filename="editorial-summary.html"',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         'Content-Type': 'text/html; charset=utf-8',
         'X-Content-Type-Options': 'nosniff',
       });
       res.send(html);
     } catch (error) {
-      if (error instanceof HtmlBundleUnavailableError) {
-        res.status(409).json({ error: 'Editorial Showcase 不可用', code: 'editorial_showcase_unavailable' });
+      if (error instanceof EditorialSummaryPipelineError) {
+        const unavailable = error.code === 'SUMMARY_MODEL_UNAVAILABLE';
+        res.status(409).json({
+          error: unavailable ? '编辑摘要模型不可用' : '编辑摘要生成失败',
+          code: unavailable ? 'editorial_summary_unavailable' : 'editorial_summary_generation_failed',
+        });
         return;
       }
-      if (error instanceof HtmlBundleIntegrityError) {
-        res.status(409).json({ error: 'Editorial Showcase 完整性校验失败', code: 'editorial_showcase_integrity' });
+      if (error instanceof EditorialSummaryStoreError) {
+        res.status(409).json({ error: '编辑摘要完整性校验失败', code: 'editorial_summary_integrity' });
+        return;
+      }
+      if (error instanceof HtmlBundleUnavailableError) {
+        res.status(409).json({ error: '编辑摘要不可用', code: 'editorial_summary_unavailable' });
         return;
       }
       responseError(res, error);
@@ -656,6 +993,8 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
           state: task.state,
           stateVersion: task.stateVersion,
           activePlanVersionId: task.activePlanVersionId,
+          ...(task.createdAt ? { createdAt: task.createdAt.toISOString() } : {}),
+          ...(task.updatedAt ? { updatedAt: task.updatedAt.toISOString() } : {}),
         });
       }
       res.json({ tasks: summaries });
@@ -663,6 +1002,51 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       responseError(res, error);
     }
   });
+
+router.post('/:id/materials/visual', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadTaskVisualMaterial) {
+    res.status(503).json({ error: 'Task Material upload is unavailable' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  try {
+    const upload = await readVisualMaterialMultipart(req);
+    const result = await runtime.uploadTaskVisualMaterial({
+      taskId: req.params.id,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      ...upload,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.get('/:id/materials', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  if (!actor) return;
+  if (!runtime.listTaskMaterials) {
+    res.status(503).json({ error: 'Task Material listing is unavailable' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  try {
+    res.json({ materials: await runtime.listTaskMaterials({
+      taskId: req.params.id,
+      ownerUserId: actor.userId,
+    }) });
+  } catch (error) {
+    responseError(res, error);
+  }
+});
 
 router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);
@@ -690,7 +1074,7 @@ router.get('/:id', async (req, res) => {
         );
       }
     }
-    const [recovered, activePlan, executionSteps, pendingInputQuarantined, activeRequirement] = await Promise.all([
+    const [recovered, activePlan, executionSteps, pendingInputQuarantined, activeRequirement, taskMaterials] = await Promise.all([
       task.state === 'awaiting_selection'
         ? isOwner
           ? repository.listCandidatePlanVersionsForOwner({
@@ -710,19 +1094,32 @@ router.get('/:id', async (req, res) => {
       task.activePlanVersionId && isOwner
         ? repository.isPlanPendingInputQuarantined(task.activePlanVersionId)
         : Promise.resolve(false),
-      task.state === 'awaiting_clarification' && isOwner
+      task.activeRequirementVersionId && isOwner
         ? repository.getActiveRequirementVersion(task.id)
         : Promise.resolve(null),
+      isOwner && runtime.listTaskMaterials
+        ? runtime.listTaskMaterials({ taskId: task.id, ownerUserId: actor.userId })
+        : Promise.resolve([]),
     ]);
     if (!recovered) {
       res.status(404).json({ error: '任务不存在' });
       return;
     }
     const planningGuidance = planningGuidanceFromStored(activeRequirement?.clarification);
+    const providedMaterials = providedMaterialsView(
+      taskMaterials,
+      storedMaterialBindings(activeRequirement?.clarification),
+    );
+    const candidates = recovered.candidates.map((candidate) => (
+      providedMaterials.length > 0 ? { ...candidate, providedMaterials } : candidate
+    ));
+    const visibleActivePlan = activePlan && providedMaterials.length > 0
+      ? { ...activePlan, providedMaterials }
+      : activePlan;
     res.json({
       kind: 'current',
       task,
-      activePlan,
+      activePlan: visibleActivePlan,
       executionSteps: executionSteps.map((step) => ({
         stepNo: step.stepNo,
         stepName: step.stepName,
@@ -741,6 +1138,8 @@ router.get('/:id', async (req, res) => {
         ? { planRecovery: { kind: 'plan_revision_required' as const, reason: 'legacy_pending_inputs' as const } }
         : {}),
       ...recovered,
+      candidates,
+      ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
     });
   } catch (error) {
     responseError(res, error);
@@ -782,6 +1181,43 @@ router.post('/:id/select', async (req, res) => {
       actor,
       planVersionId,
     }));
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/plans/:planVersionId/inputs/:role/dataset', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  if (!actor) return;
+  if (!runtime.uploadDataset) {
+    res.status(503).json({ error: 'Dataset input is unavailable' });
+    return;
+  }
+  if (!key) {
+    res.status(400).json({ error: 'Idempotency-Key 必填' });
+    return;
+  }
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const planVersionId = typeof req.params.planVersionId === 'string'
+    ? req.params.planVersionId
+    : req.params.planVersionId[0] ?? '';
+  const role = typeof req.params.role === 'string' ? req.params.role : req.params.role[0] ?? '';
+  try {
+    const upload = await readDatasetMultipart(req);
+    const result = await runtime.uploadDataset({
+      taskId,
+      planVersionId,
+      role,
+      ownerUserId: actor.userId,
+      idempotencyKey: key,
+      fileName: upload.fileName,
+      mediaType: upload.mediaType,
+      bytes: upload.bytes,
+      metadata: upload.metadata,
+    });
+    res.status(201).set('Idempotency-Key', key).json(result);
   } catch (error) {
     responseError(res, error);
   }

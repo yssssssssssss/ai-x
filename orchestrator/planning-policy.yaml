@@ -10,13 +10,13 @@ scenario_catalog:
   sha256: sha256:0c94094949b9aa17c554da2386e0a11a5fcea79080ba0bdef967b89a33ab52fb
 scenario_mapping:
   version: scenario-profile-mapping-gate-2-candidate-v1
-  sha256: sha256:39a7848d5c195a8244fa10eaa1afc9f0fb1b0a3e429cda41025dfa200f168082
+  sha256: sha256:05cba1f3e9a3f4f32fdcc46681a5fbdce0b0a4934e25c1ade538530bff8ee49a
 signal_catalog:
   version: planning-signal-gate-2-candidate-v1
   sha256: sha256:d51b1fc8cc0c62420e9d18aed846395a5b5a544098a919a9e421780b28c18eaa
 capability_crosswalk:
   version: planning-capability-crosswalk-v1
-  sha256: sha256:e11f9b4b1579b9345112761d8163655f02bde6310181ce21e8fd50d25285b70f
+  sha256: sha256:9f20623eb7f02beff80aabd07b0bbfa0a04a146d0127fb7d06c5f5818b48e005
 candidate_contract:
   min_items: 2
   max_items: 4

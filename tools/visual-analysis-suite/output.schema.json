@@ -1,0 +1,201 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "visual-analysis-suite/output.schema.json",
+  "title": "VisualAnalysisSuiteOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "samples",
+    "visualReviewBatches",
+    "comparisonFindings",
+    "warnings",
+    "boundaryNotes",
+    "toolProvenance"
+  ],
+  "properties": {
+    "version": { "const": "visual-analysis-suite-v1" },
+    "status": { "enum": ["available", "partial", "unavailable"] },
+    "samples": {
+      "type": "array",
+      "maxItems": 30,
+      "items": { "$ref": "#/$defs/sample" }
+    },
+    "visualReviewBatches": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/visualReviewBatch" }
+    },
+    "comparisonFindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/comparisonFinding" }
+    },
+    "warnings": { "$ref": "#/$defs/textList" },
+    "boundaryNotes": { "$ref": "#/$defs/textList" },
+    "toolProvenance": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/toolCall" }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "textList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/text" }
+    },
+    "status": { "enum": ["available", "failed"] },
+    "aesthetic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "findings", "recommendations", "warnings"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "summary": { "type": "string" },
+        "overallScore": { "type": "number" },
+        "findings": { "$ref": "#/$defs/textList" },
+        "recommendations": { "$ref": "#/$defs/textList" },
+        "warnings": { "$ref": "#/$defs/textList" }
+      }
+    },
+    "hotspot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "x", "y", "width", "height", "score", "reason"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "score": { "type": "number" },
+        "reason": { "type": "string" },
+        "label": { "$ref": "#/$defs/text" }
+      }
+    },
+    "attention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "hotspots", "warnings"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "mode": { "type": "string" },
+        "engine": { "type": "string" },
+        "summary": { "type": "string" },
+        "peakAttentionScore": { "type": "number" },
+        "focusBalanceScore": { "type": "number" },
+        "distractionRiskScore": { "type": "number" },
+        "hotspots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hotspot" }
+        },
+        "warnings": { "$ref": "#/$defs/textList" }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sampleId",
+        "role",
+        "sourceImageId",
+        "visualReviewBatchId",
+        "aesthetic",
+        "attention"
+      ],
+      "properties": {
+        "sampleId": { "$ref": "#/$defs/text" },
+        "role": { "enum": ["primary", "comparison"] },
+        "sourceImageId": { "$ref": "#/$defs/text" },
+        "visualReviewBatchId": { "$ref": "#/$defs/text" },
+        "aesthetic": { "$ref": "#/$defs/aesthetic" },
+        "attention": { "$ref": "#/$defs/attention" }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "findings", "suggestions"],
+      "properties": {
+        "role": { "$ref": "#/$defs/text" },
+        "roleLabel": { "$ref": "#/$defs/text" },
+        "score": { "type": "number" },
+        "findings": { "$ref": "#/$defs/textList" },
+        "suggestions": { "$ref": "#/$defs/textList" }
+      }
+    },
+    "visualReviewBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batchId",
+        "role",
+        "sampleIds",
+        "status",
+        "summary",
+        "findings",
+        "recommendations",
+        "reviewers",
+        "warnings"
+      ],
+      "properties": {
+        "batchId": { "$ref": "#/$defs/text" },
+        "role": { "enum": ["primary", "comparison"] },
+        "sampleIds": { "$ref": "#/$defs/textList" },
+        "status": { "$ref": "#/$defs/status" },
+        "engine": { "type": "string" },
+        "summary": { "type": "string" },
+        "findings": { "$ref": "#/$defs/textList" },
+        "recommendations": { "$ref": "#/$defs/textList" },
+        "reviewers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reviewer" }
+        },
+        "warnings": { "$ref": "#/$defs/textList" }
+      }
+    },
+    "comparisonFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dimension",
+        "statement",
+        "primaryValue",
+        "comparisonValue",
+        "interpretation"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "dimension": { "$ref": "#/$defs/text" },
+        "statement": { "$ref": "#/$defs/text" },
+        "primaryValue": { "type": "number" },
+        "comparisonValue": { "type": "number" },
+        "interpretation": { "const": "descriptive_only" }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolId",
+        "sampleIds",
+        "status",
+        "implementationId",
+        "executionMode",
+        "endpointHost",
+        "latencyMs"
+      ],
+      "properties": {
+        "toolId": { "enum": ["aesthetic-quant-lab", "attention-analysis-lab", "vision-brand-lab"] },
+        "sampleIds": { "$ref": "#/$defs/textList" },
+        "status": { "$ref": "#/$defs/status" },
+        "implementationId": { "$ref": "#/$defs/text" },
+        "executionMode": { "enum": ["real", "fake", "unknown"] },
+        "endpointHost": { "type": ["string", "null"] },
+        "latencyMs": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

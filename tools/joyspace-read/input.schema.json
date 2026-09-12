@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "joyspace-read/input.schema.json",
+  "title": "JoyspaceReadInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "target", "viewTopResult"],
+  "properties": {
+    "operation": { "enum": ["search", "view"], "default": "search" },
+    "target": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+    "scope": { "enum": ["auto", "related", "all"], "default": "auto" },
+    "viewTopResult": { "type": "boolean", "default": true }
+  }
+}

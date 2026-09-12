@@ -12,7 +12,7 @@
     "adapter_type": {
       "type": "string",
       "description": "调用通道。运行时实现与保留协议的完整枚举。",
-      "enum": ["o2", "internal_api", "rest_json", "mcp", "script", "fake", "tavily", "playwright"]
+      "enum": ["o2", "internal_api", "rest_json", "visual_suite", "mcp", "script", "fake", "tavily", "playwright"]
     },
     "entrypoint": { "type": "string", "description": "adapter 入口,如 o2 命令。" },
     "auth_required": { "type": "boolean" },

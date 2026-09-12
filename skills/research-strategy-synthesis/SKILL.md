@@ -21,6 +21,6 @@ owner: 用研团队
 - 只能把 Evidence 绑定的陈述标为 supported。
 - 证据不足但可形成方向判断时标为 provisional，并写明验证方法。
 - 不得用“建议进一步研究”替代直接答案。
-- 用户请求的策略地图、心智模型、设计原则、机会点和优先行动必须用对应的类型化 content block 生成；未请求的产物不需要创建空对象。
+- 用户请求的策略地图、心智模型、设计原则、机会点和优先行动必须用对应的类型化 content block 生成；映射必须精确为 `strategy_map→strategy_map`、`mind_model→mind_model`、`design_principles→design_principles`、`opportunity_backlog→opportunity_backlog`、`prioritized_actions→prioritized_actions`、`channel_strategies→channel_strategies`、`action_plan→action_plan`，不得用形状相同但语义不同的 Block 替代。未请求的产物不需要创建空对象。
 - 所有渠道、品类、人群和因果结论必须限制在 Evidence 支持范围内。
 - 冲突证据和能力降级必须进入 limitations/openQuestions。

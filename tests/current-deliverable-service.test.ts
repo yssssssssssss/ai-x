@@ -6,13 +6,17 @@ import { join } from 'node:path';
 import Ajv from 'ajv';
 import { afterEach, test } from 'node:test';
 import type {
+  IndustryMarketContentPatchV1,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   ResearchStrategyContentDraftV2,
   ResearchStrategyContentPatchV1,
   ResearchStrategyReportPayloadV2,
 } from '../packages/api-contract/research-deliverable.ts';
-import { REPORT_REVIEW_V2_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
+import {
+  INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
+} from '../packages/api-contract/control-workflow.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
 import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
@@ -36,6 +40,7 @@ import type {
   TextLLMResult,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { validIndustryMarketPayload } from './fixtures/industry-market.ts';
 
 type DeliverableEnvelope = ResearchDeliverableEnvelope<ResearchPlanPayload>;
 
@@ -589,6 +594,10 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.match(
     llm.structuredCalls[0]?.prompt ?? '',
     /findingGraph.*fact.*public_source.*screenshot.*dataset.*user_input.*cannot/is,
+  );
+  assert.match(
+    llm.structuredCalls[0]?.prompt ?? '',
+    /same primary language as context\.researchGoal/u,
   );
   assert.equal(validator.schemaCalls.length, 1);
   assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');
@@ -1383,6 +1392,243 @@ function openStrategyInput(): Partial<DeliverableGenerateInput> {
   };
 }
 
+function industryTestPayload(): ReturnType<typeof validIndustryMarketPayload> {
+  return JSON.parse(
+    JSON.stringify(validIndustryMarketPayload())
+      .replaceAll('"E1-1"', '"E1"')
+      .replaceAll('"question-1"', '"q1"'),
+  ) as ReturnType<typeof validIndustryMarketPayload>;
+}
+
+function industryTestMaterializer(payload = industryTestPayload()) {
+  return {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [{
+        stepNo: 8, actorType: 'skill' as const, actorId: 'industry-market-analysis', questionIds: ['q1'],
+        artifactId: 'skill-output-industry', artifactContentSha256: `sha256:${'8'.repeat(64)}`,
+        semanticRole: 'analysis' as const,
+        value: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
+          findings: [], assumptions: [], limitations: [], recommendations: [],
+          payload: { ...payload, schemaVersion: 'industry-market-content-draft-v1' },
+        },
+      }, {
+        stepNo: 9, actorType: 'reviewer' as const, actorId: 'reviewer.research-lead', questionIds: ['q1'],
+        artifactId: 'review-output-industry', artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+        semanticRole: 'review' as const,
+        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+      }];
+    },
+  };
+}
+
+function industryTestInput(): Partial<DeliverableGenerateInput> {
+  return {
+    plan: { id: planVersionId, plan: { deliverable_type: 'industry_market_analysis_report' } },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'q1', statement: '宠物食品行业与频道策略应该如何制定？', rationale: '形成决策依据',
+        priority: 'required', success_criterion_ids: ['criterion1'], evidence_requirements: [],
+        acceptance_criteria: ['结论可追溯'], depends_on: [],
+      }],
+    },
+    finalizedRequirement: {
+      version: 'research-task-v2', task_type: 'industry_market_analysis', outcome_mode: 'answer',
+      business_domain: 'pet-food', research_goal: '形成宠物食品行业与京东频道策略报告',
+      target_audience: ['频道产品与设计团队'], scope: ['中国大陆线上宠物食品'], constraints: [],
+      success_criteria: [{ id: 'criterion1', statement: '结论可追溯' }],
+      expected_deliverables: ['industry_market_analysis_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+      sensitivity: 'internal', pii_detected: false,
+      industry_scope: {
+        category: '宠物食品', subcategories: ['猫用冻干'], exclusions: ['线下渠道'],
+        analysis_depth: 'medium', primary_focus: '竞品与设计策略', secondary_focuses: ['用户洞察'],
+        decision_audience: ['频道产品与设计团队'], decision_goal: '确定频道改版优先级',
+        time_window: '最近十二个月',
+      },
+      available_material_roles: ['competitor_screenshots'],
+      unavailable_material_roles: ['internal_metrics_dataset'],
+    },
+  };
+}
+
+test('assembles an Industry deliverable from the reviewed Skill output without a second full-report LLM call', async () => {
+  const payload = JSON.parse(
+    JSON.stringify(validIndustryMarketPayload())
+      .replaceAll('"E1-1"', '"E1"')
+      .replaceAll('"question-1"', '"q1"'),
+  ) as ReturnType<typeof validIndustryMarketPayload>;
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [{
+        stepNo: 8,
+        actorType: 'skill',
+        actorId: 'industry-market-analysis',
+        questionIds: ['q1'],
+        artifactId: 'skill-output-industry',
+        artifactContentSha256: `sha256:${'8'.repeat(64)}`,
+        semanticRole: 'analysis',
+        value: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
+          findings: [], assumptions: [], limitations: [], recommendations: [],
+          payload: { ...payload, schemaVersion: 'industry-market-content-draft-v1' },
+        },
+      }, {
+        stepNo: 9,
+        actorType: 'reviewer',
+        actorId: 'reviewer.research-lead',
+        questionIds: ['q1'],
+        artifactId: 'review-output-industry',
+        artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+        semanticRole: 'review',
+        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+      }];
+    },
+  };
+  const { service, llm, writes } = await createHarness(validDeliverableDraft(), materializer);
+  const result = await service.generate(generateInput({
+    plan: { id: planVersionId, plan: { deliverable_type: 'industry_market_analysis_report' } },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'q1', statement: '宠物食品行业与频道策略应该如何制定？', rationale: '形成决策依据',
+        priority: 'required', success_criterion_ids: ['criterion1'], evidence_requirements: [],
+        acceptance_criteria: ['结论可追溯'], depends_on: [],
+      }],
+    },
+    finalizedRequirement: {
+      version: 'research-task-v2',
+      task_type: 'industry_market_analysis',
+      outcome_mode: 'answer',
+      business_domain: 'pet-food',
+      research_goal: '形成宠物食品行业与京东频道策略报告',
+      target_audience: ['频道产品与设计团队'],
+      scope: ['中国大陆线上宠物食品'],
+      constraints: [],
+      success_criteria: [{ id: 'criterion1', statement: '结论可追溯' }],
+      expected_deliverables: ['industry_market_analysis_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+      sensitivity: 'internal', pii_detected: false,
+      industry_scope: {
+        category: '宠物食品', subcategories: ['猫用冻干'], exclusions: ['线下渠道'],
+        analysis_depth: 'medium', primary_focus: '竞品与设计策略', secondary_focuses: ['用户洞察'],
+        decision_audience: ['频道产品与设计团队'], decision_goal: '确定频道改版优先级',
+        time_window: '最近十二个月',
+      },
+      available_material_roles: ['competitor_screenshots'],
+      unavailable_material_roles: ['internal_metrics_dataset'],
+    },
+  }));
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal(result.deliverable.deliverableType, 'industry_market_analysis_report');
+  assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'industry-market-analysis-v1');
+  assert.equal(writes.filter(({ kind }) => kind === 'deliverable').length, 1);
+});
+
+test('revises Industry through one authorized typed Patch without regenerating the full Draft', async () => {
+  const patch: IndustryMarketContentPatchV1 = {
+    version: 'industry-market-content-patch-v1',
+    operations: [{
+      op: 'replace_text',
+      reviewIssueId: 'strategy_chain_actionability:1',
+      targetNodeId: 'strategy-1',
+      field: 'designAction',
+      value: '增加配方证据卡，并明确来源与适用对象。',
+      reason: '补齐可执行细节。',
+    }],
+  };
+  const { service, llm, writes } = await createHarness(patch, industryTestMaterializer());
+  const input = generateInput(industryTestInput());
+  const initial = await service.generate(input);
+  const revised = await service.revise({
+    ...input,
+    currentDeliverable: initial.deliverable,
+    review: {
+      version: 'report-review-v3', taskId, planVersionId, attemptId,
+      deliverableArtifactId: initial.deliverableArtifactId,
+      verdict: 'revise',
+      dimensions: INDUSTRY_REPORT_REVIEW_DIMENSION_IDS.map((id) => id === 'strategy_chain_actionability'
+        ? {
+            id,
+            passed: false,
+            issues: ['策略动作缺少可执行细节。'],
+            targetNodeIds: ['strategy-1'],
+            revisionIssues: [{
+              id: 'strategy_chain_actionability:1',
+              message: '策略动作缺少可执行细节。',
+              targetNodeIds: ['strategy-1'],
+            }],
+          }
+        : { id, passed: true, issues: [] }),
+      revisionRound: 0,
+    },
+    reviewArtifactId: 'industry-review-r0',
+  });
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(llm.structuredCalls[0]?.schemaName, 'industry-market-content-patch-v1');
+  assert.equal(
+    (revised.deliverable.payload as unknown as ReturnType<typeof validIndustryMarketPayload>).strategyChains[0]?.designAction,
+    patch.operations[0]!.value,
+  );
+  assert.deepEqual(
+    writes.filter(({ kind }) => kind === 'deliverable').map(({ relativePath }) => relativePath),
+    ['deliverables/final-r0.json', 'deliverables/final-r1.json'],
+  );
+});
+
+test('research strategy assembly uses the contract Reviewer instead of a later advisory Reviewer', async () => {
+  const content = openStrategyDraft();
+  const materials = openStrategyMaterials(content);
+  materials.push({
+    stepNo: 10,
+    actorType: 'reviewer',
+    actorId: 'reviewer',
+    questionIds: ['q1'],
+    artifactId: 'advisory-review-output',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'review',
+    value: {
+      version: 'reviewer-step-output-v1',
+      review: 'Advisory revision requested.',
+      verdict: 'revise',
+      conditions: [{ id: 'advisory-1', statement: '保留为交付限制。', disposition: 'limitation' }],
+    },
+  });
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return materials; } };
+  const { service } = await createHarness(validDeliverableDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  const payload = result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2;
+  assert.ok(payload.riskDisclosures.some(({ sourceId }) => sourceId === 'advisory-review-output:advisory-1'));
+  assert.ok(payload.limitations.includes('保留为交付限制。'));
+});
+
+test('research strategy assembly accepts an authoritative revise verdict with explicit conditions', async () => {
+  const content = openStrategyDraft();
+  const materials = openStrategyMaterials(content);
+  materials[1] = {
+    ...materials[1]!,
+    value: {
+      version: 'reviewer-step-output-v1',
+      review: 'Revision is required.',
+      verdict: 'revise',
+      conditions: [{ id: 'review-1', statement: '将证据不足的判断保留为暂定结论。', disposition: 'limitation' }],
+    },
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return materials; } };
+  const { service } = await createHarness(validDeliverableDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  const payload = result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2;
+  assert.ok(payload.riskDisclosures.some(({ sourceId }) => sourceId === 'review-output-1:review-1'));
+  assert.ok(payload.limitations.includes('将证据不足的判断保留为暂定结论。'));
+});
+
 test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
   const content = openStrategyDraft();
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
@@ -1392,6 +1638,110 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
   assert.equal(llm.structuredCalls.length, 0);
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
   assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
+});
+
+test('Plan v3 Industry seals Cross-Skill Review, Ledger, and Summary around one Canonical', async () => {
+  const payload = industryTestPayload();
+  const statement = payload.marketLandscape.items[0]!.statement;
+  const contributionArtifactId = 'industry-contribution-market-1';
+  payload.marketLandscape.items[0]!.support.sourceContributionUnitIds = [
+    `${contributionArtifactId}:market-1`,
+  ];
+  const contributionMaterial: SynthesisMaterial = {
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    questionIds: ['q1'],
+    artifactId: contributionArtifactId,
+    artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+    semanticRole: 'analysis',
+    value: {
+      version: 'research-contribution-artifact-v1',
+      contribution: {
+        version: 'research-contribution-v1', taskId, planVersionId, attemptId,
+        invocationId: 'invocation:market', skillId: 'competitive-web-research',
+        contributionTypes: ['market_landscape'],
+        units: [{
+          key: 'market-1', kind: 'finding', title: '市场发现', statement,
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: [], status: 'provisional',
+            confidence: 0.6, validationNeeded: '用独立公开来源复核 Contributor 判断。',
+          },
+        }],
+        limitations: [], openQuestions: [],
+      },
+      source: {
+        artifactId: 'source-market-1', artifactContentSha256: `sha256:${'d'.repeat(64)}`,
+        schemaVersion: 'skill-output-v2', adapterId: 'skill-envelope-provisional-v1',
+        adapterVersion: '1.0.0', adapterHash: `sha256:${'e'.repeat(64)}`,
+        unitMappings: [{
+          sourceUnitKey: 'market-1', targetUnitKey: 'market-1', sourceJsonPointer: '/findings/0',
+          sourceSemanticHash: `sha256:${createHash('sha256').update(statement).digest('hex')}`,
+        }],
+        diagnosticFields: ['/summary'],
+      },
+    },
+  };
+  const industryMaterials = await industryTestMaterializer(payload).materialize();
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [contributionMaterial, ...industryMaterials];
+    },
+  };
+  const { service, writes } = await createHarness(validDeliverableDraft(), materializer);
+  const base = industryTestInput();
+  const result = await service.generate(generateInput({
+    ...base,
+    plan: {
+      id: planVersionId,
+      plan: {
+        deliverable_type: 'industry_market_analysis_report',
+        execution_contract_version: 'current-execution-plan-v3',
+        skill_invocations: [{
+          invocation_id: 'invocation:market', skill_id: 'competitive-web-research', role: 'contributor',
+          contribution_types: ['market_landscape'], question_ids: ['q1'], requested_artifact_types: [],
+          depends_on_invocation_ids: [], output_contract: 'research-contribution-v1', required: true,
+          failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [2],
+        }, {
+          invocation_id: 'invocation:industry', skill_id: 'industry-market-analysis', role: 'synthesizer',
+          contribution_types: ['strategy'], question_ids: ['q1'], requested_artifact_types: [],
+          depends_on_invocation_ids: ['invocation:market'], output_contract: 'reviewed-synthesis-draft-v1',
+          required: true, failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [8],
+        }],
+        contribution_requirements: [{
+          id: 'demand-market', demand_type: 'market_landscape', question_ids: ['q1'],
+          requested_artifact_types: [], owner_invocation_id: 'invocation:market',
+          corroborator_invocation_ids: [], required: true,
+        }],
+      },
+    },
+  }));
+
+  assert.equal(result.deliverable.deliverableType, 'industry_market_analysis_report');
+  assert.equal(
+    (result.deliverable.payload as unknown as ReturnType<typeof validIndustryMarketPayload>)
+      .marketLandscape.items[0]?.support.status,
+    'provisional',
+  );
+  assert.equal(
+    (result.deliverable.payload as unknown as ReturnType<typeof validIndustryMarketPayload>)
+      .marketLandscape.items[0]?.support.confidence,
+    0.6,
+  );
+  assert.ok(result.crossSkillReviewArtifactId);
+  assert.ok(result.contributionLedgerArtifactId);
+  assert.ok(result.contributionSummaryArtifactId);
+  const ledger = writes.find(({ kind }) => kind === 'contribution_ledger')?.value as {
+    entries?: Array<{ sourceUnitKey?: string; disposition?: string; canonicalNodeIds?: string[] }>;
+  } | undefined;
+  assert.equal(ledger?.entries?.length, 1);
+  assert.equal(ledger?.entries?.[0]?.sourceUnitKey, 'market-1');
+  assert.equal(ledger?.entries?.[0]?.disposition, 'included');
+  assert.ok(ledger?.entries?.[0]?.canonicalNodeIds?.includes('item-1'));
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'cross_skill_review', 'contribution_ledger', 'contribution_summary', 'deliverable',
+  ]);
 });
 
 test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Canonical Deliverable', async () => {
@@ -1796,6 +2146,10 @@ test('repair schema permits support only on exact leaf-owning targets', async ()
 
   const call = llm.structuredCalls[0]!;
   const context = call.context as { allowedSupportTargets?: unknown[] };
+  const operationRefs = (
+    call.schema as { properties?: { operations?: { items?: { oneOf?: Array<{ $ref?: string }> } } } }
+  ).properties?.operations?.items?.oneOf?.map(({ $ref }) => $ref) ?? [];
+  assert.equal(operationRefs.includes('#/$defs/appendContentBlock'), false);
   assert.deepEqual(context.allowedSupportTargets, [{ entity: 'evidence_finding', key: 'fact' }, {
     entity: 'content_block', key: 'narrative',
   }, {
@@ -1829,6 +2183,24 @@ test('repair schema permits support only on exact leaf-owning targets', async ()
     },
     'research-strategy-content-patch-v1',
   ));
+});
+
+test('repair schema requires factual Evidence when appending a missing requested block', async () => {
+  const content = openStrategyDraft();
+  content.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(structuralEvidencePatch(), materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  (strategyInput.finalizedRequirement as { requested_artifacts?: string[] }).requested_artifacts?.push('action_plan');
+
+  await assert.rejects(() => service.generate(strategyInput));
+
+  const supportEvidence = (
+    llm.structuredCalls[0]?.schema as {
+      $defs?: { support?: { properties?: { evidenceIds?: { allOf?: Array<{ contains?: { enum?: string[] } }> } } } };
+    }
+  ).$defs?.support?.properties?.evidenceIds;
+  assert.deepEqual(supportEvidence?.allOf?.[1]?.contains?.enum, ['E1']);
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {

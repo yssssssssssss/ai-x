@@ -15,6 +15,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   mayAutoApproveSmoke,
+  readEditorialSummaryWithOneRetry,
   resolveSmokeReportContract,
   resolveApprovalMode,
   resolveSmokeRequirement,
@@ -25,6 +26,7 @@ import {
   selectSmokeCandidate,
   SmokeInfrastructureError,
   summarizeSmokeEvidence,
+  verifyEditorialSummaryForSmoke,
   verifySmokeGapSummaryHashes,
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
@@ -100,6 +102,7 @@ const realSmokeScenarios = [
   { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
   { profile: 'design_audit', scenarioId: 'design-product-detail' },
   { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
+  { profile: 'industry_market_analysis', scenarioId: 'industry-pet-food-public' },
 ] as const;
 const realProfiles = realSmokeScenarios.map(({ profile }) => profile);
 
@@ -154,7 +157,9 @@ async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeRecei
         process.cwd(),
         profile === 'research_synthesis'
           ? 'tests/fixtures/research-synthesis-real-smoke.json'
-          : 'tests/fixtures/current-semantic-gold.json',
+          : profile === 'industry_market_analysis'
+            ? 'tests/fixtures/industry-real-smoke.json'
+            : 'tests/fixtures/current-semantic-gold.json',
       ),
       profiles: [profile],
       scenarioId,
@@ -444,7 +449,31 @@ test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   }
 });
 
-test('current real smoke covers all six Current profiles', () => {
+test('real smoke retries an isolated Editorial Summary failure at most once', async () => {
+  let calls = 0;
+  const result = await readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('transient summary failure');
+    return '<!doctype html><html lang="zh-CN"></html>';
+  });
+  assert.match(result ?? '', /^<!doctype html>/u);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(() => readEditorialSummaryWithOneRetry(async () => {
+    calls += 1;
+    throw new Error('persistent summary failure');
+  }), /persistent summary failure/u);
+  assert.equal(calls, 2);
+
+  const explicitFailure = await verifyEditorialSummaryForSmoke(async () => {
+    throw new Error('persistent summary failure');
+  });
+  assert.equal(explicitFailure.status, 'failed');
+  assert.match(explicitFailure.failure ?? '', /^Current real smoke failed error_type=Error message_hash=[a-f0-9]{16}$/u);
+});
+
+test('current real smoke covers all seven Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
     'user_research_planning',
@@ -452,6 +481,7 @@ test('current real smoke covers all six Current profiles', () => {
     'voc_diagnosis',
     'design_audit',
     'a11y_audit',
+    'industry_market_analysis',
   ]);
 });
 
@@ -666,6 +696,128 @@ test('browser evidence is optional by default and mandatory only for the protect
     reread: textOnly,
     requireBrowserEvidence: true,
   }), /required browser or chart evidence is missing/u);
+});
+
+test('real smoke reconstructs one degraded Skill Gap from persisted Skill provenance', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    outputArtifactId: 'skill-output-2',
+    toolProvenance: null,
+    skillProvenance: {
+      status: 'degraded',
+      limitations: ['public evidence is insufficient'],
+    },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  const evidence = summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke reconstructs a frozen Skill resource Gap from the Plan', () => {
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:2',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one current source is available',
+        }],
+        step_nos: [2],
+      }],
+    },
+    steps: [],
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('real smoke counts every degraded Skill once and composes Skill, resource, and Tool Gaps', () => {
+  const degradedSteps = [
+    {
+      stepNo: 2,
+      actorType: 'skill',
+      actorId: 'competitive-web-research',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['insufficient evidence'] },
+    },
+    {
+      stepNo: 3,
+      actorType: 'skill',
+      actorId: 'research-strategy-synthesis',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['unverified assumptions'] },
+    },
+    {
+      stepNo: 4,
+      actorType: 'tool',
+      actorId: 'optional-tool',
+      state: 'skipped',
+      toolProvenance: null,
+    },
+  ] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  const evidence = summarizeSmokeEvidence({
+    plan: {
+      capability_gaps: [],
+      skill_invocations: [{
+        invocation_id: 'research-strategy-synthesis:3',
+        skill_id: 'research-strategy-synthesis',
+        execution_mode: 'compiled',
+        resource_gaps: [{
+          query_id: 'recent-public-evidence',
+          min_items: 2,
+          selected_items: 1,
+          failure_policy: 'gap',
+          reason: 'only one source is available',
+        }],
+        step_nos: [3],
+      }],
+    },
+    steps: degradedSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 4);
+
+  const succeededSteps = [{
+    ...degradedSteps[0],
+    skillProvenance: { status: 'succeeded', limitations: [] },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+  assert.equal(summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps: succeededSteps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }).gapCount, 0);
+});
+
+test('real smoke fails closed on an unknown persisted Skill status', () => {
+  const steps = [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'succeeded',
+    skillProvenance: { status: 'partial' },
+  }] as unknown as Parameters<typeof summarizeSmokeEvidence>[0]['steps'];
+
+  assert.throws(() => summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps,
+    delivered: { evidenceManifest: { entries: [] } },
+  }), /skillProvenance\.status is invalid/u);
 });
 
 test('visual smoke keeps the legacy skipped-Tool gap fallback', () => {

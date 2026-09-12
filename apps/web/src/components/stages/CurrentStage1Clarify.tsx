@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { isClarificationQuestionRequired } from '../../../../../packages/api-contract/plan.ts';
-import type { ClarificationRequiredResponse, ClarifyControlTaskRequest } from '../../api/client.ts';
+import {
+  isClarificationQuestionRequired,
+  type ResearchTaskV2,
+} from '../../../../../packages/api-contract/plan.ts';
+import type {
+  ClarificationRequiredResponse,
+  ClarifyControlTaskRequest,
+  TaskMaterialResponse,
+} from '../../api/client.ts';
 import { buildClarificationSubmission, missingBlockingAnswers } from '../../current-flow-state.ts';
 import { Header } from './Stage1Understand.tsx';
 
@@ -8,6 +15,16 @@ interface ClarificationChoice {
   value: string;
   label: string;
   description: string;
+}
+
+const EMPTY_TASK_MATERIALS: TaskMaterialResponse[] = [];
+
+function materialsForRequest(
+  request: NonNullable<ResearchTaskV2['material_requests']>[number],
+  materials: readonly TaskMaterialResponse[],
+): TaskMaterialResponse[] {
+  const matches = materials.filter((material) => material.requestId === request.id);
+  return request.multiple ? matches : matches.slice(-1);
 }
 
 function clarificationChoices(key: string): ClarificationChoice[] | null {
@@ -28,28 +45,88 @@ function clarificationChoices(key: string): ClarificationChoice[] | null {
 
 export function CurrentStage1Clarify({
   response,
+  materials,
+  onUploadMaterial,
   onSubmit,
   disabled = false,
 }: {
   response: ClarificationRequiredResponse;
+  materials?: TaskMaterialResponse[];
+  onUploadMaterial?: (
+    requestId: string,
+    role: string,
+    file: File,
+    multiple: boolean,
+  ) => Promise<TaskMaterialResponse>;
   onSubmit: (request: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) => void;
   disabled?: boolean;
 }) {
+  const availableMaterials = materials ?? response.taskMaterials ?? EMPTY_TASK_MATERIALS;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [selectedScenarioId, setSelectedScenarioId] = useState('');
+  const [selectedMaterials, setSelectedMaterials] = useState<Record<string, TaskMaterialResponse[]>>(() => (
+    Object.fromEntries((response.structuredTask.material_requests ?? []).map((request) => [
+      request.id,
+      materialsForRequest(request, availableMaterials),
+    ]))
+  ));
+  const [materialErrors, setMaterialErrors] = useState<Record<string, string | undefined>>({});
+  const [uploadingRequestId, setUploadingRequestId] = useState<string | null>(null);
   const [assumptionEdits, setAssumptionEdits] = useState<Record<string, string>>(
     Object.fromEntries(response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value])),
   );
   useEffect(() => {
     setAnswers({});
+    setMaterialErrors({});
+    setUploadingRequestId(null);
     setAssumptionEdits(Object.fromEntries(
       response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value]),
     ));
   }, [response.task.id, response.task.stateVersion]);
+  useEffect(() => {
+    setSelectedMaterials(Object.fromEntries((response.structuredTask.material_requests ?? []).map((request) => [
+      request.id,
+      materialsForRequest(request, availableMaterials),
+    ])));
+  }, [response.task.id, response.task.stateVersion, availableMaterials]);
   const missing = useMemo(
     () => missingBlockingAnswers(response.structuredTask, answers),
     [answers, response.structuredTask],
   );
+  const materialRequests = response.structuredTask.material_requests ?? [];
+  const missingMaterials = materialRequests.filter((request) => (
+    request.required && (selectedMaterials[request.id]?.length ?? 0) === 0
+  ));
+
+  async function pickMaterial(
+    request: NonNullable<ResearchTaskV2['material_requests']>[number],
+    files: File[],
+  ): Promise<void> {
+    if (!onUploadMaterial || files.length === 0) return;
+    const selected = request.multiple ? files : files.slice(0, 1);
+    setUploadingRequestId(request.id);
+    setMaterialErrors((previous) => ({ ...previous, [request.id]: undefined }));
+    try {
+      const uploaded: TaskMaterialResponse[] = [];
+      for (const file of selected) {
+        uploaded.push(await onUploadMaterial(request.id, request.role, file, request.multiple));
+      }
+      setSelectedMaterials((previous) => ({
+        ...previous,
+        [request.id]: request.multiple
+          ? [...(previous[request.id] ?? []), ...uploaded]
+          : uploaded.slice(-1),
+      }));
+    } catch (error) {
+      setMaterialErrors((previous) => ({
+        ...previous,
+        [request.id]: error instanceof Error ? error.message : '图片上传失败',
+      }));
+    } finally {
+      setUploadingRequestId(null);
+    }
+  }
+
   const submission = buildClarificationSubmission(response.structuredTask, answers, assumptionEdits);
   const requiresScenarioSelection = response.planningGuidance?.reasonCode === 'scenario_selection_required';
   const scenarioSelectionMissing = requiresScenarioSelection && selectedScenarioId.length === 0;
@@ -173,6 +250,61 @@ export function CurrentStage1Clarify({
         );
       })}
 
+      {materialRequests.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <b style={{ fontSize: 13 }}>所需材料</b>
+          <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
+            {materialRequests.map((request) => {
+              const selected = selectedMaterials[request.id] ?? [];
+              return (
+                <div key={request.id} style={{ display: 'grid', gap: 6, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                    <span><b>{request.label}</b> · {request.required ? '必需' : '可选'}</span>
+                    <span style={{ color: selected.length > 0 ? 'var(--ok)' : 'var(--text-faint)' }}>
+                      {selected.length > 0 ? '已提供' : '等待上传'}
+                    </span>
+                  </div>
+                  <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{request.reason}</span>
+                  {selected.map((material) => (
+                    <div key={material.materialId} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
+                      <span>{material.fileName}</span>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={disabled || uploadingRequestId === request.id}
+                        onClick={() => setSelectedMaterials((previous) => ({
+                          ...previous,
+                          [request.id]: (previous[request.id] ?? []).filter(({ materialId }) => materialId !== material.materialId),
+                        }))}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  ))}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple={request.multiple}
+                    disabled={disabled || uploadingRequestId === request.id || !onUploadMaterial}
+                    aria-label={request.label}
+                    onChange={(event) => {
+                      void pickMaterial(request, Array.from(event.currentTarget.files ?? []));
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                  {uploadingRequestId === request.id ? (
+                    <span role="status" style={{ color: 'var(--text-dim)', fontSize: 12 }}>上传中…</span>
+                  ) : null}
+                  {materialErrors[request.id] ? (
+                    <span role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}>{materialErrors[request.id]}</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {response.planningGuidance && (
         <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
           <legend style={{ marginBottom: 8, fontSize: 13, fontWeight: 600 }}>本次研究更接近哪个方向？</legend>
@@ -231,15 +363,25 @@ export function CurrentStage1Clarify({
       )}
       <button
         type="button"
-        disabled={disabled || missing.length > 0 || scenarioSelectionMissing}
-        aria-busy={disabled}
+        disabled={disabled || missing.length > 0 || missingMaterials.length > 0 || scenarioSelectionMissing || uploadingRequestId !== null}
+        aria-busy={disabled || uploadingRequestId !== null}
         onClick={() => onSubmit({
           expectedVersion: response.task.stateVersion,
           ...submission,
           ...(selectedScenarioId ? { selectedScenarioId } : {}),
+          ...(materialRequests.length > 0
+            ? {
+                materialBindings: materialRequests.flatMap((request) => {
+                  const selected = selectedMaterials[request.id] ?? [];
+                  return selected.length > 0
+                    ? [{ requestId: request.id, materialIds: selected.map(({ materialId }) => materialId) }]
+                    : [];
+                }),
+              }
+            : {}),
         })}
       >
-        {submitButtonLabel}
+        {missingMaterials.length > 0 ? `请先提供所需材料（还缺 ${missingMaterials.length} 项）` : submitButtonLabel}
       </button>
     </section>
   );

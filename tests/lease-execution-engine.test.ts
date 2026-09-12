@@ -20,6 +20,7 @@ import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/v
 import {
   ExecutionAuthenticityError,
   LeaseExecutionEngine,
+  designAnnotationFindings,
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
@@ -375,6 +376,80 @@ class CountingRealTavilyAdapter implements ToolAdapter {
   }
 }
 
+class JoyspaceViewTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+  readonly body = '已审阅的 Joyspace 行业方法正文。';
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    const contentSha256 = `sha256:${createHash('sha256').update(this.body).digest('hex')}`;
+    const document = {
+      title: 'Industry Method', body: this.body, author: 'Research Team',
+      url: 'https://joyspace.jd.com/pages/industry-method', contentSha256,
+    };
+    return {
+      output: {
+        version: 'joyspace-read-output-v1', operation: 'search', status: 'available',
+        documents: [{
+          title: document.title, url: document.url, author: document.author,
+          updatedAt: '2026-09-03T10:00:00.000+08:00', preview: '行业方法摘要',
+        }],
+        viewedDocument: document,
+        runtime: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+      knowledgeAttachments: [{
+        attachmentId: 'joyspace-document', title: document.title, body: document.body,
+        sourceUrl: document.url, author: document.author, updatedAt: '2026-09-03T10:00:00.000+08:00',
+        contentSha256, sensitivity: 'internal',
+      }],
+      latencyMs: 2,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok', latencyMs: 2,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    };
+  }
+}
+
+class FailingJoyspaceTestAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+  readonly implementationId = 'o2-joyspace-test-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'joyspace.jd.com';
+  }
+
+  async invoke(options: { toolId: string; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    throw new ToolInvocationError(options.toolId, {
+      kind: 'browser_bridge', retryable: false,
+      sanitizedMessage: 'Joyspace Browser Bridge is unavailable',
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(), status: 'failed', latencyMs: 1,
+        runtimeVersions: { o2: '0.0.8', webcli: '1.1.3' },
+      },
+    });
+  }
+}
+
 class MixedSchemeTavilyAdapter extends CountingRealTavilyAdapter {
   override async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const result = await super.invoke(options);
@@ -539,6 +614,36 @@ class CapturingRestAdapter implements ToolAdapter {
   async invoke(options: { input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     this.calls += 1;
     this.inputs.push(structuredClone(options.input));
+    return {
+      output: structuredClone(this.output),
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok',
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+class CapturingVisualSuiteAdapter implements ToolAdapter {
+  readonly adapterType = 'visual_suite' as const;
+  readonly implementationId = 'test-visual-suite-real-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  constructor(private readonly output: object) {}
+
+  endpointHost(): string {
+    return 'visual-suite.test';
+  }
+
+  async invoke(options: { manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
     return {
       output: structuredClone(this.output),
       latencyMs: 1,
@@ -2163,6 +2268,138 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
   const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
   assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
   assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'user_input').length, 0);
+});
+
+test('maps Visual Analysis Suite sample hotspots into finding-bound annotations', () => {
+  const findings = designAnnotationFindings([{
+    stepNo: 4,
+    actorType: 'tool',
+    actorId: 'visual-analysis-suite',
+    kind: 'tool_output',
+    output: {
+      version: 'visual-analysis-suite-v1',
+      status: 'available',
+      samples: [{
+        sampleId: 'sample-1',
+        role: 'primary',
+        sourceImageId: 'material-1',
+        visualReviewBatchId: 'batch-1',
+        aesthetic: { status: 'available', summary: '', findings: [], recommendations: [], warnings: [] },
+        attention: {
+          status: 'available', summary: '首屏注意力集中', warnings: [],
+          hotspots: [{ id: 'hotspot-1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, score: 0.85, reason: '主按钮竞争注意力' }],
+        },
+      }],
+      visualReviewBatches: [], comparisonFindings: [], warnings: [], boundaryNotes: [], toolProvenance: [],
+    },
+  }] as never);
+
+  assert.deepEqual(findings, [{
+    findingId: 'design-attention-4-1-1',
+    label: '主按钮竞争注意力',
+    severity: 'high',
+    x: 0.1,
+    y: 0.2,
+    width: 0.3,
+    height: 0.4,
+  }]);
+});
+
+test('visual-only Design Audit records Visual Suite as core derived Evidence', async () => {
+  const visualStep: CurrentPlanStep = {
+    step_no: 1,
+    step_name: 'visual analysis suite',
+    actor_type: 'tool',
+    actor_id: 'visual-analysis-suite',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: { research_goal: '审计页面视觉层级', designImages: [] },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/samples', description: 'visual samples' }],
+    acceptance_criteria: ['returns normalized visual findings'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [visualStep],
+    {
+      deliverable_type: 'design_audit_report',
+      evidence_requirements: [{
+        id: 'design-audit-report',
+        acceptedClasses: ['screenshot', 'user_input', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts });
+  const adapter = new CapturingVisualSuiteAdapter({
+    version: 'visual-analysis-suite-v1',
+    status: 'available',
+    samples: [{
+      sampleId: 'sample-1', role: 'primary', sourceImageId: 'material-1', visualReviewBatchId: 'batch-1',
+      aesthetic: { status: 'available', summary: '', findings: [], recommendations: [], warnings: [] },
+      attention: {
+        status: 'available', summary: '首屏注意力集中', warnings: [],
+        hotspots: [{ id: 'hotspot-1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, score: 0.85, reason: '主按钮竞争注意力' }],
+      },
+    }],
+    visualReviewBatches: [], comparisonFindings: [], warnings: [], boundaryNotes: [], toolProvenance: [],
+  });
+  let annotatedFindings: Array<{ findingId: string }> = [];
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts,
+    tools: new ToolRouter().register(adapter),
+    llm: new CountingRealLLM(),
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: {
+      async materialize(input) {
+        const original = await visualAssets.ingest({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          activeLease: input.lease,
+          source: {
+            kind: 'user_upload', fileName: 'design-original.png',
+            bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+          },
+          exportPolicy: 'allow',
+        });
+        return [{
+          gateKey: 'designImage', imageIndex: 1,
+          original: {
+            assetId: original.assetArtifact.id,
+            manifestArtifactId: original.manifestArtifact.id,
+            manifestContentSha256: original.manifestArtifact.contentSha256!,
+          },
+        }];
+      },
+      async annotateDesignFindings(input) {
+        annotatedFindings = input.findings.map(({ findingId }) => ({ findingId }));
+      },
+    },
+  });
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(adapter.calls, 1);
+  assert.deepEqual(annotatedFindings, [{ findingId: 'design-attention-1-1-1' }]);
+  assert.ok(result.evidenceManifestArtifactId);
+  const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
+  assert.ok(manifest.value.entries.some((entry) => (
+    entry.id === 'VA1-1'
+    && entry.evidenceClass === 'derived'
+    && entry.toolId === 'visual-analysis-suite'
+    && entry.toolTier === 'core'
+  )));
+  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
 });
 
 test('defers design annotation until verified attention findings are available', async () => {
@@ -4756,6 +4993,100 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(attempts[0]?.state, 'completed');
 });
 
+test('seals Joyspace search-and-view content as an internal Knowledge Snapshot with Evidence and Receipt versions', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    step_no: 2,
+    step_name: '搜索并读取 Joyspace 方法',
+    actor_type: 'tool',
+    actor_id: 'joyspace-read',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+    acceptance_criteria: ['returns a hash-bound Knowledge Snapshot'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const skillStep = structuredClone(planSteps[1]!);
+  skillStep.step_no = 3;
+  skillStep.depends_on = [1, 2];
+  const summaryStep = structuredClone(planSteps[2]!);
+  summaryStep.step_no = 4;
+  summaryStep.depends_on = [3];
+  const reviewStep = structuredClone(planSteps[3]!);
+  reviewStep.step_no = 5;
+  reviewStep.depends_on = [4];
+  const steps = [structuredClone(planSteps[0]!), joyspaceStep, skillStep, summaryStep, reviewStep];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
+      }],
+      capability_decisions: {
+        eligible: [{
+          skill: {
+            id: 'digital-human-competitive-analysis',
+            required_tools: ['tavily-web-search'],
+            optional_tools: ['joyspace-read'],
+          },
+          optional_tool_decisions: [{ tool_id: 'joyspace-read', status: 'available' }],
+        }],
+        rejected: [],
+      },
+      capability_gaps: [],
+    },
+  );
+  const tavily = new CountingRealTavilyAdapter();
+  const joyspace = new JoyspaceViewTestAdapter();
+  const deliverables = new RecordingDeliverablesFake();
+  const llm = new CountingRealLLM();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(tavily).register(joyspace),
+    llm,
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed');
+  assert.equal(joyspace.calls, 1);
+  const artifacts = await repository.listArtifactsForAttempt(lease);
+  const snapshot = artifacts.find(({ kind }) => kind === 'knowledge_snapshot');
+  assert.ok(snapshot?.contentSha256);
+  assert.equal(snapshot.schemaVersion, 'joyspace-knowledge-snapshot-v1');
+  const stored = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<Record<string, unknown>>(snapshot.id);
+  assert.equal(stored.value.body, joyspace.body);
+  assert.equal(stored.value.contentSha256, `sha256:${createHash('sha256').update(joyspace.body).digest('hex')}`);
+
+  const deliverableInput = deliverables.calls[0];
+  assert.ok(deliverableInput);
+  const knowledgeEvidence = deliverableInput.evidenceManifest.value.entries.find(({ id }) => id === 'JV2-1');
+  assert.deepEqual(knowledgeEvidence && {
+    kind: knowledgeEvidence.kind,
+    evidenceClass: knowledgeEvidence.evidenceClass,
+    artifactId: knowledgeEvidence.artifactId,
+    jsonPointer: knowledgeEvidence.jsonPointer,
+    sensitivity: knowledgeEvidence.sensitivity,
+    sourceUrl: knowledgeEvidence.sourceUrl,
+  }, {
+    kind: 'knowledge_excerpt', evidenceClass: 'knowledge', artifactId: snapshot.id,
+    jsonPointer: '/body', sensitivity: 'internal',
+    sourceUrl: 'https://joyspace.jd.com/pages/industry-method',
+  });
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  const provenance = executionSteps.find(({ stepNo }) => stepNo === 2)?.toolProvenance;
+  assert.deepEqual(provenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.deepEqual(provenance?.knowledgeSnapshotArtifactIds, [snapshot.id]);
+  assert.match(JSON.stringify(llm.contexts[0]), /JV2-1/u);
+  assert.match(JSON.stringify(llm.contexts[0]), /已审阅的 Joyspace 行业方法正文/u);
+});
+
 test('executes frozen Knowledge before Skill and emits Knowledge Evidence', async () => {
   const knowledge = loadRuntimeKnowledgeIndex().find(({ id }) => id === 'standard_sampling');
   assert.ok(knowledge && (knowledge.status === 'approved' || knowledge.status === 'draft'));
@@ -4832,6 +5163,54 @@ test('executes frozen Knowledge before Skill and emits Knowledge Evidence', asyn
   const steps = await repository.listExecutionSteps(lease.attemptId);
   assert.equal(steps[0]?.actorType, 'knowledge');
   assert.equal(steps[0]?.skillProvenance?.kind, 'knowledge');
+});
+
+test('executes a degraded legacy single-call Skill through CurrentExecutionPlan v2 without compiled stages', async () => {
+  const invocationId = 'digital-human-competitive-analysis:2';
+  const steps = planSteps.map((step) => ({
+    ...structuredClone(step),
+    ...(step.step_no === 2 ? { skill_invocation_id: invocationId } : {}),
+  }));
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'public-market-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: [{
+        invocation_id: invocationId,
+        skill_id: 'digital-human-competitive-analysis',
+        execution_mode: 'legacy_single_call',
+        step_nos: [2],
+      }],
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'digital-human-competitive-analysis', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: 'compare digital human competitors' },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedSkillLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /research wiki was unavailable/u);
+  const persisted = await repository.listExecutionSteps(lease.attemptId);
+  const skillStep = persisted.find(({ stepNo }) => stepNo === 2);
+  assert.equal(skillStep?.state, 'succeeded');
+  assert.equal(skillStep?.skillProvenance?.status, 'degraded');
 });
 
 test('executes a compiled generate-research-plan invocation stage by stage', async () => {
@@ -4959,7 +5338,9 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
   }
   const gapLoader = new ResourceGapSkillLoader();
   const gapCompiled = compileSkillSteps(original, task, gapLoader);
-  assert.equal(gapCompiled.invocations[0]?.resource_gaps.length, 1);
+  const gapInvocation = gapCompiled.invocations[0];
+  assert.ok(gapInvocation && gapInvocation.execution_mode === 'compiled');
+  assert.equal(gapInvocation.resource_gaps.length, 1);
   const gapExecution = await claimedExecution(
     new Date(Date.now() + 60_000),
     gapCompiled.steps,
@@ -7065,6 +7446,62 @@ test('adds an unresolved Playwright page failure only after the visual publicati
   assert.doesNotMatch(JSON.stringify(browserStep?.toolProvenance?.gapSummary), /other-source\.test|authentication/);
   const browserArtifacts = await repository.listArtifactsForAttempt(lease);
   assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
+});
+
+test('turns a Joyspace Browser Bridge failure into one explicit optional Knowledge gap', async () => {
+  const joyspaceStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '读取 Joyspace 方法',
+    actor_id: 'joyspace-read',
+    input: { operation: 'search', target: '宠物食品行业方法', viewTopResult: true },
+    expected_outputs: [{ pointer: '/documents', description: 'internal knowledge results' }],
+  };
+  const steps = [
+    planSteps[0]!,
+    joyspaceStep,
+    optionalToolOwnerStep(),
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'research-plan', acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1, required: true,
+      }],
+      ...frozenOptionalToolPlan('joyspace-read'),
+    },
+    {
+      task_type: 'user_research_planning', research_goal: 'plan a public study',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [{ id: 'research-plan', statement: 'plan is evidence backed' }],
+    },
+  );
+  const joyspace = new FailingJoyspaceTestAdapter();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(joyspace),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(joyspace.calls, 1);
+  assert.equal(deliverables.calls[0]?.gaps.length, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /Joyspace Browser Bridge is unavailable/u);
+  const execution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(execution?.state, 'skipped');
+  assert.equal(execution?.failure?.kind, 'browser_bridge');
+  assert.equal(execution?.toolProvenance?.toolTier, 'optional');
+  assert.deepEqual(execution?.toolProvenance?.runtimeVersions, { o2: '0.0.8', webcli: '1.1.3' });
+  assert.ok((execution?.toolProvenance?.gapSummary as { keys?: string[] })?.keys?.includes('step:browser_bridge'));
 });
 
 test('continues after an optional Tool failure and completes with a sanitized gap', async () => {

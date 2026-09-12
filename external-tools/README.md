@@ -48,10 +48,16 @@ cp -R /path/to/你的工具项目  external-tools/{tool-name}/
 | virtual-user-lab | :8804 | :5804 | `tools/virtual-user-lab/` | `VIRTUAL_USER_BASE_URL` |
 | vision-brand-lab | :8805 | :5805 | `tools/vision-brand-lab/` | `VISION_BRAND_BASE_URL` |
 
-**一键启动**(源码放进来后先装依赖):
+**按需安装（推荐，避免 5 套依赖同时占用约 1.3 GiB）：**
 
 ```bash
-npm run labs:install     # 遍历 5 个工具目录 npm install
+npm --prefix external-tools/aesthetic-quant-lab install
+```
+
+将目录名替换为当前要运行的实验室。确实需要同时运行全部实验室时再执行：
+
+```bash
+npm run labs:install
 npm run labs:dev         # 并发拉起 5 后端 + 5 前端(Ctrl-C 全退)
 # 只起后端:node scripts/start-labs.mjs --server
 ```

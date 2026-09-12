@@ -68,7 +68,7 @@ jobs:
       - run: pnpm --dir apps/web build
 
   current-real-smoke:
-    name: Current real smoke (five profiles)
+    name: Current real smoke (seven profiles)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     services:
@@ -97,6 +97,8 @@ jobs:
       ALLOW_REAL_PROVIDER: '1'
       LLM_PROVIDER: gateway
       TOOL_ADAPTER: real
+      JOYSPACE_REAL_SMOKE_ENABLED: ${{ vars.JOYSPACE_REAL_SMOKE_ENABLED }}
+      O2_BIN: ${{ vars.O2_BIN }}
       CURRENT_DESIGN_SMOKE_IMAGE_PATH: ${{ github.workspace }}/knowledge-base/assets/playbooks/images/jingxi-img-01.png
     steps:
       - name: Check real smoke secrets
@@ -146,7 +148,7 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm db:seed
-      - name: Run five profiles sequentially
+      - name: Run seven profiles sequentially
         if: steps.secret_gate.outputs.enabled == 'true'
         shell: bash
         env:
@@ -193,3 +195,12 @@ jobs:
             CURRENT_SMOKE_SCENARIO=answer-pet-food-mindshare \
             CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
             pnpm smoke:current:real
+          if [[ "${JOYSPACE_REAL_SMOKE_ENABLED:-}" == "1" && -n "${O2_BIN:-}" && -x "${O2_BIN}" ]]; then
+            CURRENT_REAL_SMOKE_FIXTURE=tests/fixtures/industry-real-smoke.json \
+              CURRENT_SMOKE_PROFILE=industry_market_analysis \
+              CURRENT_SMOKE_SCENARIO=industry-pet-food-public \
+              CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
+              pnpm smoke:current:real
+          else
+            echo "Industry Joyspace real smoke skipped; requires authenticated O2_BIN and JOYSPACE_REAL_SMOKE_ENABLED=1" >> "$GITHUB_STEP_SUMMARY"
+          fi

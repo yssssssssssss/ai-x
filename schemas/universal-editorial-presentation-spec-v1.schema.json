@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "universal-editorial-presentation-spec-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "binding", "profileId", "generationMode", "sections", "requiredBodyUnitIds", "promotedSupportingUnitIds", "requiredAuditUnitIds", "evidenceIds", "notices"],
+  "properties": {
+    "version": { "const": "universal-editorial-presentation-spec-v1" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "planVersionId", "attemptId", "sourceReportPackageId", "sourceReportPackageHash", "materialHash", "sourcePacketHash"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "planVersionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "attemptId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sourceReportPackageId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sourceReportPackageHash": { "$ref": "#/$defs/hash" },
+        "materialHash": { "$ref": "#/$defs/hash" },
+        "sourcePacketHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "profileId": { "const": "universal-editorial-showcase-v1" },
+    "generationMode": { "enum": ["model_intent", "deterministic_showcase"] },
+    "titleUnitId": { "$ref": "#/$defs/unitId" },
+    "sections": {
+      "type": "array", "minItems": 1, "maxItems": 16,
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "requiredBodyUnitIds": { "$ref": "#/$defs/unitIds" },
+    "promotedSupportingUnitIds": { "$ref": "#/$defs/unitIds" },
+    "requiredAuditUnitIds": { "$ref": "#/$defs/unitIds" },
+    "evidenceIds": { "$ref": "#/$defs/ids" },
+    "notices": {
+      "type": "array", "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "unitId": { "type": "string", "pattern": "^emu_[a-f0-9]{64}$" },
+    "unitIds": {
+      "type": "array", "maxItems": 1000, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/unitId" }
+    },
+    "ids": {
+      "type": "array", "maxItems": 1000, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    },
+    "kind": {
+      "enum": ["editorial-hero", "evidence-boundary", "answer-chain", "metric-cards", "record-grid", "record-table", "deliverable-map", "dimension-table", "method-board", "matrix", "stage-flow", "relation-map", "priority-lanes", "validation-list", "risk-register", "narrative-list", "source-register", "analysis-appendix"]
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "ownedUnitIds", "sourceUnitIds", "sourceGroupIds", "sourceRelationIds", "evidenceIds", "content"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "ownedUnitIds": { "$ref": "#/$defs/unitIds" },
+        "sourceUnitIds": { "$ref": "#/$defs/unitIds" },
+        "sourceGroupIds": { "$ref": "#/$defs/ids" },
+        "sourceRelationIds": { "$ref": "#/$defs/ids" },
+        "evidenceIds": { "$ref": "#/$defs/ids" },
+        "status": { "enum": ["fact", "inference", "unknown"] },
+        "content": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "title", "components"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "role": { "enum": ["decision", "evidence", "analysis", "strategy", "execution", "validation", "risk", "appendix"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "lead": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "components": {
+          "type": "array", "minItems": 1, "maxItems": 64,
+          "items": { "$ref": "#/$defs/component" }
+        }
+      }
+    }
+  }
+}

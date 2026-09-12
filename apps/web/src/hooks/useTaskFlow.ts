@@ -12,9 +12,12 @@ import {
   type CurrentTaskReadResponse,
   type CurrentPlanCandidate,
   type ExecLogRow,
+  type OrchestrationModeV1,
   type PlanProgress,
   type PlanResponse,
+  type TaskMaterialResponse,
   type Upload,
+  type DatasetUpload,
 } from '../api/client.ts';
 import {
   approvalSubmissionAllowed,
@@ -99,6 +102,7 @@ function planView(
         : {}),
     },
     pendingUploads: candidate.pendingInputs,
+    ...(candidate.providedMaterials ? { providedMaterials: candidate.providedMaterials } : {}),
   };
 }
 
@@ -132,6 +136,7 @@ function upsertPlanningProgress(
 
 export function useTaskFlow() {
   const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
+  const [taskMaterials, setTaskMaterials] = useState<TaskMaterialResponse[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [candidatesResp, setCandidatesResp] = useState<ControlPlanCandidatesResponse | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<CurrentPlanCandidate | null>(null);
@@ -139,6 +144,7 @@ export function useTaskFlow() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [stateVersion, setStateVersion] = useState<number | null>(null);
   const [originalInput, setOriginalInput] = useState('');
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationModeV1 | null>(null);
   const [exec, setExec] = useState<ControlExecutionResult | null>(null);
   const [executionSteps, setExecutionSteps] = useState<ExecLogRow[]>([]);
   const [executionPlanSteps, setExecutionPlanSteps] = useState<ExecutionPlanStepView[]>([]);
@@ -186,8 +192,15 @@ export function useTaskFlow() {
     const restoredSteps = executionStepsToExecLog(current.executionSteps);
     const selected = hydrated.selectedCandidate;
     setOriginalInput(hydrated.originalInput);
+    setOrchestrationMode(
+      current.task.orchestrationMode
+      ?? (selected && 'capability_demand_graph' in selected.plan
+        ? 'multi_skill'
+        : 'single_skill'),
+    );
     setStateVersion(hydrated.stateVersion);
     setClarification(hydrated.clarification as ClarificationRequiredResponse | null);
+    setTaskMaterials(current.taskMaterials ?? []);
     setCandidatesResp(hydrated.candidatesResp);
     setSelectedCandidate(selected);
     setPlan(selected && hydrated.candidatesResp ? planView(hydrated.candidatesResp, selected) : null);
@@ -302,12 +315,14 @@ export function useTaskFlow() {
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('idle');
     setClarification(null);
+    setTaskMaterials([]);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput('');
+    setOrchestrationMode(null);
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
@@ -322,19 +337,24 @@ export function useTaskFlow() {
     setCancelSubmitting(false);
   }
 
-  async function submitInput(text: string) {
+  async function submitInput(
+    text: string,
+    orchestrationMode: OrchestrationModeV1 = 'single_skill',
+  ) {
     restoreGeneration.current += 1;
     clarificationSubmission.current = createClarificationSubmissionState();
     setClarificationSubmitting(false);
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('planning');
     setClarification(null);
+    setTaskMaterials([]);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput(text);
+    setOrchestrationMode(orchestrationMode);
     setCancelSubmitting(false);
     setExec(null);
     setExecutionSteps([]);
@@ -348,7 +368,7 @@ export function useTaskFlow() {
     setPlanRecovery(null);
     try {
       const response = await api.planControlStream(
-        { originalInput: text },
+        { originalInput: text, orchestrationMode },
         {
           onProgress: (event) => {
             setProgress((previous) => upsertPlanningProgress(previous, event));
@@ -360,6 +380,7 @@ export function useTaskFlow() {
       setStateVersion(response.task.stateVersion);
       if (response.status === 'clarification_required') {
         setClarification(response);
+        setTaskMaterials(response.taskMaterials ?? []);
         setCandidatesResp(null);
         setPhase('clarifying');
       } else {
@@ -370,6 +391,27 @@ export function useTaskFlow() {
       setError(message(cause, '规划失败'));
       setPhase('error');
     }
+  }
+
+  async function uploadTaskMaterial(
+    requestId: string,
+    role: string,
+    file: File,
+    multiple: boolean,
+  ): Promise<TaskMaterialResponse> {
+    if (!clarification) throw new Error('当前没有待补材料的任务');
+    const uploaded = await api.uploadTaskVisualMaterial(
+      clarification.task.id,
+      requestId,
+      role,
+      file,
+      createRequestId(),
+    );
+    setTaskMaterials((previous) => [
+      ...(multiple ? previous : previous.filter((item) => item.requestId !== requestId)),
+      uploaded,
+    ]);
+    return uploaded;
   }
 
   async function submitClarification(input: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) {
@@ -407,6 +449,7 @@ export function useTaskFlow() {
       setStateVersion(response.task.stateVersion);
       if (response.status === 'clarification_required') {
         setClarification(response);
+        setTaskMaterials(response.taskMaterials ?? taskMaterials);
         setPhase('clarifying');
       } else {
         setClarification(null);
@@ -506,6 +549,7 @@ export function useTaskFlow() {
     userAnswers: Record<string, unknown>,
     pendingValues: Record<string, unknown> = {},
     uploads: Upload[] = [],
+    datasetUploads: DatasetUpload[] = [],
   ) {
     if (!candidatesResp || !selectedCandidate || stateVersion == null) return;
     if (planRecovery) {
@@ -538,6 +582,19 @@ export function useTaskFlow() {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
         if (pendingInput?.kind !== 'visual') continue;
         inputValues[role] = pendingInput.multiple ? values : values[0];
+      }
+      for (const upload of datasetUploads) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === upload.role);
+        if (pendingInput?.kind !== 'dataset') continue;
+        const uploaded = await api.uploadControlDataset(
+          candidatesResp.task.id,
+          selectedCandidate.planVersionId,
+          upload.role,
+          upload.file,
+          upload.metadata,
+          createRequestId(),
+        );
+        inputValues[upload.role] = uploaded.datasetInputId;
       }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,
@@ -662,6 +719,8 @@ export function useTaskFlow() {
   return {
     phase,
     clarification,
+    taskMaterials,
+    uploadTaskMaterial,
     submitClarification,
     clarificationSubmitting,
     candidatesResp,
@@ -671,6 +730,7 @@ export function useTaskFlow() {
     stateVersion,
     planVersionId: selectedCandidate?.planVersionId ?? null,
     originalInput,
+    orchestrationMode,
     exec,
     executionSteps,
     executionPlanSteps,

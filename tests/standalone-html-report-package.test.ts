@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { strFromU8, unzipSync } from 'fflate';
 import type { ControlArtifact } from '../database/control-plane.ts';
-import { REPORT_REVIEW_V2_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
+import {
+  INDUSTRY_REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ReportDocumentV3, ReportDocumentV4 } from '../packages/api-contract/report-document.ts';
 import type { ReportPackageV2 } from '../packages/api-contract/report-package.ts';
 import { EvidenceService } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
@@ -22,6 +25,7 @@ import {
   reportDocumentV3Trace,
 } from './fixtures/report-document-v3.ts';
 import { reportDocumentV4Fixture } from './fixtures/report-document-v4.ts';
+import { validIndustryMarketPayload } from './fixtures/industry-market.ts';
 import {
   researchStrategyCoverageV2,
   researchStrategyFindingGraphV2,
@@ -274,6 +278,44 @@ function bundleInput() {
     reportPackageArtifactId: 'package-1',
   };
 }
+
+test('exports Industry Deliverable and final report-review-v3 sidecars', async () => {
+  const fixture = setup();
+  const deliverable = fixture.artifacts.entries.get('deliverable-1')!.value as Record<string, unknown>;
+  deliverable.deliverableType = 'industry_market_analysis_report';
+  deliverable.payload = JSON.parse(
+    JSON.stringify(validIndustryMarketPayload()).replaceAll('E1-1', 'E1'),
+  );
+  const reviewEntry = fixture.artifacts.entries.get('review-1')!;
+  reviewEntry.artifact = {
+    ...reviewEntry.artifact,
+    schemaVersion: 'report-review-v3',
+  };
+  reviewEntry.value = {
+    version: 'report-review-v3',
+    taskId: TASK_ID,
+    planVersionId: PLAN_ID,
+    attemptId: ATTEMPT_ID,
+    deliverableArtifactId: 'deliverable-1',
+    verdict: 'pass',
+    dimensions: INDUSTRY_REPORT_REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+    revisionRound: 0,
+  };
+
+  const entries = unzipSync(await fixture.service.create(bundleInput()));
+  assert.ok(entries['deliverable.json']);
+  assert.ok(entries['report-review.json']);
+  assert.equal(
+    (JSON.parse(strFromU8(entries['deliverable.json']!)) as Record<string, unknown>).deliverableType,
+    'industry_market_analysis_report',
+  );
+  assert.equal(
+    (JSON.parse(strFromU8(entries['report-review.json']!)) as Record<string, unknown>).version,
+    'report-review-v3',
+  );
+  const manifest = JSON.parse(strFromU8(entries['render-manifest.json']!)) as { outputNotices: unknown[] };
+  assert.deepEqual(manifest.outputNotices, []);
+});
 
 test('builds a deterministic offline HTML Bundle from verified v2 package components', async () => {
   const first = setup();

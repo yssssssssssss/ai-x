@@ -263,6 +263,60 @@ test('preserves explicitly plural visual input cardinality', () => {
   }]);
 });
 
+test('preserves a single-file dataset PendingInput kind', () => {
+  const resolution = resolveCapabilities(input({
+    available_input_roles: ['research_goal'],
+    skills: [skill({
+      inputs: ['research_goal', 'user_research_dataset'],
+      dataset_inputs: ['user_research_dataset'],
+    })],
+  }));
+
+  assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'dataset',
+    role: 'user_research_dataset',
+    label: 'user_research_dataset',
+    multiple: false,
+    capability_id: 'competitive-web-research',
+  }]);
+});
+
+test('Industry material declarations create pending inputs only for available optional roles', () => {
+  const resolution = resolveCapabilities(input({
+    task: {
+      ...task,
+      task_type: 'industry_market_analysis',
+      expected_deliverables: ['industry_market_analysis_report'],
+      industry_scope: {
+        category: '宠物食品', subcategories: [], exclusions: [], analysis_depth: 'medium',
+        primary_focus: '用户洞察', secondary_focuses: [], decision_audience: ['产品团队'],
+        decision_goal: '形成用户策略', time_window: '最近十二个月',
+      },
+      available_material_roles: ['user_research_dataset'],
+      unavailable_material_roles: ['internal_metrics_dataset'],
+    },
+    skills: [skill({
+      id: 'industry-market-analysis',
+      task_types: ['industry_market_analysis'],
+      inputs: ['research_goal'],
+      dataset_inputs: ['user_research_dataset', 'internal_metrics_dataset'],
+      composition: {
+        modes: ['standalone'],
+        supported_outcomes: ['answer'],
+        compatible_deliverables: ['industry_market_analysis_report'],
+        required_input_roles: ['research_goal'],
+        optional_input_roles: ['user_research_dataset', 'internal_metrics_dataset'],
+        standalone_reason: 'single Skill release',
+      },
+    })],
+  }));
+
+  assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'dataset', role: 'user_research_dataset', label: 'user_research_dataset',
+    multiple: false, capability_id: 'industry-market-analysis',
+  }]);
+});
+
 test('rejects high-risk skills when no matching approval capability exists', () => {
   const denied = resolveCapabilities(input({
     skills: [skill({ risk_level: 'high' })],

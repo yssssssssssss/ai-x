@@ -13,7 +13,8 @@ export class ReviewerActorRunner implements ActorRunner {
     const gen = await this.llm.generateText({
       prompt:
         `你是质量复核者:「${step.step_name}」。审查已有执行结果的来源标注是否完整、` +
-        `有无把推断当事实、数据缺口是否说明。产出复核意见,不改写前序结论。`,
+        `有无把推断当事实、数据缺口是否说明，以及面向用户的内容是否使用与 research_goal 相同的主要语言。` +
+        `中文研究目标应使用简体中文，专有名词、标准缩写和来源原文除外。产出复核意见,不改写前序结论。`,
       context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
       receipt: {
         stage: 'reviewer',

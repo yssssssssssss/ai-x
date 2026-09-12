@@ -1015,6 +1015,16 @@
     "unresolved_items": []
   },
   {
+    "skill_id": "industry-market-analysis",
+    "kb_mode": "not_applicable",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": []
+  },
+  {
     "skill_id": "structure-interview-transcript",
     "kb_mode": "required",
     "required_sources": [

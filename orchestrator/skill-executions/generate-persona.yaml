@@ -65,9 +65,10 @@ stages:
     actor_id: generate-persona
     depends_on: [load-persona-methods, collect-public-evidence]
     input:
-      instruction: Produce one evidence-bound Persona Research Contribution. Treat public evidence as provisional context, never invent user observations or quotations, and disclose missing primary user evidence.
+      instruction: Produce one evidence-bound Persona Research Contribution. Treat public evidence as provisional context, never invent user observations or quotations, and disclose missing primary user evidence. When user_research_dataset is present, derive segments only from its rows and preserve Dataset Evidence IDs.
       knowledge: null
       public_evidence: null
+      user_research_dataset: null
     input_bindings:
       - target_pointer: /knowledge
         source_stage_id: load-persona-methods

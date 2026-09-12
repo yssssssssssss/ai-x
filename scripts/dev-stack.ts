@@ -85,12 +85,12 @@ export const DEFAULT_CONFIG: DevStackConfig = {
   services: [
     {
       name: 'api', command: 'pnpm', args: ['api:dev'], cwd: root,
-      port: 3001, marker: 'api:dev', healthUrl: 'http://127.0.0.1:3001/api/healthz',
+      port: 3010, marker: 'api:dev', healthUrl: 'http://127.0.0.1:3010/api/healthz',
       readyPattern: 'agent-api listening',
     },
     {
       name: 'web', command: 'pnpm', args: ['--dir', 'apps/web', 'dev', '--host', '127.0.0.1'], cwd: root,
-      port: 5173, marker: 'apps/web', healthUrl: 'http://127.0.0.1:5173', readyPattern: 'Local:',
+      port: 5180, marker: 'apps/web', healthUrl: 'http://127.0.0.1:5180', readyPattern: 'Local:',
     },
   ],
   readinessTimeoutMs: 30_000,
