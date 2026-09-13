@@ -1119,6 +1119,122 @@ test('confirms a Plan with an inherited Task-bound image without copying image b
   }
 });
 
+test('confirmation seals explicit cross-request image pairs into both visual gate manifests', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-material-pairs-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository, undefined, undefined, undefined, new VisualInputGateStore(artifacts),
+    );
+    const structuredTask = currentTask({
+      task_type: 'competitive_research',
+      research_goal: '逐项对比两组界面截图',
+      expected_deliverables: ['competitive_analysis_report'],
+      material_requests: [{
+        id: 'primary-images', role: 'primaryScreens', kind: 'visual', label: '我方截图',
+        required: true, multiple: true, reason: '用于逐项对比',
+      }, {
+        id: 'comparison-images', role: 'comparisonScreens', kind: 'visual', label: '竞品截图',
+        required: true, multiple: true, reason: '用于逐项对比',
+      }],
+    });
+    const task = await repository.createTask({
+      conversationId, ownerUserId: ownerId, originalInput: structuredTask.research_goal,
+      taskType: null, structuredTask, state: 'awaiting_clarification', orchestrationMode: 'single_skill',
+    });
+    const imageIds: string[] = [];
+    for (const [index, request] of structuredTask.material_requests!.entries()) {
+      const image = await artifacts.writeBinary({
+        taskId: task.id,
+        kind: 'visual_input_image',
+        relativePath: `${request.role}.png`,
+        schemaVersion: 'visual-input-image-v1',
+        bytes: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          'base64',
+        ),
+        metadata: { requestId: request.id, role: request.role, fileName: `${request.role}.png`, ownerUserId: ownerId },
+      });
+      imageIds[index] = image.id;
+    }
+    const activated = await repository.createAndActivateRequirementVersion({
+      taskId: task.id,
+      ownerUserId: ownerId,
+      expectedVersion: task.stateVersion,
+      rawInputHash: 'sha256:paired-task-material-requirement',
+      clarification: {
+        materialBindings: [
+          { requestId: 'primary-images', materialIds: [imageIds[0]!] },
+          { requestId: 'comparison-images', materialIds: [imageIds[1]!] },
+        ],
+        materialComparison: {
+          mode: 'paired',
+          primaryRequestId: 'primary-images',
+          comparisonRequestId: 'comparison-images',
+          pairs: [{ label: '首屏', primaryMaterialId: imageIds[0]!, comparisonMaterialId: imageIds[1]! }],
+        },
+      },
+      structuredTask,
+    });
+    const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+    const candidate = (id: 'speed' | 'depth') => ({
+      candidateId: id,
+      plan: {
+        ...currentPlan('', `${id} paired material`, [currentStep({
+          input: { primaryScreens: null, comparisonScreens: null },
+        })]),
+        deliverable_type: 'competitive_analysis_report' as const,
+      },
+      pendingInputs: [{
+        kind: 'visual' as const, role: 'primaryScreens', label: '我方截图', multiple: true,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'primaryScreens', multiple: true }],
+      }, {
+        kind: 'visual' as const, role: 'comparisonScreens', label: '竞品截图', multiple: true,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'comparisonScreens', multiple: true }],
+      }],
+    });
+    const created = await candidateRepository.persistExistingTaskWithCandidates!({
+      taskId: task.id, conversationId, ownerUserId: ownerId,
+      expectedStateVersion: activated.task.stateVersion,
+      taskType: 'competitive_research', structuredTask,
+      candidates: [candidate('speed'), candidate('depth')],
+    });
+    const selection = await workflow.select({
+      taskId: task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'paired-material-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find(({ candidateId }) => candidateId === 'speed')!.id,
+    });
+
+    await workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'paired-material-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+
+    const gates = await repository.listGateRecords(task.id, selection.planVersionId);
+    const pairings = await Promise.all(gates.map(async (gate) => {
+      const manifest = await artifacts.readVerifiedBoundJson<{
+        gateKey: string;
+        images: Array<{ comparisonPair?: unknown }>;
+      }>(gate.evidenceRef!);
+      return [manifest.value.gateKey, manifest.value.images[0]?.comparisonPair] as const;
+    }));
+    assert.deepEqual(Object.fromEntries(pairings), {
+      primaryScreens: { pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1 },
+      comparisonScreens: { pairId: 'PAIR-001', label: '首屏', side: 'comparison', sequence: 1 },
+    });
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
 test('binds one uploaded Dataset by Artifact reference without creating a visual publication', async () => {
   const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-dataset-input-'));
   try {

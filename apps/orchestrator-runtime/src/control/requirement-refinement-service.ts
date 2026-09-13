@@ -10,6 +10,7 @@ import type {
   OrchestrationModeV1,
   PlanningGuidanceClarification,
   TaskMaterialBinding,
+  TaskMaterialComparison,
   VerifiedTaskMaterial,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
@@ -19,6 +20,7 @@ import type {
   TaskMaterialRequest,
 } from '../../../../packages/api-contract/plan.ts';
 import { canonicalizeGeneratedExpectedDeliverables } from '../report/deliverable-registry.ts';
+import { storedTaskMaterialComparison } from './task-material-comparison.ts';
 import {
   isPlanningGuidanceClarification,
   type CurrentResearchPlanningOutcome,
@@ -129,6 +131,7 @@ export interface ClarifyInput {
   ownerUserId: string;
   answers: Record<string, unknown>;
   materialBindings?: TaskMaterialBinding[];
+  materialComparison?: TaskMaterialComparison;
   materials?: VerifiedTaskMaterial[];
   selectedScenarioId?: string;
   expectedVersion?: number;
@@ -145,6 +148,7 @@ export type RequirementRefinementResult =
     taskId: string;
     requirement: ResearchTaskV2;
     planningGuidance?: PlanningGuidanceClarification;
+    materialComparison?: TaskMaterialComparison;
     activatedNodes?: string[];
   }
   | {
@@ -187,7 +191,7 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；设计走查、设计审计、页面体验分析、视觉分析或基于截图判断问题时，使用独立的 material_requests 声明图片需求，不得把上传要求伪装成 clarification_questions；Design Audit 默认声明 role=designImage、kind=visual、required=true、multiple=false；完整的行业、市场、赛道或品类分析使用 task_type=industry_market_analysis，并填写 industry_scope、available_material_roles、unavailable_material_roles；Industry 的资料角色只能使用 jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset 这五个机器 ID，不得写自然语言名称；行业任务应确认品类/子类、排除范围、轻中重档、主次聚焦、决策读者、决策目标、时间窗口和可提供资料；只做单项竞品对比时仍使用 competitive_research；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；设计走查、设计审计、页面体验分析、视觉分析或基于截图判断问题时，使用独立的 material_requests 声明图片需求，不得把上传要求伪装成 clarification_questions；Design Audit 默认声明 role=designImage、kind=visual、required=true、multiple=false；京东与竞品的多图界面对比必须分别声明 role=jdDesignImage 与 role=competitorDesignImage，均为 kind=visual、multiple=true；完整的行业、市场、赛道或品类分析使用 task_type=industry_market_analysis，并填写 industry_scope、available_material_roles、unavailable_material_roles；Industry 的资料角色只能使用 jd_screenshots、competitor_screenshots、competitor_platform_names、user_research_dataset、internal_metrics_dataset 这五个机器 ID，不得写自然语言名称；行业任务应确认品类/子类、排除范围、轻中重档、主次聚焦、决策读者、决策目标、时间窗口和可提供资料；只做单项竞品对比时仍使用 competitive_research；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
 const CLARIFICATION_RESOLUTION_PROMPT = `context.clarification 包含用户此前各轮的累计显式回答；必须把这些回答视为权威约束并完整保留，不得重复已回答的问题或换 key 重问同一事项。仅当回答本身仍不明确，或引入新的权限、隐私、合规、安全、外部发布或不可逆操作阻塞时，才能继续生成 clarification_questions；其他不确定性写入 assumptions 或 non-blocking ambiguities。`;
 
 const PLAN_OUTCOME_SIGNALS = [
@@ -615,11 +619,19 @@ function normalizeClarificationGuidance(requirement: ResearchTaskV2): ResearchTa
 }
 
 function normalizeTaskMaterialRequests(requirement: ResearchTaskV2): ResearchTaskV2 {
+  const requests = requirement.material_requests ?? [];
+  const requestIds = requests.map(({ id }) => id);
+  const requestRoles = requests.map(({ role }) => role);
+  if (new Set(requestIds).size !== requestIds.length) {
+    throw new Error('material request ids must be unique');
+  }
+  if (new Set(requestRoles).size !== requestRoles.length) {
+    throw new Error('material request roles must be unique');
+  }
   if (
     requirement.task_type !== 'design_audit'
     || !requirement.expected_deliverables.includes('design_audit_report')
   ) return requirement;
-  const requests = requirement.material_requests ?? [];
   const designRequest = requests.find(({ role, kind }) => role === 'designImage' && kind === 'visual');
   const materialRequests = designRequest
     ? requests.map((request) => request === designRequest
@@ -649,7 +661,7 @@ function normalizeTaskMaterialRequests(requirement: ResearchTaskV2): ResearchTas
     ambiguities: requirement.ambiguities.filter(({ id }) => !materialQuestionIds.has(id)),
     blocking_issues: requirement.blocking_issues.filter(({ key, kind, reason }) => (
       !(
-        (kind === 'missing_required_material' || kind === 'missing_material')
+        (kind === 'missing_required_material' || kind === 'missing_material' || kind === 'material')
         && visualMaterialSignal.test(`${key} ${reason}`)
       )
     )),
@@ -743,30 +755,21 @@ function withoutScenarioSelection(value: unknown): unknown {
   return rest;
 }
 
-function materialBindingsFor(materials: readonly VerifiedTaskMaterial[] | undefined): TaskMaterialBinding[] {
-  if (!materials || materials.length === 0) return [];
-  const byRequest = new Map<string, string[]>();
-  for (const material of materials) {
-    const current = byRequest.get(material.requestId) ?? [];
-    current.push(material.materialId);
-    byRequest.set(material.requestId, current);
-  }
-  return [...byRequest].map(([requestId, materialIds]) => ({ requestId, materialIds }));
-}
-
 function storedScenarioSelection(
   planningGuidance: PlanningGuidanceClarification,
   selectedScenarioId: ScenarioId,
   answers?: Record<string, unknown>,
   materialBindings?: readonly TaskMaterialBinding[],
+  materialComparison?: TaskMaterialComparison,
 ): Record<string, unknown> {
   return {
     planningGuidance,
     selectedScenarioId,
     ...(answers ? { answers } : {}),
-    ...(materialBindings && materialBindings.length > 0
+    ...(materialBindings !== undefined
       ? { materialBindings: structuredClone(materialBindings) }
       : {}),
+    ...(materialComparison ? { materialComparison: structuredClone(materialComparison) } : {}),
   };
 }
 
@@ -835,6 +838,10 @@ export class RequirementRefinementService {
       && active.taskId === task.id
       && sameStoredValue(active.structuredTask, task.structuredTask);
     const activePlanningGuidance = planningGuidanceFromStored(active.clarification);
+    const effectiveMaterialComparison = input.materialComparison
+      ?? (input.materialBindings === undefined
+        ? storedTaskMaterialComparison(active.clarification)
+        : undefined);
     if (activePlanningGuidance) {
       if (!input.selectedScenarioId) {
         throw new InvalidScenarioSelectionError('请选择一个研究方向');
@@ -861,6 +868,7 @@ export class RequirementRefinementService {
         selectedScenarioId,
         input.answers,
         input.materialBindings,
+        effectiveMaterialComparison,
       );
       if (
         expectedVersion !== undefined
@@ -868,6 +876,7 @@ export class RequirementRefinementService {
         && matchesActiveRequirement
         && activeSelectedScenarioId === selectedScenarioId
         && unchanged
+        && sameStoredValue(active.clarification, storedSelection)
       ) {
         return this.finishRefinement({
           taskId: input.taskId,
@@ -962,11 +971,19 @@ export class RequirementRefinementService {
       && !Array.isArray(active.clarification)
       ? active.clarification as Record<string, unknown>
       : {};
-    const clarificationAnswers = { ...priorRecord, ...input.answers };
+    const {
+      materialBindings: _priorMaterialBindings,
+      materialComparison: _priorMaterialComparison,
+      ...priorAnswers
+    } = priorRecord;
+    const clarificationAnswers = { ...priorAnswers, ...input.answers };
     const persistedClarification = {
       ...clarificationAnswers,
-      ...(input.materialBindings && input.materialBindings.length > 0
+      ...(input.materialBindings !== undefined
         ? { materialBindings: structuredClone(input.materialBindings) }
+        : {}),
+      ...(input.materialComparison
+        ? { materialComparison: structuredClone(input.materialComparison) }
         : {}),
     };
     const unchangedClarification = hasNoClarificationChanges(
@@ -980,11 +997,11 @@ export class RequirementRefinementService {
       && !needsClarification(active.structuredTask, input.materials)
       && unchangedClarification
     ) {
-      const materialBindingsChanged = Boolean(
-        input.materialBindings?.length
+      const materialConfigurationChanged = Boolean(
+        (input.materialBindings !== undefined || input.materialComparison !== undefined)
         && !sameStoredValue(active.clarification, persistedClarification),
       );
-      if (materialBindingsChanged) {
+      if (materialConfigurationChanged) {
         const activated = await this.dependencies.repository.createAndActivateRequirementVersion({
           taskId: input.taskId,
           ownerUserId: input.ownerUserId,
@@ -1075,6 +1092,17 @@ export class RequirementRefinementService {
     clarificationRecovery?: ClarificationRecoveryContext;
     materials?: readonly VerifiedTaskMaterial[];
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
+    const activeRequirement = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
+    const activeClarification = activeRequirement?.clarification
+      && typeof activeRequirement.clarification === 'object'
+      && !Array.isArray(activeRequirement.clarification)
+      ? activeRequirement.clarification as Record<string, unknown>
+      : null;
+    const storedMaterialBindings = activeClarification
+      && Array.isArray(activeClarification.materialBindings)
+      ? activeClarification.materialBindings as TaskMaterialBinding[]
+      : undefined;
+    const materialComparison = storedTaskMaterialComparison(activeRequirement?.clarification);
     const status = needsClarification(input.requirement, input.materials)
       ? 'clarification_required'
       : 'ready_to_plan';
@@ -1085,7 +1113,12 @@ export class RequirementRefinementService {
         content: JSON.stringify({ status, requirement: input.requirement }),
         idempotencyKey: `requirement:${input.requirementVersionId}:assistant`,
       });
-      return { status, taskId: input.taskId, requirement: input.requirement };
+      return {
+        status,
+        taskId: input.taskId,
+        requirement: input.requirement,
+        ...(materialComparison ? { materialComparison } : {}),
+      };
     }
     const planningOutcome = this.dependencies.planner
       ? await this.dependencies.planner.plan({
@@ -1106,9 +1139,10 @@ export class RequirementRefinementService {
         rawInputHash: input.rawInputHash,
         clarification: {
           planningGuidance: planningOutcome.planningGuidance,
-          ...(materialBindingsFor(input.materials).length > 0
-            ? { materialBindings: materialBindingsFor(input.materials) }
+          ...(storedMaterialBindings !== undefined
+            ? { materialBindings: structuredClone(storedMaterialBindings) }
             : {}),
+          ...(materialComparison ? { materialComparison } : {}),
         },
         structuredTask: input.requirement,
         modelCallId: null,
@@ -1128,6 +1162,7 @@ export class RequirementRefinementService {
         taskId: input.taskId,
         requirement: input.requirement,
         planningGuidance: planningOutcome.planningGuidance,
+        ...(materialComparison ? { materialComparison } : {}),
         activatedNodes: planningOutcome.activatedNodes,
       };
     }
@@ -1206,7 +1241,9 @@ export class RequirementRefinementService {
         const normalized = normalizeTaskMaterialRequests(
           canonicalizeGeneratedExpectedDeliverables(requirement),
         );
-        canonicalRequirement = input.materialRequests && normalized.task_type === 'design_audit'
+        // Material Requests are task-scoped identities. Once emitted, later
+        // clarification revisions must not rewrite their role or cardinality.
+        canonicalRequirement = input.materialRequests
           ? {
               ...normalized,
               material_requests: input.materialRequests.map((request) => ({ ...request })),

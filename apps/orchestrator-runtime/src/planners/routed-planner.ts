@@ -525,6 +525,68 @@ function freezeCompetitiveScoringWeightEnvelope(input: {
   };
 }
 
+export function seedProvidedMaterialSlots(input: {
+  candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>;
+  providedMaterialRoles: readonly string[];
+  capabilityResolution: CapabilityResolution;
+}): Omit<CurrentPlanCandidateProposal, 'activated_nodes'> {
+  const candidate = structuredClone(input.candidate);
+  const providedRoles = new Set(input.providedMaterialRoles);
+  const decisions = new Map(
+    input.capabilityResolution.eligible.map((decision) => [decision.skill.id, decision]),
+  );
+  const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+  for (const skillStep of candidate.steps.filter(({ actor_type }) => actor_type === 'skill')) {
+    const decision = decisions.get(skillStep.actor_id);
+    if (!decision) continue;
+    const pendingVisuals = decision.pending_inputs.filter(({ kind, role }) => (
+      kind === 'visual' && providedRoles.has(role)
+    ));
+    for (const pending of pendingVisuals) {
+      if (!Object.hasOwn(skillStep.input, pending.role)) {
+        skillStep.input[pending.role] = pending.multiple ? [] : null;
+      }
+      for (const toolStep of candidate.steps) {
+        if (
+          toolStep.actor_type !== 'tool'
+          || toolStep.step_no >= skillStep.step_no
+          || !decision.skill.required_tools.includes(toolStep.actor_id)
+        ) continue;
+        const tool = toolsById.get(toolStep.actor_id);
+        if (!tool) continue;
+        const manifest = loadToolManifest(tool.path);
+        for (const imageField of manifest.image_input_fields ?? []) {
+          if ((imageField.role ?? imageField.field) !== pending.role) continue;
+          if (!Object.hasOwn(toolStep.input, imageField.field)) {
+            toolStep.input[imageField.field] = imageField.multiple ? [] : null;
+          }
+        }
+      }
+    }
+  }
+  return candidate;
+}
+
+export function providedMaterialCoverageIssues(input: {
+  candidate: Pick<CurrentPlanCandidateProposal, 'id' | 'steps'>;
+  providedMaterialRoles: readonly string[];
+  capabilityResolution: CapabilityResolution;
+}): string[] {
+  if (input.providedMaterialRoles.length === 0) return [];
+  const decisions = new Map(
+    input.capabilityResolution.eligible.map((decision) => [decision.skill.id, decision]),
+  );
+  const consumedRoles = new Set(input.candidate.steps.flatMap((step) => {
+    if (step.actor_type !== 'skill') return [];
+    return decisions.get(step.actor_id)?.pending_inputs
+      .filter(({ kind }) => kind === 'visual')
+      .map(({ role }) => role) ?? [];
+  }));
+  return [...new Set(input.providedMaterialRoles)]
+    .filter((role) => !consumedRoles.has(role))
+    .map((role) => `${input.candidate.id}: provided_material_unconsumed: ${role}`);
+}
+
 function routedCandidateValidationFeedback(input: {
   candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
   profileSpecs: readonly ResolvedProfileSpec[];
@@ -533,6 +595,7 @@ function routedCandidateValidationFeedback(input: {
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
+  providedMaterialRoles: readonly string[];
   portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
   capabilityDemandGraph?: CapabilityDemandGraphV1;
   deliverableId: string;
@@ -543,6 +606,11 @@ function routedCandidateValidationFeedback(input: {
   const issues: string[] = [];
   const profileById = new Map(input.profileSpecs.map((profile) => [profile.id, profile]));
   for (const candidate of input.candidates) {
+    issues.push(...providedMaterialCoverageIssues({
+      candidate,
+      providedMaterialRoles: input.providedMaterialRoles,
+      capabilityResolution: input.capabilityResolution,
+    }));
     const profile = profileById.get(candidate.id);
     if (!profile) {
       issues.push(`${candidate.id}: routed_candidate_profile_not_requested`);
@@ -891,6 +959,8 @@ export class RoutedPlanner implements PlanStrategy {
         });
       }
     }
+    const providedMaterials = ctx.materials ?? [];
+    const providedMaterialRoles = [...new Set(providedMaterials.map(({ role }) => role))];
     const availableInputRoles = ['research_goal', 'business_domain'];
     if (ctx.requirement.target_audience.length > 0) availableInputRoles.push('target_audience');
     if (ctx.requirement.scope.length > 0) availableInputRoles.push('scope');
@@ -909,6 +979,7 @@ export class RoutedPlanner implements PlanStrategy {
     const capabilityResolution = new CapabilityResolver().resolve({
       task: ctx.requirement,
       available_input_roles: availableInputRoles,
+      provided_material_roles: providedMaterialRoles,
       skills: capabilitySkills,
       tools: registeredTools,
       tool_states: toolStates,
@@ -1283,11 +1354,18 @@ export class RoutedPlanner implements PlanStrategy {
         id: decision.skill.id,
         when_to_use: decision.skill.when_to_use,
         inputs: decision.skill.inputs,
+        visual_inputs: decision.skill.visual_inputs,
+        multiple_visual_inputs: decision.skill.multiple_visual_inputs,
         outputs: decision.skill.outputs,
         output_root: '/payload',
         required_tools: decision.skill.required_tools,
         optional_tools: decision.optional_tool_decisions,
         pending_inputs: decision.pending_inputs,
+      })),
+      provided_materials: providedMaterials.map(({ requestId, role, materialId }) => ({
+        request_id: requestId,
+        role,
+        material_id: materialId,
       })),
       tools: candidateTools,
       guidance: guidanceSources,
@@ -1332,6 +1410,9 @@ export class RoutedPlanner implements PlanStrategy {
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
+        (providedMaterialRoles.length > 0
+          ? `context.provided_materials 是已封存材料；每个候选必须选择 pending_inputs 覆盖全部角色 [${providedMaterialRoles.join(', ')}] 的 Skill，且不得遗漏、降为纯 Web 分析或要求用户重复上传。`
+          : '') +
         `available optional Tool 也必须作为更早步骤；playwright-page-capture 必须晚于 tavily-web-search、早于对应 Skill，step.input.pages 预置为空数组，只能通过 {target_pointer:"/pages",source_step_no:<Tavily step>,source_pointer:"/results"} 绑定来源，禁止手写 URL。` +
         `playwright-page-capture 必须显式设置 capture.max_pages 且 capture.unique_hostnames=true；其上游 Tavily step 的 query 会按 research_goal 与 capture.max_pages 冻结为有序、唯一的字符串数组（max_pages=1 时仍为2项，最多6项），max_results 固定为 capture.max_pages 的两倍（当前六页上限下最多12），用于页面失败后的备用候选。` +
         `Registry optional Tool 不得作为 input_bindings 的 source；下游 Skill 只需在 depends_on 中依赖该 Tool，运行时会通过 prior_outputs 提供其输出。` +
@@ -1352,6 +1433,11 @@ export class RoutedPlanner implements PlanStrategy {
     const freezeEnvelope = (envelope: CandidateEnvelope): CandidateEnvelope => (
       freezeCompetitiveScoringWeightEnvelope({
         ...envelope,
+        candidates: envelope.candidates.map((candidate) => seedProvidedMaterialSlots({
+          candidate,
+          providedMaterialRoles,
+          capabilityResolution,
+        })),
         researchGoal: ctx.requirement.research_goal,
         fallbackDimensions: ctx.requirement.comparison_dimensions,
         explicitWeights,
@@ -1366,6 +1452,7 @@ export class RoutedPlanner implements PlanStrategy {
         problemGraph: problemGraphResult.graph,
         problemGraphProvenance: problemGraphResult.provenance,
         capabilityResolution,
+        providedMaterialRoles,
         ...(portfolios ? { portfolios } : {}),
         ...(capabilityDemandGraph ? { capabilityDemandGraph } : {}),
         deliverableId: deliverable.id,

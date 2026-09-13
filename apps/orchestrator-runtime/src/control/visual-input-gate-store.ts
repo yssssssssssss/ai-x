@@ -11,6 +11,7 @@ import {
   parseVisualInputDataUrls,
   type VisualInputImage,
 } from '../report/visual-input-data-url.ts';
+import type { MaterialComparisonPairReference } from './task-material-comparison.ts';
 
 const IMAGE_KIND = 'visual_input_image';
 const IMAGE_SCHEMA_VERSION = 'visual-input-image-v1';
@@ -24,6 +25,7 @@ interface VisualInputGateImageV1 {
   contentSha256: string;
   mediaType: SupportedMediaType;
   byteSize: number;
+  comparisonPair?: MaterialComparisonPairReference;
 }
 
 interface VisualInputGateManifestV1 {
@@ -53,6 +55,9 @@ export interface ResolvedVisualInputImage {
   bytes: Buffer;
   metadata: TrustedBinaryMetadata;
   dataUrl: string;
+  inputRole: string;
+  inputIndex: number;
+  comparisonPair?: MaterialComparisonPairReference;
 }
 
 export interface ResolvedVisualInput {
@@ -114,6 +119,31 @@ function containsInlineImageData(value: unknown): boolean {
   ));
 }
 
+function comparisonPairValue(value: unknown): MaterialComparisonPairReference | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, ['pairId', 'label', 'side', 'sequence'])) {
+    throw new VisualInputGateError('manifest comparison pair shape is malformed');
+  }
+  if (
+    typeof value.pairId !== 'string'
+    || !/^PAIR-\d{3,}$/u.test(value.pairId)
+    || typeof value.label !== 'string'
+    || !value.label.trim()
+    || (value.side !== 'primary' && value.side !== 'comparison')
+    || typeof value.sequence !== 'number'
+    || !Number.isSafeInteger(value.sequence)
+    || value.sequence < 1
+  ) {
+    throw new VisualInputGateError('manifest comparison pair fields are malformed');
+  }
+  return {
+    pairId: value.pairId,
+    label: value.label,
+    side: value.side,
+    sequence: value.sequence,
+  };
+}
+
 function manifestValue(value: unknown): VisualInputGateManifestV1 {
   if (!isRecord(value) || !hasExactKeys(value, [
     'version', 'taskId', 'planVersionId', 'gateKey', 'multiple', 'images',
@@ -132,9 +162,13 @@ function manifestValue(value: unknown): VisualInputGateManifestV1 {
     throw new VisualInputGateError('manifest fields are malformed');
   }
   const images = value.images.map((candidate): VisualInputGateImageV1 => {
-    if (!isRecord(candidate) || !hasExactKeys(candidate, [
-      'artifactId', 'contentSha256', 'mediaType', 'byteSize',
-    ])) {
+    if (
+      !isRecord(candidate)
+      || !['artifactId', 'contentSha256', 'mediaType', 'byteSize'].every((key) => Object.hasOwn(candidate, key))
+      || Object.keys(candidate).some((key) => ![
+        'artifactId', 'contentSha256', 'mediaType', 'byteSize', 'comparisonPair',
+      ].includes(key))
+    ) {
       throw new VisualInputGateError('manifest image shape is malformed');
     }
     if (
@@ -151,11 +185,13 @@ function manifestValue(value: unknown): VisualInputGateManifestV1 {
     ) {
       throw new VisualInputGateError('manifest image fields are malformed');
     }
+    const comparisonPair = comparisonPairValue(candidate.comparisonPair);
     return {
       artifactId: candidate.artifactId,
       contentSha256: candidate.contentSha256,
       mediaType: candidate.mediaType,
       byteSize: candidate.byteSize,
+      ...(comparisonPair ? { comparisonPair } : {}),
     };
   });
   return {
@@ -355,12 +391,21 @@ export class VisualInputGateStore {
     gateKey: string;
     multiple: boolean;
     materialIds: readonly string[];
+    pairReferences?: ReadonlyArray<MaterialComparisonPairReference & { materialId: string }>;
   }, publicationId?: string): Promise<PublishedVisualInputGate> {
     if (
       input.materialIds.length === 0
       || (!input.multiple && input.materialIds.length !== 1)
       || new Set(input.materialIds).size !== input.materialIds.length
     ) throw new VisualInputGateError('Task Material count does not match the visual input');
+    const pairReferences = new Map(
+      (input.pairReferences ?? []).map(({ materialId, ...reference }) => [materialId, reference]),
+    );
+    if (
+      pairReferences.size !== (input.pairReferences ?? []).length
+      || (pairReferences.size > 0 && pairReferences.size !== input.materialIds.length)
+      || [...pairReferences.keys()].some((materialId) => !input.materialIds.includes(materialId))
+    ) throw new VisualInputGateError('Task Material comparison references do not match the visual input');
     const references: VisualInputGateImageV1[] = [];
     for (const artifactId of input.materialIds) {
       const artifact = await this.artifacts.verifyTaskBoundVisual(artifactId);
@@ -380,6 +425,9 @@ export class VisualInputGateStore {
         contentSha256: artifact.contentSha256!,
         mediaType: artifact.mediaType,
         byteSize: artifact.byteSize,
+        ...(pairReferences.get(artifactId)
+          ? { comparisonPair: pairReferences.get(artifactId)! }
+          : {}),
       });
     }
     const manifest: VisualInputGateManifestV1 = {
@@ -493,7 +541,7 @@ export class VisualInputGateStore {
         throw new VisualInputGateError(`gate ${gate.gateKey} manifest does not match the active plan`);
       }
       const resolvedImages: ResolvedVisualInputImage[] = [];
-      for (const reference of manifest.images) {
+      for (const [imageIndex, reference] of manifest.images.entries()) {
         if (artifactIds.has(reference.artifactId)) {
           throw new VisualInputGateError(`image Artifact ${reference.artifactId} is duplicated`);
         }
@@ -516,6 +564,9 @@ export class VisualInputGateStore {
         resolvedImages.push({
           ...verified,
           dataUrl: `data:${verified.metadata.contentType};base64,${verified.bytes.toString('base64')}`,
+          inputRole: manifest.gateKey,
+          inputIndex: imageIndex + 1,
+          ...(reference.comparisonPair ? { comparisonPair: reference.comparisonPair } : {}),
         });
       }
       const value = manifest.multiple

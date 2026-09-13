@@ -12,6 +12,8 @@ import type {
   ControlWorkflowState,
   CurrentPlanCandidate,
   PlanningGuidanceClarification,
+  TaskMaterialBinding,
+  TaskMaterialComparison,
   TaskMaterialResponse,
 } from '../../../packages/api-contract/control-workflow.ts';
 export {
@@ -595,6 +597,8 @@ export interface CurrentTaskHydrationInput {
   activatedNodes?: string[];
   activePlan?: CurrentPlanCandidate | null;
   taskMaterials?: TaskMaterialResponse[];
+  materialBindings?: TaskMaterialBinding[];
+  materialComparison?: TaskMaterialComparison;
   planningGuidance?: PlanningGuidanceClarification;
 }
 
@@ -689,6 +693,8 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
         activatedNodes: [],
         candidates: [],
         ...(input.taskMaterials ? { taskMaterials: input.taskMaterials } : {}),
+        ...(input.materialBindings ? { materialBindings: input.materialBindings } : {}),
+        ...(input.materialComparison ? { materialComparison: input.materialComparison } : {}),
         ...(input.planningGuidance ? { planningGuidance: input.planningGuidance } : {}),
       },
       candidatesResp: null,

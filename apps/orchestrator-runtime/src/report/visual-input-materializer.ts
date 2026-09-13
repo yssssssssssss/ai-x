@@ -1,11 +1,17 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
-import type { ResolvedVisualInput } from '../control/visual-input-gate-store.ts';
+import type {
+  ResolvedVisualInput,
+} from '../control/visual-input-gate-store.ts';
+import type { VisualAssetInputPair } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ImageAnnotationService } from './image-annotation-service.ts';
 import type { VisualAssetService } from './visual-asset-service.ts';
 
 export interface MaterializedVisualOriginal {
   gateKey: string;
   imageIndex: number;
+  inputArtifactId: string;
+  inputIndex: number;
+  comparisonPair?: VisualAssetInputPair;
   original: {
     assetId: string;
     manifestArtifactId: string;
@@ -49,14 +55,22 @@ export class VisualInputMaterializer {
           activeLease: input.lease,
           source: {
             kind: 'user_upload',
-            fileName: `${visual.gateKey}-${imageIndex}.${extension}`,
+            fileName: `${visual.gateKey}-${image.inputIndex}.${extension}`,
             bytes: image.bytes,
+            inputArtifactId: image.artifact.id,
+            inputArtifactContentSha256: image.artifact.contentSha256!,
+            inputRole: visual.gateKey,
+            inputIndex: image.inputIndex,
+            ...(image.comparisonPair ? { comparisonPair: image.comparisonPair } : {}),
           },
           exportPolicy: 'allow',
         });
         originals.push({
           gateKey: visual.gateKey,
           imageIndex,
+          inputArtifactId: image.artifact.id,
+          inputIndex: image.inputIndex,
+          ...(image.comparisonPair ? { comparisonPair: image.comparisonPair } : {}),
           original: {
             assetId: original.assetArtifact.id,
             manifestArtifactId: original.manifestArtifact.id,

@@ -53,7 +53,22 @@
           "required": ["kind", "fileName"],
           "properties": {
             "kind": { "const": "user_upload" },
-            "fileName": { "$ref": "#/definitions/nonEmptyString" }
+            "fileName": { "$ref": "#/definitions/nonEmptyString" },
+            "inputArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+            "inputArtifactContentSha256": { "$ref": "#/definitions/sha256" },
+            "inputRole": { "$ref": "#/definitions/nonEmptyString" },
+            "inputIndex": { "type": "integer", "minimum": 1 },
+            "comparisonPair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pairId", "label", "side", "sequence"],
+              "properties": {
+                "pairId": { "type": "string", "pattern": "^PAIR-[0-9]{3,}$" },
+                "label": { "$ref": "#/definitions/nonEmptyString" },
+                "side": { "enum": ["primary", "comparison"] },
+                "sequence": { "type": "integer", "minimum": 1 }
+              }
+            }
           }
         },
         {

@@ -17,14 +17,51 @@ interface ClarificationChoice {
   description: string;
 }
 
+interface VisualPairDraft {
+  label: string;
+  primaryMaterialId: string;
+  comparisonMaterialId: string;
+}
+
 const EMPTY_TASK_MATERIALS: TaskMaterialResponse[] = [];
 
 function materialsForRequest(
   request: NonNullable<ResearchTaskV2['material_requests']>[number],
   materials: readonly TaskMaterialResponse[],
+  bindings: ClarifyControlTaskRequest['materialBindings'],
 ): TaskMaterialResponse[] {
-  const matches = materials.filter((material) => material.requestId === request.id);
+  const boundIds = bindings === undefined
+    ? null
+    : new Set(bindings.find((binding) => binding.requestId === request.id)?.materialIds ?? []);
+  const matches = materials.filter((material) => (
+    material.requestId === request.id
+    && (boundIds === null || boundIds.has(material.materialId))
+  ));
   return request.multiple ? matches : matches.slice(-1);
+}
+
+function reconcileVisualPairs(
+  previous: readonly VisualPairDraft[],
+  primary: readonly TaskMaterialResponse[],
+  comparison: readonly TaskMaterialResponse[],
+): VisualPairDraft[] {
+  const rowCount = Math.max(primary.length, comparison.length);
+  return Array.from({ length: rowCount }, (_, index) => {
+    const existing = previous[index];
+    const primaryMaterialId = existing
+      && primary.some(({ materialId }) => materialId === existing.primaryMaterialId)
+      ? existing.primaryMaterialId
+      : primary[index]?.materialId ?? '';
+    const comparisonMaterialId = existing
+      && comparison.some(({ materialId }) => materialId === existing.comparisonMaterialId)
+      ? existing.comparisonMaterialId
+      : comparison[index]?.materialId ?? '';
+    return {
+      label: existing?.label.trim() ? existing.label : `对比项 ${index + 1}`,
+      primaryMaterialId,
+      comparisonMaterialId,
+    };
+  });
 }
 
 function clarificationChoices(key: string): ClarificationChoice[] | null {
@@ -62,14 +99,34 @@ export function CurrentStage1Clarify({
   disabled?: boolean;
 }) {
   const availableMaterials = materials ?? response.taskMaterials ?? EMPTY_TASK_MATERIALS;
+  const materialRequests = response.structuredTask.material_requests ?? [];
+  const storedComparison = response.materialComparison;
+  const comparisonRequests = useMemo(() => {
+    if (!response.structuredTask.expected_deliverables.includes('competitive_analysis_report')) return null;
+    const multipleVisualRequests = materialRequests.filter((request) => request.multiple);
+    if (storedComparison) {
+      const primary = multipleVisualRequests.find(({ id }) => id === storedComparison.primaryRequestId);
+      const comparison = multipleVisualRequests.find(({ id }) => id === storedComparison.comparisonRequestId);
+      if (primary && comparison && primary.id !== comparison.id) return [primary, comparison] as const;
+    }
+    return multipleVisualRequests.length === 2
+      ? multipleVisualRequests as [typeof multipleVisualRequests[number], typeof multipleVisualRequests[number]]
+      : null;
+  }, [materialRequests, response.structuredTask.expected_deliverables, storedComparison]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [selectedScenarioId, setSelectedScenarioId] = useState('');
   const [selectedMaterials, setSelectedMaterials] = useState<Record<string, TaskMaterialResponse[]>>(() => (
     Object.fromEntries((response.structuredTask.material_requests ?? []).map((request) => [
       request.id,
-      materialsForRequest(request, availableMaterials),
+      materialsForRequest(request, availableMaterials, response.materialBindings),
     ]))
   ));
+  const [comparisonMode, setComparisonMode] = useState<'grouped' | 'paired'>(
+    storedComparison?.mode ?? 'grouped',
+  );
+  const [visualPairs, setVisualPairs] = useState<VisualPairDraft[]>(
+    storedComparison?.pairs.map((pair) => ({ ...pair })) ?? [],
+  );
   const [materialErrors, setMaterialErrors] = useState<Record<string, string | undefined>>({});
   const [uploadingRequestId, setUploadingRequestId] = useState<string | null>(null);
   const [assumptionEdits, setAssumptionEdits] = useState<Record<string, string>>(
@@ -79,6 +136,8 @@ export function CurrentStage1Clarify({
     setAnswers({});
     setMaterialErrors({});
     setUploadingRequestId(null);
+    setComparisonMode(response.materialComparison?.mode ?? 'grouped');
+    setVisualPairs(response.materialComparison?.pairs.map((pair) => ({ ...pair })) ?? []);
     setAssumptionEdits(Object.fromEntries(
       response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value]),
     ));
@@ -86,14 +145,49 @@ export function CurrentStage1Clarify({
   useEffect(() => {
     setSelectedMaterials(Object.fromEntries((response.structuredTask.material_requests ?? []).map((request) => [
       request.id,
-      materialsForRequest(request, availableMaterials),
+      materialsForRequest(request, availableMaterials, response.materialBindings),
     ])));
-  }, [response.task.id, response.task.stateVersion, availableMaterials]);
+  }, [response.task.id, response.task.stateVersion, availableMaterials, response.materialBindings]);
+  const primaryMaterials = comparisonRequests
+    ? selectedMaterials[comparisonRequests[0].id] ?? []
+    : EMPTY_TASK_MATERIALS;
+  const comparisonMaterials = comparisonRequests
+    ? selectedMaterials[comparisonRequests[1].id] ?? []
+    : EMPTY_TASK_MATERIALS;
+  const primaryMaterialIds = primaryMaterials.map(({ materialId }) => materialId).join('|');
+  const comparisonMaterialIds = comparisonMaterials.map(({ materialId }) => materialId).join('|');
+  useEffect(() => {
+    if (comparisonMode !== 'paired' || !comparisonRequests) return;
+    setVisualPairs((previous) => reconcileVisualPairs(
+      previous,
+      selectedMaterials[comparisonRequests[0].id] ?? EMPTY_TASK_MATERIALS,
+      selectedMaterials[comparisonRequests[1].id] ?? EMPTY_TASK_MATERIALS,
+    ));
+  }, [comparisonMode, comparisonRequests, primaryMaterialIds, comparisonMaterialIds, selectedMaterials]);
+  const pairingIssue = useMemo(() => {
+    if (comparisonMode !== 'paired' || !comparisonRequests) return null;
+    const pairedPrimary = visualPairs.map(({ primaryMaterialId }) => primaryMaterialId);
+    const pairedComparison = visualPairs.map(({ comparisonMaterialId }) => comparisonMaterialId);
+    if (
+      visualPairs.length === 0
+      || visualPairs.some((pair) => !pair.label.trim() || !pair.primaryMaterialId || !pair.comparisonMaterialId)
+    ) return '请为每个对比项选择两侧图片并填写场景名称';
+    if (
+      new Set(pairedPrimary).size !== pairedPrimary.length
+      || new Set(pairedComparison).size !== pairedComparison.length
+    ) return '同一张图片不能重复出现在多个对比项中';
+    if (
+      pairedPrimary.length !== primaryMaterials.length
+      || pairedComparison.length !== comparisonMaterials.length
+      || primaryMaterials.some(({ materialId }) => !pairedPrimary.includes(materialId))
+      || comparisonMaterials.some(({ materialId }) => !pairedComparison.includes(materialId))
+    ) return '一一配对必须完整覆盖两侧全部已选图片；数量不一致时请使用分组对比';
+    return null;
+  }, [comparisonMode, comparisonRequests, visualPairs, primaryMaterials, comparisonMaterials]);
   const missing = useMemo(
     () => missingBlockingAnswers(response.structuredTask, answers),
     [answers, response.structuredTask],
   );
-  const materialRequests = response.structuredTask.material_requests ?? [];
   const missingMaterials = materialRequests.filter((request) => (
     request.required && (selectedMaterials[request.id]?.length ?? 0) === 0
   ));
@@ -302,6 +396,81 @@ export function CurrentStage1Clarify({
               );
             })}
           </div>
+          {comparisonRequests && (primaryMaterials.length > 0 || comparisonMaterials.length > 0) && (
+            <div style={{ display: 'grid', gap: 10, marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+              <b style={{ fontSize: 13 }}>图片对比方式</b>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
+                <input
+                  type="radio"
+                  name={`visual-comparison-mode-${response.task.id}`}
+                  value="grouped"
+                  checked={comparisonMode === 'grouped'}
+                  disabled={disabled}
+                  onChange={() => {
+                    setComparisonMode('grouped');
+                    setVisualPairs([]);
+                  }}
+                />
+                <span><b>分组对比</b><small style={{ display: 'block', color: 'var(--text-faint)' }}>分别完整展示两组实际上传的图片，不推断一一对应关系。</small></span>
+              </label>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
+                <input
+                  type="radio"
+                  name={`visual-comparison-mode-${response.task.id}`}
+                  value="paired"
+                  checked={comparisonMode === 'paired'}
+                  disabled={disabled}
+                  onChange={() => {
+                    setComparisonMode('paired');
+                    setVisualPairs(reconcileVisualPairs([], primaryMaterials, comparisonMaterials));
+                  }}
+                />
+                <span><b>一一配对</b><small style={{ display: 'block', color: 'var(--text-faint)' }}>每个对比项明确选择两侧各一张图片；文件名和上传顺序只用于预填。</small></span>
+              </label>
+              {comparisonMode === 'paired' && (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {visualPairs.map((pair, index) => (
+                    <div key={`visual-pair-${index + 1}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+                      <input
+                        className="clarification-field"
+                        aria-label={`对比项 ${index + 1} 场景名称`}
+                        value={pair.label}
+                        disabled={disabled}
+                        onChange={(event) => setVisualPairs((previous) => previous.map((item, itemIndex) => (
+                          itemIndex === index ? { ...item, label: event.target.value } : item
+                        )))}
+                      />
+                      <select
+                        className="clarification-field"
+                        aria-label={`对比项 ${index + 1} ${comparisonRequests[0].label}`}
+                        value={pair.primaryMaterialId}
+                        disabled={disabled}
+                        onChange={(event) => setVisualPairs((previous) => previous.map((item, itemIndex) => (
+                          itemIndex === index ? { ...item, primaryMaterialId: event.target.value } : item
+                        )))}
+                      >
+                        <option value="">选择{comparisonRequests[0].label}</option>
+                        {primaryMaterials.map((material) => <option key={material.materialId} value={material.materialId}>{material.fileName}</option>)}
+                      </select>
+                      <select
+                        className="clarification-field"
+                        aria-label={`对比项 ${index + 1} ${comparisonRequests[1].label}`}
+                        value={pair.comparisonMaterialId}
+                        disabled={disabled}
+                        onChange={(event) => setVisualPairs((previous) => previous.map((item, itemIndex) => (
+                          itemIndex === index ? { ...item, comparisonMaterialId: event.target.value } : item
+                        )))}
+                      >
+                        <option value="">选择{comparisonRequests[1].label}</option>
+                        {comparisonMaterials.map((material) => <option key={material.materialId} value={material.materialId}>{material.fileName}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                  {pairingIssue && <span role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}>{pairingIssue}</span>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -363,7 +532,7 @@ export function CurrentStage1Clarify({
       )}
       <button
         type="button"
-        disabled={disabled || missing.length > 0 || missingMaterials.length > 0 || scenarioSelectionMissing || uploadingRequestId !== null}
+        disabled={disabled || missing.length > 0 || missingMaterials.length > 0 || pairingIssue !== null || scenarioSelectionMissing || uploadingRequestId !== null}
         aria-busy={disabled || uploadingRequestId !== null}
         onClick={() => onSubmit({
           expectedVersion: response.task.stateVersion,
@@ -377,6 +546,18 @@ export function CurrentStage1Clarify({
                     ? [{ requestId: request.id, materialIds: selected.map(({ materialId }) => materialId) }]
                     : [];
                 }),
+              }
+            : {}),
+          ...(comparisonRequests && (primaryMaterials.length > 0 || comparisonMaterials.length > 0)
+            ? {
+                materialComparison: {
+                  mode: comparisonMode,
+                  primaryRequestId: comparisonRequests[0].id,
+                  comparisonRequestId: comparisonRequests[1].id,
+                  pairs: comparisonMode === 'paired'
+                    ? visualPairs.map((pair) => ({ ...pair, label: pair.label.trim() }))
+                    : [],
+                },
               }
             : {}),
         })}

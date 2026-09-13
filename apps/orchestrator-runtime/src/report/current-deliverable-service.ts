@@ -22,6 +22,7 @@ import type {
   ResearchStrategyContentPatchV1,
   ResearchStrategySupportPatchTarget,
   ResearchStrategyRiskDisclosure,
+  VisualAssetSource,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import {
@@ -799,6 +800,29 @@ interface DisplayableVisualInventoryItem {
   publicSourceEvidenceIds: readonly string[];
 }
 
+interface CompetitiveVisualInputPresentation {
+  mode: 'grouped' | 'paired';
+  groups: Array<{
+    role: string;
+    label: string;
+    items: Array<{
+      id: string;
+      sourceArtifactId: string;
+      inputIndex: number;
+      originalAssetId: string;
+      annotationAssetId: string | null;
+      evidenceIds: string[];
+    }>;
+  }>;
+  pairs: Array<{
+    pairId: string;
+    label: string;
+    sequence: number;
+    primaryItemId: string;
+    comparisonItemId: string;
+  }>;
+}
+
 interface CompetitiveMatrixContract {
   sampleIds: readonly string[];
   dimensions: readonly string[];
@@ -994,6 +1018,188 @@ function displayableVisualInventory(
   });
 }
 
+function competitiveVisualInputPresentation(input: {
+  inventory: VerifiedVisualInventory | undefined;
+  evidenceEntries: readonly EvidenceEntry[];
+  finalizedRequirement: unknown;
+}): CompetitiveVisualInputPresentation | undefined {
+  if (!input.inventory) return undefined;
+  const userUploads = input.inventory.assets.filter((asset) => (
+    input.inventory!.roles.get(asset.artifact.id) === 'original'
+    && asset.manifest.source.kind === 'user_upload'
+  ));
+  if (userUploads.length === 0) return undefined;
+  const structured = userUploads.filter((asset) => {
+    const source = asset.manifest.source;
+    return source.kind === 'user_upload'
+      && typeof source.inputArtifactId === 'string'
+      && typeof source.inputArtifactContentSha256 === 'string'
+      && typeof source.inputRole === 'string'
+      && typeof source.inputIndex === 'number';
+  });
+  const hasStructuredMetadata = userUploads.some((asset) => {
+    const source = asset.manifest.source;
+    return source.kind === 'user_upload'
+      && (
+        source.inputArtifactId !== undefined
+        || source.inputArtifactContentSha256 !== undefined
+        || source.inputRole !== undefined
+        || source.inputIndex !== undefined
+        || source.comparisonPair !== undefined
+      );
+  });
+  if (!hasStructuredMetadata) return undefined;
+  if (structured.length !== userUploads.length) {
+    throw new Error('competitive visual input provenance is only partially structured');
+  }
+
+  const requirement = unknownRecord(input.finalizedRequirement);
+  const requests = Array.isArray(requirement?.material_requests)
+    ? requirement.material_requests.flatMap((candidate) => {
+        const request = unknownRecord(candidate);
+        return typeof request?.role === 'string' && typeof request.label === 'string'
+          ? [{ role: request.role, label: request.label }]
+          : [];
+      })
+    : [];
+  const labels = new Map(requests.map(({ role, label }) => [role, label]));
+  const requestOrder = new Map(requests.map(({ role }, index) => [role, index]));
+  const annotations = input.inventory.assets.filter((asset) => (
+    input.inventory!.roles.get(asset.artifact.id) === 'annotation'
+  ));
+  const groups = new Map<string, CompetitiveVisualInputPresentation['groups'][number]>();
+  const itemPairing = new Map<string, NonNullable<Extract<VisualAssetSource, { kind: 'user_upload' }>['comparisonPair']>>();
+  const seenSourceArtifacts = new Set<string>();
+  for (const original of structured) {
+    const source = original.manifest.source;
+    if (
+      source.kind !== 'user_upload'
+      || !source.inputArtifactId
+      || !source.inputArtifactContentSha256
+      || !source.inputRole
+      || source.inputIndex === undefined
+      || source.inputArtifactContentSha256 !== original.manifest.contentSha256
+    ) throw new Error('competitive visual input provenance is malformed');
+    if (seenSourceArtifacts.has(source.inputArtifactId)) {
+      throw new Error(`competitive visual input Artifact ${source.inputArtifactId} is duplicated`);
+    }
+    seenSourceArtifacts.add(source.inputArtifactId);
+    const exactAnnotations = annotations.filter((annotation) => (
+      sameVisualReference(annotation.manifest.derivedFrom, original)
+    ));
+    const provenanceAnnotations = exactAnnotations.filter((annotation) => (
+      input.inventory!.annotationBindings.get(annotation.artifact.id)?.findingIds
+        .some((findingId) => findingId.startsWith('input-provenance-')) === true
+    ));
+    if (provenanceAnnotations.length > 1) {
+      throw new Error(`competitive visual input ${original.artifact.id} has duplicate provenance annotations`);
+    }
+    const annotation = provenanceAnnotations[0] ?? exactAnnotations[0] ?? null;
+    const screenshotEvidence = input.evidenceEntries.filter((entry) => (
+      entry.kind === 'screenshot'
+      && entry.evidenceClass === 'screenshot'
+      && entry.artifactId === original.manifestArtifact.id
+      && entry.artifactContentSha256 === original.manifestArtifact.contentSha256
+      && entry.jsonPointer === '/assetId'
+    ));
+    if (screenshotEvidence.length !== 1) {
+      throw new Error(`competitive visual input ${original.artifact.id} requires one exact screenshot Evidence`);
+    }
+    const itemId = `visual-input:${source.inputRole}:${source.inputIndex}`;
+    const item = {
+      id: itemId,
+      sourceArtifactId: source.inputArtifactId,
+      inputIndex: source.inputIndex,
+      originalAssetId: original.artifact.id,
+      annotationAssetId: annotation?.artifact.id ?? null,
+      evidenceIds: [screenshotEvidence[0]!.id],
+    };
+    const group = groups.get(source.inputRole) ?? {
+      role: source.inputRole,
+      label: labels.get(source.inputRole) ?? source.inputRole,
+      items: [],
+    };
+    group.items.push(item);
+    groups.set(source.inputRole, group);
+    if (source.comparisonPair) itemPairing.set(itemId, source.comparisonPair);
+  }
+
+  const orderedGroups = [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((left, right) => left.inputIndex - right.inputIndex),
+    }))
+    .sort((left, right) => (
+      (requestOrder.get(left.role) ?? Number.MAX_SAFE_INTEGER)
+      - (requestOrder.get(right.role) ?? Number.MAX_SAFE_INTEGER)
+      || left.role.localeCompare(right.role)
+    ));
+  if (itemPairing.size === 0) return { mode: 'grouped', groups: orderedGroups, pairs: [] };
+  const allItems = orderedGroups.flatMap(({ items }) => items);
+  if (itemPairing.size !== allItems.length) {
+    throw new Error('paired competitive visual input must cover every uploaded image');
+  }
+  const pairRows = new Map<string, {
+    pairId: string;
+    label: string;
+    sequence: number;
+    primaryItemId?: string;
+    comparisonItemId?: string;
+  }>();
+  for (const item of allItems) {
+    const pairing = itemPairing.get(item.id)!;
+    const row = pairRows.get(pairing.pairId) ?? {
+      pairId: pairing.pairId,
+      label: pairing.label,
+      sequence: pairing.sequence,
+    };
+    if (row.label !== pairing.label || row.sequence !== pairing.sequence) {
+      throw new Error(`competitive visual pair ${pairing.pairId} metadata is inconsistent`);
+    }
+    if (pairing.side === 'primary') {
+      if (row.primaryItemId) throw new Error(`competitive visual pair ${pairing.pairId} has duplicate primary images`);
+      row.primaryItemId = item.id;
+    } else {
+      if (row.comparisonItemId) throw new Error(`competitive visual pair ${pairing.pairId} has duplicate comparison images`);
+      row.comparisonItemId = item.id;
+    }
+    pairRows.set(pairing.pairId, row);
+  }
+  const pairs = [...pairRows.values()]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((pair) => {
+      if (!pair.primaryItemId || !pair.comparisonItemId) {
+        throw new Error(`competitive visual pair ${pair.pairId} is incomplete`);
+      }
+      return {
+        pairId: pair.pairId,
+        label: pair.label,
+        sequence: pair.sequence,
+        primaryItemId: pair.primaryItemId,
+        comparisonItemId: pair.comparisonItemId,
+      };
+    });
+  return { mode: 'paired', groups: orderedGroups, pairs };
+}
+
+function canonicalizeCompetitiveVisualInputs(input: {
+  payload: unknown;
+  inventory: VerifiedVisualInventory | undefined;
+  evidenceEntries: readonly EvidenceEntry[];
+  finalizedRequirement: unknown;
+}): unknown {
+  const payload = unknownRecord(input.payload);
+  if (!payload) return input.payload;
+  const { visualInputPresentation: _untrustedPresentation, ...rest } = payload;
+  const presentation = competitiveVisualInputPresentation(input);
+  if (!presentation) return rest;
+  return {
+    ...rest,
+    screenshotComparisons: [],
+    visualInputPresentation: presentation,
+  };
+}
+
 function assertVisualPreflight(
   deliverableId: string,
   inventory: VerifiedVisualInventory | undefined,
@@ -1018,6 +1224,131 @@ function assertVisualPreflight(
   ) {
     throw new Error('design_audit_report requires a verified finding-bound annotation');
   }
+}
+
+function assertCompetitiveVisualInputPresentation(
+  value: Record<string, unknown>,
+  inventory: VerifiedVisualInventory | undefined,
+): boolean {
+  if (!inventory) return false;
+  const originals = inventory.assets.filter((asset) => {
+    const source = asset.manifest.source;
+    return inventory.roles.get(asset.artifact.id) === 'original'
+      && source.kind === 'user_upload'
+      && typeof source.inputArtifactId === 'string'
+      && typeof source.inputArtifactContentSha256 === 'string'
+      && typeof source.inputRole === 'string'
+      && typeof source.inputIndex === 'number';
+  });
+  if (originals.length === 0) return false;
+  const presentation = unknownRecord(value.visualInputPresentation);
+  if (!presentation || (presentation.mode !== 'grouped' && presentation.mode !== 'paired')) {
+    throw new Error('competitive visual input presentation is required for structured uploaded images');
+  }
+  const groups = Array.isArray(presentation.groups) ? presentation.groups : [];
+  const pairs = Array.isArray(presentation.pairs) ? presentation.pairs : [];
+  if (groups.length === 0) throw new Error('competitive visual input presentation groups are empty');
+  const originalsById = new Map(originals.map((asset) => [asset.artifact.id, asset]));
+  const allAssetsById = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
+  const seenOriginals = new Set<string>();
+  const seenItems = new Set<string>();
+  const itemSources = new Map<string, Extract<VisualAssetSource, { kind: 'user_upload' }>>();
+  for (const candidate of groups) {
+    const group = unknownRecord(candidate);
+    const role = group?.role;
+    const items = group?.items;
+    if (typeof role !== 'string' || !role || !Array.isArray(items) || items.length === 0) {
+      throw new Error('competitive visual input group is malformed');
+    }
+    for (const itemCandidate of items) {
+      const item = unknownRecord(itemCandidate);
+      const itemId = item?.id;
+      const sourceArtifactId = item?.sourceArtifactId;
+      const inputIndex = item?.inputIndex;
+      const originalAssetId = item?.originalAssetId;
+      const annotationAssetId = item?.annotationAssetId;
+      const original = typeof originalAssetId === 'string' ? originalsById.get(originalAssetId) : undefined;
+      const source = original?.manifest.source;
+      const annotation = typeof annotationAssetId === 'string'
+        ? allAssetsById.get(annotationAssetId)
+        : undefined;
+      if (
+        typeof itemId !== 'string'
+        || !itemId
+        || seenItems.has(itemId)
+        || typeof sourceArtifactId !== 'string'
+        || typeof inputIndex !== 'number'
+        || !Number.isSafeInteger(inputIndex)
+        || inputIndex < 1
+        || !original
+        || source?.kind !== 'user_upload'
+        || source.inputArtifactId !== sourceArtifactId
+        || source.inputArtifactContentSha256 !== original.manifest.contentSha256
+        || source.inputRole !== role
+        || source.inputIndex !== inputIndex
+        || seenOriginals.has(original.artifact.id)
+        || (annotationAssetId !== null && (
+          !annotation
+          || inventory.roles.get(annotation.artifact.id) !== 'annotation'
+          || !sameVisualReference(annotation.manifest.derivedFrom, original)
+        ))
+      ) {
+        throw new Error('competitive visual input presentation contains an invalid or duplicate item');
+      }
+      seenItems.add(itemId);
+      seenOriginals.add(original.artifact.id);
+      itemSources.set(itemId, source);
+    }
+  }
+  if (
+    seenOriginals.size !== originalsById.size
+    || [...originalsById.keys()].some((assetId) => !seenOriginals.has(assetId))
+  ) {
+    throw new Error('competitive visual input presentation must cover every uploaded original exactly once');
+  }
+  if (presentation.mode === 'grouped') {
+    if (pairs.length !== 0 || [...itemSources.values()].some((source) => source.comparisonPair)) {
+      throw new Error('grouped competitive visual input cannot contain pair relations');
+    }
+    return true;
+  }
+  const pairedItems = new Set<string>();
+  const seenPairIds = new Set<string>();
+  for (const candidate of pairs) {
+    const pair = unknownRecord(candidate);
+    const pairId = pair?.pairId;
+    const pairLabel = pair?.label;
+    const pairSequence = pair?.sequence;
+    const primaryItemId = pair?.primaryItemId;
+    const comparisonItemId = pair?.comparisonItemId;
+    const primary = typeof primaryItemId === 'string' ? itemSources.get(primaryItemId) : undefined;
+    const comparison = typeof comparisonItemId === 'string' ? itemSources.get(comparisonItemId) : undefined;
+    if (
+      typeof pairId !== 'string'
+      || seenPairIds.has(pairId)
+      || !primary
+      || !comparison
+      || primary.comparisonPair?.pairId !== pairId
+      || primary.comparisonPair.label !== pairLabel
+      || primary.comparisonPair.sequence !== pairSequence
+      || primary.comparisonPair.side !== 'primary'
+      || comparison.comparisonPair?.pairId !== pairId
+      || comparison.comparisonPair.label !== pairLabel
+      || comparison.comparisonPair.sequence !== pairSequence
+      || comparison.comparisonPair.side !== 'comparison'
+      || pairedItems.has(primaryItemId as string)
+      || pairedItems.has(comparisonItemId as string)
+    ) {
+      throw new Error('competitive visual input pair is invalid or duplicated');
+    }
+    seenPairIds.add(pairId);
+    pairedItems.add(primaryItemId as string);
+    pairedItems.add(comparisonItemId as string);
+  }
+  if (pairedItems.size !== seenItems.size || [...seenItems].some((itemId) => !pairedItems.has(itemId))) {
+    throw new Error('paired competitive visual input must cover every uploaded image exactly once');
+  }
+  return true;
 }
 
 function assertPayloadVisualReferences(
@@ -1166,9 +1497,13 @@ function assertPayloadVisualReferences(
       usedVisualEvidenceIds.add(id);
       usedAssetIds.add(assetId);
     }
+    const hasStructuredVisualInputs = assertCompetitiveVisualInputPresentation(value, inventory);
     const comparisons = value.screenshotComparisons;
     if (!Array.isArray(comparisons)) {
       throw new Error('competitive screenshot comparisons require a verified visual inventory');
+    }
+    if (hasStructuredVisualInputs && comparisons.length > 0) {
+      throw new Error('structured competitive visual inputs must use deterministic visualInputPresentation');
     }
     if (comparisons.length === 0) {
       return;
@@ -2070,6 +2405,27 @@ export class CurrentDeliverableService {
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
       assetId: asset.artifact.id,
       role: visualInventory?.roles.get(asset.artifact.id),
+      ...(asset.manifest.source.kind === 'user_upload'
+        ? {
+            sourceInput: {
+              ...(asset.manifest.source.inputArtifactId
+                ? { artifactId: asset.manifest.source.inputArtifactId }
+                : {}),
+              ...(asset.manifest.source.inputArtifactContentSha256
+                ? { artifactContentSha256: asset.manifest.source.inputArtifactContentSha256 }
+                : {}),
+              ...(asset.manifest.source.inputRole
+                ? { role: asset.manifest.source.inputRole }
+                : {}),
+              ...(asset.manifest.source.inputIndex
+                ? { index: asset.manifest.source.inputIndex }
+                : {}),
+              ...(asset.manifest.source.comparisonPair
+                ? { comparisonPair: asset.manifest.source.comparisonPair }
+                : {}),
+            },
+          }
+        : {}),
       ...(asset.manifest.derivedFrom === null ? {} : { derivedFromAssetId: asset.manifest.derivedFrom?.assetId }),
       ...(visualInventory?.annotationBindings.get(asset.artifact.id)
         ? { findingIds: visualInventory.annotationBindings.get(asset.artifact.id)!.findingIds }
@@ -2148,7 +2504,7 @@ export class CurrentDeliverableService {
               : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.'
                 + (contract.entry.id === 'design_audit_report'
                   ? ' For each annotatedScreenshots entry, use one annotation assetId and one issueId from that same annotation item\'s findingIds in context.verifiedVisualInventory; payload.issues must contain the same issueId.'
-                  : ' screenshotComparisons is optional and may contain only an exact original-to-annotation lineage pair.'
+                  : ' User-upload visual presentation is projected deterministically from structured provenance; return an empty screenshotComparisons array and never choose or label uploaded Asset ids yourself.'
                     + (displayableInventory.length > 0
                       ? ' Select at least one visualEvidence item from context.displayableVisualInventory. Each item must use existing competitor sample ids, an exact dimensionMatrix dimension, and include both one listed screenshotEvidenceId and one listed publicSourceEvidenceId for that Asset.'
                       : ' No Asset has both exact screenshot and matching public-source Evidence, so return an empty visualEvidence array.')))
@@ -2190,9 +2546,23 @@ export class CurrentDeliverableService {
         continue;
       }
       const generatedRecord = unknownRecord(generatedDraft);
-      const contentDraft = generatedRecord
+      let contentDraft: unknown = generatedRecord
         ? { ...generatedRecord, payload: projectPayloadToSchema(generatedRecord.payload, contract.payloadSchema) }
         : generatedDraft;
+      if (contract.entry.id === 'competitive_analysis_report') {
+        const draftRecord = unknownRecord(contentDraft);
+        if (draftRecord) {
+          contentDraft = {
+            ...draftRecord,
+            payload: canonicalizeCompetitiveVisualInputs({
+              payload: draftRecord.payload,
+              inventory: visualInventory,
+              evidenceEntries: evidenceManifest.entries,
+              finalizedRequirement: input.finalizedRequirement,
+            }),
+          };
+        }
+      }
       try {
         this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
         const validatedDraft = contentDraft as DeliverableDraft;

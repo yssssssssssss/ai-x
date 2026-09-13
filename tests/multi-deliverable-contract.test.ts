@@ -450,14 +450,13 @@ for (const contract of CONTRACTS) {
   });
 }
 
-test('competitive synthesis and review contracts permit an evidence-backed report without visual inputs', () => {
+test('competitive synthesis and review contracts separate browser evidence from deterministic uploaded visuals', () => {
   const contract = CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
   assert.ok(contract);
   const prompt = readFileSync(join(ROOT, contract.promptPath), 'utf8');
-  assert.match(prompt, /visualEvidence.*screenshot.*public_source/iu);
-  assert.match(prompt, /screenshotComparisons.*only.*original.*annotation.*exact original/iu);
-  assert.match(prompt, /without.*displayable.*empty visualEvidence.*screenshotComparisons/iu);
-  assert.match(prompt, /input-provenance boundary.*does not locate, prove, or substantiate.*research finding/iu);
+  assert.match(prompt, /visualEvidence.*browser-captured.*public_source/iu);
+  assert.match(prompt, /User-upload visual presentation.*system-generated.*empty screenshotComparisons/iu);
+  assert.match(prompt, /do not choose, omit, pair, or label uploaded Asset ids/iu);
 
   const rubric = asRecord(
     parseYaml(readFileSync(join(ROOT, contract.rubricPath), 'utf8')),
@@ -468,10 +467,9 @@ test('competitive synthesis and review contracts permit an evidence-backed repor
     .map((dimension) => asRecord(dimension, 'competitive review dimension'))
     .find((dimension) => dimension.id === 'visual_quality');
   assert.ok(visualQuality);
-  assert.match(String(visualQuality.criterion), /visualEvidence.*screenshot.*public_source/iu);
-  assert.match(String(visualQuality.criterion), /screenshot comparison.*original-to-annotation.*exact lineage/iu);
-  assert.match(String(visualQuality.criterion), /without.*displayable.*empty visualEvidence.*screenshotComparisons/iu);
-  assert.match(String(visualQuality.criterion), /input-provenance boundary.*does not locate or substantiate.*research finding/iu);
+  assert.match(String(visualQuality.criterion), /visualInputPresentation.*every verified input original exactly once/iu);
+  assert.match(String(visualQuality.criterion), /explicit user-confirmed pairs/iu);
+  assert.match(String(visualQuality.criterion), /Legacy screenshotComparisons.*exact original-to-annotation/iu);
 
   const schemaPath = join(ROOT, contract.schemaPath);
   const validator = new SchemaValidator();
@@ -814,6 +812,42 @@ function verifiedInventoryAsset(
     },
   } as VerifiedVisualAsset;
 }
+
+function withUserInputProvenance(
+  asset: VerifiedVisualAsset,
+  input: {
+    inputArtifactId: string;
+    inputRole: string;
+    inputIndex: number;
+    comparisonPair?: { pairId: string; label: string; side: 'primary' | 'comparison'; sequence: number };
+  },
+): VerifiedVisualAsset {
+  const manifestDraft = {
+    ...asset.manifest,
+    source: {
+      kind: 'user_upload' as const,
+      fileName: `${input.inputRole}-${input.inputIndex}.png`,
+      inputArtifactId: input.inputArtifactId,
+      inputArtifactContentSha256: asset.manifest.contentSha256,
+      inputRole: input.inputRole,
+      inputIndex: input.inputIndex,
+      ...(input.comparisonPair ? { comparisonPair: input.comparisonPair } : {}),
+    },
+  };
+  const { manifestHash: _manifestHash, ...manifestWithoutHash } = manifestDraft;
+  const manifest = { ...manifestDraft, manifestHash: canonicalFixtureHash(manifestWithoutHash) };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2));
+  return {
+    ...asset,
+    manifest,
+    manifestArtifact: {
+      ...asset.manifestArtifact,
+      contentSha256: `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`,
+      byteSize: manifestBytes.byteLength,
+    },
+  } as VerifiedVisualAsset;
+}
+
 function verifiedAnnotationAsset(
   contract: DeliverableContractFixture,
   assetId: string,
@@ -1412,6 +1446,152 @@ test('competitive generation rejects screenshot references when no visual invent
     /visual.*(?:required|inventory)|screenshot.*(?:required|inventory)/iu,
   );
   assert.equal(writes, 0);
+});
+
+test('competitive generation projects every structured uploaded image with dynamic grouped coverage', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const definitions = [
+    ['primaryScreens', 'primary-material-1', 1],
+    ['primaryScreens', 'primary-material-2', 2],
+    ['comparisonScreens', 'comparison-material-1', 1],
+    ['comparisonScreens', 'comparison-material-2', 2],
+    ['comparisonScreens', 'comparison-material-3', 3],
+  ] as const;
+  const originals = definitions.map(([role, materialId, inputIndex], index) => withUserInputProvenance(
+    verifiedInventoryAsset(contract, `structured-original-${index + 1}`),
+    { inputArtifactId: materialId, inputRole: role, inputIndex },
+  ));
+  const annotations = originals.map((original, index) => (
+    verifiedAnnotationAsset(contract, `structured-annotation-${index + 1}`, original)
+  ));
+  const evidenceEntries: EvidenceManifest['entries'] = originals.map((original, index) => ({
+    id: `S1-${index + 1}`,
+    kind: 'screenshot',
+    evidenceClass: 'screenshot',
+    artifactId: original.manifestArtifact.id,
+    artifactContentSha256: original.manifestArtifact.contentSha256!,
+    jsonPointer: '/assetId',
+    sensitivity: 'internal',
+    redaction: 'none',
+  }));
+  const payload = structuredClone(contract.payload);
+  const llm = new ContractGenerationLLM(payload);
+  const service = generationServiceFor(contract, llm, () => undefined);
+  const input = generationInput(contract);
+  input.finalizedRequirement = {
+    ...(input.finalizedRequirement as ResearchTaskV2),
+    material_requests: [
+      { id: 'primary', role: 'primaryScreens', kind: 'visual', label: '我方截图', required: true, multiple: true, reason: '对比' },
+      { id: 'comparison', role: 'comparisonScreens', kind: 'visual', label: '竞品截图', required: true, multiple: true, reason: '对比' },
+    ],
+  };
+  const manifestDraft = { ...input.evidenceManifest.value, entries: evidenceEntries };
+  const { manifestHash: _manifestHash, ...manifestWithoutHash } = manifestDraft;
+  input.evidenceManifest.value = {
+    ...manifestDraft,
+    manifestHash: canonicalFixtureHash(manifestWithoutHash),
+  };
+  const manifestsById = new Map(originals.map((original) => [
+    original.manifestArtifact.id,
+    {
+      artifact: {
+        id: original.manifestArtifact.id,
+        contentSha256: original.manifestArtifact.contentSha256!,
+      },
+      value: original.manifest,
+    },
+  ]));
+  input.evidenceResolver = {
+    resolveArtifact: (artifactId) => manifestsById.get(artifactId) ?? null,
+  };
+
+  const result = await service.generate(Object.assign(input, {
+    visualAssets: originals.flatMap((original, index) => [original, annotations[index]!]),
+  }));
+  const resultPayload = result.deliverable.payload as Record<string, unknown>;
+  const presentation = resultPayload.visualInputPresentation as {
+    mode: string;
+    groups: Array<{ role: string; items: unknown[] }>;
+    pairs: unknown[];
+  };
+
+  assert.equal(presentation.mode, 'grouped');
+  assert.deepEqual(presentation.groups.map(({ role, items }) => [role, items.length]), [
+    ['primaryScreens', 2],
+    ['comparisonScreens', 3],
+  ]);
+  assert.deepEqual(presentation.pairs, []);
+  assert.deepEqual(resultPayload.screenshotComparisons, []);
+});
+
+test('competitive generation preserves explicit visual pairs instead of pairing by file order', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const originals = [
+    withUserInputProvenance(verifiedInventoryAsset(contract, 'pair-primary-2'), {
+      inputArtifactId: 'primary-2', inputRole: 'primaryScreens', inputIndex: 2,
+      comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1 },
+    }),
+    withUserInputProvenance(verifiedInventoryAsset(contract, 'pair-comparison-1'), {
+      inputArtifactId: 'comparison-1', inputRole: 'comparisonScreens', inputIndex: 1,
+      comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'comparison', sequence: 1 },
+    }),
+  ];
+  const annotations = originals.map((original, index) => (
+    verifiedAnnotationAsset(contract, `pair-annotation-${index + 1}`, original)
+  ));
+  const evidenceEntries: EvidenceManifest['entries'] = originals.map((original, index) => ({
+    id: `S1-${index + 1}`,
+    kind: 'screenshot',
+    evidenceClass: 'screenshot',
+    artifactId: original.manifestArtifact.id,
+    artifactContentSha256: original.manifestArtifact.contentSha256!,
+    jsonPointer: '/assetId',
+    sensitivity: 'internal',
+    redaction: 'none',
+  }));
+  const llm = new ContractGenerationLLM(structuredClone(contract.payload));
+  const service = generationServiceFor(contract, llm, () => undefined);
+  const input = generationInput(contract);
+  input.finalizedRequirement = {
+    ...(input.finalizedRequirement as ResearchTaskV2),
+    material_requests: [
+      { id: 'primary', role: 'primaryScreens', kind: 'visual', label: '我方截图', required: true, multiple: true, reason: '对比' },
+      { id: 'comparison', role: 'comparisonScreens', kind: 'visual', label: '竞品截图', required: true, multiple: true, reason: '对比' },
+    ],
+  };
+  const manifestDraft = { ...input.evidenceManifest.value, entries: evidenceEntries };
+  const { manifestHash: _manifestHash, ...manifestWithoutHash } = manifestDraft;
+  input.evidenceManifest.value = { ...manifestDraft, manifestHash: canonicalFixtureHash(manifestWithoutHash) };
+  const manifestsById = new Map(originals.map((original) => [
+    original.manifestArtifact.id,
+    {
+      artifact: {
+        id: original.manifestArtifact.id,
+        contentSha256: original.manifestArtifact.contentSha256!,
+      },
+      value: original.manifest,
+    },
+  ]));
+  input.evidenceResolver = { resolveArtifact: (artifactId) => manifestsById.get(artifactId) ?? null };
+
+  const result = await service.generate(Object.assign(input, {
+    visualAssets: originals.flatMap((original, index) => [original, annotations[index]!]),
+  }));
+  const presentation = (result.deliverable.payload as Record<string, unknown>).visualInputPresentation as {
+    mode: string;
+    pairs: Array<Record<string, unknown>>;
+  };
+
+  assert.equal(presentation.mode, 'paired');
+  assert.deepEqual(presentation.pairs, [{
+    pairId: 'PAIR-001',
+    label: '首屏',
+    sequence: 1,
+    primaryItemId: 'visual-input:primaryScreens:2',
+    comparisonItemId: 'visual-input:comparisonScreens:1',
+  }]);
 });
 
 test('competitive screenshot comparisons require an original and its annotation lineage pair', async () => {

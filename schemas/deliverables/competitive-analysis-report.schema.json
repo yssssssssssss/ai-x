@@ -54,6 +54,9 @@
     "screenshotComparisons": {
       "type": "array",
       "items": { "$ref": "#/$defs/screenshotComparison" }
+    },
+    "visualInputPresentation": {
+      "$ref": "#/$defs/visualInputPresentation"
     }
   },
   "$defs": {
@@ -171,6 +174,73 @@
           "items": { "$ref": "#/$defs/nonEmptyString" }
         },
         "caption": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "visualInputItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourceArtifactId", "inputIndex", "originalAssetId", "annotationAssetId", "evidenceIds"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "sourceArtifactId": { "$ref": "#/$defs/nonEmptyString" },
+        "inputIndex": { "type": "integer", "minimum": 1 },
+        "originalAssetId": { "$ref": "#/$defs/nonEmptyString" },
+        "annotationAssetId": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+    "visualInputGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "label", "items"],
+      "properties": {
+        "role": { "$ref": "#/$defs/nonEmptyString" },
+        "label": { "$ref": "#/$defs/nonEmptyString" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/visualInputItem" }
+        }
+      }
+    },
+    "visualInputPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairId", "label", "sequence", "primaryItemId", "comparisonItemId"],
+      "properties": {
+        "pairId": { "$ref": "#/$defs/nonEmptyString" },
+        "label": { "$ref": "#/$defs/nonEmptyString" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "primaryItemId": { "$ref": "#/$defs/nonEmptyString" },
+        "comparisonItemId": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "visualInputPresentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "groups", "pairs"],
+      "properties": {
+        "mode": { "enum": ["grouped", "paired"] },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/visualInputGroup" }
+        },
+        "pairs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/visualInputPair" }
+        }
       }
     }
   }

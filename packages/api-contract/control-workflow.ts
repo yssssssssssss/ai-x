@@ -100,6 +100,21 @@ export interface TaskMaterialBinding {
   materialIds: string[];
 }
 
+export type TaskMaterialComparisonMode = 'grouped' | 'paired';
+
+export interface TaskMaterialComparisonPair {
+  label: string;
+  primaryMaterialId: string;
+  comparisonMaterialId: string;
+}
+
+export interface TaskMaterialComparison {
+  mode: TaskMaterialComparisonMode;
+  primaryRequestId: string;
+  comparisonRequestId: string;
+  pairs: TaskMaterialComparisonPair[];
+}
+
 export interface VerifiedTaskMaterial {
   materialId: string;
   requestId: string;
@@ -126,6 +141,7 @@ export interface ClarifyControlTaskRequest {
   assumptionEdits: Record<string, string>;
   selectedScenarioId?: string;
   materialBindings?: TaskMaterialBinding[];
+  materialComparison?: TaskMaterialComparison;
   idempotencyKey: string;
 }
 
@@ -139,6 +155,7 @@ export interface CurrentPlanCandidate {
   plan: CurrentExecutionPlan;
   pendingInputs: PendingInput[];
   providedMaterials?: ProvidedTaskMaterial[];
+  materialComparison?: TaskMaterialComparison;
 }
 
 export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
@@ -451,6 +468,8 @@ export interface CurrentTaskReadResponse {
   candidates: CurrentPlanCandidate[];
   activePlan: CurrentPlanCandidate | null;
   taskMaterials?: TaskMaterialResponse[];
+  materialBindings?: TaskMaterialBinding[];
+  materialComparison?: TaskMaterialComparison;
   planningGuidance?: PlanningGuidanceClarification;
   approvalRequirements?: ControlApprovalRequirement[];
   planRecovery?: ControlPlanRecovery;

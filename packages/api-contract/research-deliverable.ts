@@ -613,6 +613,13 @@ export interface VisualAssetReference {
   manifestArtifactId: string;
 }
 
+export interface VisualAssetInputPair {
+  pairId: string;
+  label: string;
+  side: 'primary' | 'comparison';
+  sequence: number;
+}
+
 export type VisualAssetSource =
   | {
       kind: 'tool_artifact';
@@ -621,7 +628,15 @@ export type VisualAssetSource =
       jsonPointer: string;
       url: string;
     }
-  | { kind: 'user_upload'; fileName: string }
+  | {
+      kind: 'user_upload';
+      fileName: string;
+      inputArtifactId?: string;
+      inputArtifactContentSha256?: string;
+      inputRole?: string;
+      inputIndex?: number;
+      comparisonPair?: VisualAssetInputPair;
+    }
   | { kind: 'derived' };
 
 export interface BrowserCaptureSource {

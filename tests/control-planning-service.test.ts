@@ -905,11 +905,6 @@ test('planExistingTask persists finalized candidates on the original task withou
   const ownerUserId = '00000000-0000-0000-0000-000000000903';
   const originalInput = '澄清后的原任务规划';
   const planningResult = researchPlanningResult(originalInput);
-  planningResult.providedMaterials = [{
-    role: 'designImage',
-    materialIds: ['material-1'],
-    fileNames: ['page.png'],
-  }];
   const calls: Array<Record<string, unknown>> = [];
   const service = new ControlPlanningService({
     planning: { async plan() { throw new Error('plan must not run for finalized result'); } },
@@ -959,9 +954,6 @@ test('planExistingTask persists finalized candidates on the original task withou
   assert.deepEqual((calls[0]?.candidates as Array<{ candidateId: string }>).map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.deepEqual(calls[0]?.structuredTask, planningResult.structuredTask);
   assert.equal(response.task.id, taskId);
-  assert.deepEqual(response.candidates[0]?.providedMaterials, [{
-    role: 'designImage', materialIds: ['material-1'], fileNames: ['page.png'],
-  }]);
   assert.equal(response.task.state, 'awaiting_selection');
   assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.ok(response.candidates.every((candidate) => candidate.plan.task_id === taskId));

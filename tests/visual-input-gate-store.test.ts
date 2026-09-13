@@ -231,12 +231,24 @@ test('publishes a Plan gate that references an existing Task-bound image without
     gateKey: 'designImage',
     multiple: false,
     materialIds: [taskImage.id],
+    pairReferences: [{
+      materialId: taskImage.id,
+      pairId: 'PAIR-001',
+      label: '首屏',
+      side: 'primary',
+      sequence: 1,
+    }],
   });
 
   assert.equal(artifacts.binaryWrites.length, 0);
   assert.equal(artifacts.jsonWrites.length, 1);
-  const manifest = artifacts.values.get(published.evidenceRef!) as { images: Array<{ artifactId: string }> };
+  const manifest = artifacts.values.get(published.evidenceRef!) as {
+    images: Array<{ artifactId: string; comparisonPair?: unknown }>;
+  };
   assert.deepEqual(manifest.images.map(({ artifactId }) => artifactId), [taskImage.id]);
+  assert.deepEqual(manifest.images[0]?.comparisonPair, {
+    pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1,
+  });
   const resolved = await store.resolve({
     taskId: 'task-1',
     planVersionId: 'plan-1',
@@ -244,6 +256,11 @@ test('publishes a Plan gate that references an existing Task-bound image without
     pendingInputs: pending,
   });
   assert.deepEqual(resolved.visuals[0]?.images[0]?.bytes, PNG);
+  assert.equal(resolved.visuals[0]?.images[0]?.inputRole, 'designImage');
+  assert.equal(resolved.visuals[0]?.images[0]?.inputIndex, 1);
+  assert.deepEqual(resolved.visuals[0]?.images[0]?.comparisonPair, {
+    pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1,
+  });
 });
 
 test('invalidates a sealed manifest when its post-write binding check fails', async () => {

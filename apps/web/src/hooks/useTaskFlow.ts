@@ -103,6 +103,7 @@ function planView(
     },
     pendingUploads: candidate.pendingInputs,
     ...(candidate.providedMaterials ? { providedMaterials: candidate.providedMaterials } : {}),
+    ...(candidate.materialComparison ? { materialComparison: candidate.materialComparison } : {}),
   };
 }
 

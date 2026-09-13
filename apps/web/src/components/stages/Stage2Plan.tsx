@@ -161,6 +161,9 @@ export function Stage2Plan({
 
   const pending = plan.pendingUploads ?? [];
   const providedByRole = new Map((plan.providedMaterials ?? []).map((material) => [material.role, material]));
+  const providedMaterialNames = new Map((plan.providedMaterials ?? []).flatMap((material) => (
+    material.materialIds.map((materialId, index) => [materialId, material.fileNames[index] ?? materialId] as const)
+  )));
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
   const missingInputs = pending.filter((input) => {
     if (input.kind === 'visual') {
@@ -427,6 +430,23 @@ export function Stage2Plan({
             </div>
             );
           })}
+        </div>
+      )}
+
+      {plan.materialComparison && (
+        <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border-soft)', borderRadius: 8, fontSize: 12 }}>
+          <strong>图片对比方式：{plan.materialComparison.mode === 'paired' ? '一一配对' : '分组对比'}</strong>
+          {plan.materialComparison.mode === 'paired' && (
+            <ol style={{ margin: '8px 0 0', paddingLeft: 20, color: 'var(--text-dim)' }}>
+              {plan.materialComparison.pairs.map((pair, index) => (
+                <li key={`${pair.primaryMaterialId}:${pair.comparisonMaterialId}`}>
+                  {pair.label || `对比项 ${index + 1}`}：{providedMaterialNames.get(pair.primaryMaterialId) ?? pair.primaryMaterialId}
+                  {' ↔ '}
+                  {providedMaterialNames.get(pair.comparisonMaterialId) ?? pair.comparisonMaterialId}
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       )}
 

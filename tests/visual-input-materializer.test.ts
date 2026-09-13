@@ -27,6 +27,8 @@ function resolvedImage(
   id: string,
   bytes: Buffer,
   contentType: 'image/jpeg' | 'image/png' | 'image/webp',
+  inputIndex = 1,
+  comparisonPair?: ResolvedVisualInputImage['comparisonPair'],
 ): ResolvedVisualInputImage {
   return {
     artifact: {
@@ -49,6 +51,9 @@ function resolvedImage(
     bytes,
     metadata: { contentType, byteSize: bytes.byteLength, width: 1, height: 1 },
     dataUrl: `data:${contentType};base64,${bytes.toString('base64')}`,
+    inputRole: 'competitor_screenshots',
+    inputIndex,
+    ...(comparisonPair ? { comparisonPair } : {}),
   };
 }
 
@@ -90,9 +95,11 @@ test('materializes image input gates as sealed originals with derived annotation
         gateKey: 'competitor_screenshots',
         multiple: true,
         images: [
-          resolvedImage('input-jpeg', JPEG_BYTES, 'image/jpeg'),
-          resolvedImage('input-png', PNG_BYTES, 'image/png'),
-          resolvedImage('input-webp', WEBP_BYTES, 'image/webp'),
+          resolvedImage('input-jpeg', JPEG_BYTES, 'image/jpeg', 1, {
+            pairId: 'PAIR-001', label: '首屏', side: 'comparison', sequence: 1,
+          }),
+          resolvedImage('input-png', PNG_BYTES, 'image/png', 2),
+          resolvedImage('input-webp', WEBP_BYTES, 'image/webp', 3),
         ],
       },
     ],
@@ -124,6 +131,13 @@ test('materializes image input gates as sealed originals with derived annotation
         kind: 'user_upload',
         fileName: 'competitor_screenshots-1.jpg',
         bytes: JPEG_BYTES,
+        inputArtifactId: 'input-jpeg',
+        inputArtifactContentSha256: 'sha256:input-jpeg',
+        inputRole: 'competitor_screenshots',
+        inputIndex: 1,
+        comparisonPair: {
+          pairId: 'PAIR-001', label: '首屏', side: 'comparison', sequence: 1,
+        },
       },
     },
     {
@@ -142,6 +156,10 @@ test('materializes image input gates as sealed originals with derived annotation
         kind: 'user_upload',
         fileName: 'competitor_screenshots-2.png',
         bytes: PNG_BYTES,
+        inputArtifactId: 'input-png',
+        inputArtifactContentSha256: 'sha256:input-png',
+        inputRole: 'competitor_screenshots',
+        inputIndex: 2,
       },
     },
     {
@@ -160,6 +178,10 @@ test('materializes image input gates as sealed originals with derived annotation
         kind: 'user_upload',
         fileName: 'competitor_screenshots-3.webp',
         bytes: WEBP_BYTES,
+        inputArtifactId: 'input-webp',
+        inputArtifactContentSha256: 'sha256:input-webp',
+        inputRole: 'competitor_screenshots',
+        inputIndex: 3,
       },
     },
   ]);
@@ -271,6 +293,8 @@ test('ingests design-audit originals without creating pre-analysis annotations',
   assert.deepEqual(originals, [{
     gateKey: 'designImage',
     imageIndex: 1,
+    inputArtifactId: 'input-png',
+    inputIndex: 1,
     original: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
   }]);
 });
@@ -469,11 +493,11 @@ test('visual analysis suite keeps sample order and degrades only the failed lab 
     context: { signal: controller.signal, deadlineAt: Date.now() + 10_000 },
     input: {
       research_goal: '比较商品详情页视觉体验',
-      jd_screenshots: [
+      jdDesignImage: [
         { dataUrl: 'data:image/png;base64,amQtMQ==' },
         { dataUrl: 'data:image/png;base64,amQtMg==' },
       ],
-      competitor_screenshots: [
+      competitorDesignImage: [
         { dataUrl: 'data:image/png;base64,Y21wLTE=' },
         { dataUrl: 'data:image/png;base64,Y21wLTI=' },
       ],

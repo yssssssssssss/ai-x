@@ -74,6 +74,8 @@ export interface EligibleCapabilityDecision extends CapabilityDecision {
 export interface CapabilityResolveInput {
   task: ResearchTaskV2;
   available_input_roles: readonly string[];
+  /** Verified Task Material roles that must remain PendingInput obligations for Plan-bound gates. */
+  provided_material_roles?: readonly string[];
   skills: readonly CapabilitySkillRegistryEntry[];
   tools: readonly ToolRegistryEntry[];
   tool_states: readonly CapabilityToolState[];
@@ -358,10 +360,14 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
           composition.optional_input_roles.includes(role)
         ))
       : [];
+    const providedVisualRoles = (input.provided_material_roles ?? []).filter((role) => (
+      skill.visual_inputs?.includes(role) === true
+    ));
     const pendingInputs = [...new Set([
       ...(input.portfolio_context ? [] : skill.inputs),
       ...requiredInputRoles,
       ...declaredPendingMaterialRoles,
+      ...providedVisualRoles,
     ])]
       .filter((role) => !availableInputs.has(role))
       .map((role): CapabilityPendingInput => ({

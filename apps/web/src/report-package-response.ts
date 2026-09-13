@@ -135,6 +135,21 @@ function isCanonicalHttpsUrl(value: unknown): value is string {
   }
 }
 
+function assertVisualInputPair(value: unknown): void {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ['pairId', 'label', 'side', 'sequence'])
+    || typeof value.pairId !== 'string'
+    || !/^PAIR-\d{3,}$/u.test(value.pairId)
+    || !isNonEmptyString(value.label)
+    || (value.side !== 'primary' && value.side !== 'comparison')
+    || !Number.isSafeInteger(value.sequence)
+    || Number(value.sequence) < 1
+  ) {
+    throw new Error('visual Asset Manifest comparison pair is invalid');
+  }
+}
+
 function assertManifestSource(
   value: unknown,
   version: 'visual-asset-manifest-v1' | 'visual-asset-manifest-v2',
@@ -148,6 +163,23 @@ function assertManifestSource(
     && hasExactKeys(value, ['kind', 'fileName'])
     && isNonEmptyString(value.fileName)
   ) return 'original';
+  if (
+    value.kind === 'user_upload'
+    && hasExactKeys(value, [
+      'kind', 'fileName', 'inputArtifactId', 'inputRole', 'inputIndex',
+      ...(hasOwn(value, 'inputArtifactContentSha256') ? ['inputArtifactContentSha256'] : []),
+      ...(hasOwn(value, 'comparisonPair') ? ['comparisonPair'] : []),
+    ])
+    && isNonEmptyString(value.fileName)
+    && isNonEmptyString(value.inputArtifactId)
+    && (!hasOwn(value, 'inputArtifactContentSha256') || isSha256(value.inputArtifactContentSha256))
+    && isNonEmptyString(value.inputRole)
+    && Number.isSafeInteger(value.inputIndex)
+    && Number(value.inputIndex) >= 1
+  ) {
+    if (hasOwn(value, 'comparisonPair')) assertVisualInputPair(value.comparisonPair);
+    return 'original';
+  }
   if (
     value.kind === 'tool_artifact'
     && hasExactKeys(value, ['kind', 'artifactId', 'artifactContentSha256', 'jsonPointer', 'url'])
@@ -258,7 +290,16 @@ export function assertVisualAssetManifest(
   ) {
     throw new Error('visual Asset Manifest Task, Plan, and Attempt binding does not match the package');
   }
-  const source = assertManifestSource(value.source, value.version);
+  const sourceValue = value.source;
+  const source = assertManifestSource(sourceValue, value.version);
+  if (
+    isRecord(sourceValue)
+    && sourceValue.kind === 'user_upload'
+    && hasOwn(sourceValue, 'inputArtifactContentSha256')
+    && sourceValue.inputArtifactContentSha256 !== value.contentSha256
+  ) {
+    throw new Error('visual Asset Manifest structured upload hash does not match its content');
+  }
   const derivation = assertManifestDerivation(value.derivation);
   if (source === 'derived') {
     assertManifestLineage(value.derivedFrom);

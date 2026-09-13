@@ -359,6 +359,100 @@ test('clarification binds only server-verified Task Materials before planning', 
   }
 });
 
+test('clarification validates and forwards explicit image pairing independently of file names', async () => {
+  const competitiveTask: ControlTaskDetail = {
+    ...task,
+    id: 'task-competitive-pairing',
+    structuredTask: {
+      ...requirement,
+      task_type: 'competitive_research',
+      expected_deliverables: ['competitive_analysis_report'],
+      ambiguities: [],
+      clarification_questions: [],
+      material_requests: [{
+        id: 'primary-images', role: 'primaryScreens', kind: 'visual', label: '我方截图',
+        required: true, multiple: true, reason: '用于对比',
+      }, {
+        id: 'comparison-images', role: 'comparisonScreens', kind: 'visual', label: '竞品截图',
+        required: true, multiple: true, reason: '用于对比',
+      }],
+    },
+  };
+  const materials = [{
+    materialId: 'ours-a', requestId: 'primary-images', role: 'primaryScreens', fileName: 'random-a.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68,
+  }, {
+    materialId: 'theirs-z', requestId: 'comparison-images', role: 'comparisonScreens', fileName: 'unrelated-z.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 68,
+  }];
+  const calls: Array<Record<string, unknown>> = [];
+  const repository = clarificationRepository(async (id) => id === competitiveTask.id ? competitiveTask : null);
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    resolveTaskMaterials: async () => materials,
+    clarification: {
+      clarify: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return candidatesResult;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  const { server, baseUrl } = await listen(app);
+  try {
+    const response = await post(baseUrl, `/api/control-tasks/${competitiveTask.id}/clarify`, ownerToken, {
+      expectedVersion: 1,
+      clarificationAnswers: {},
+      assumptionEdits: {},
+      materialBindings: [
+        { requestId: 'primary-images', materialIds: ['ours-a'] },
+        { requestId: 'comparison-images', materialIds: ['theirs-z'] },
+      ],
+      materialComparison: {
+        mode: 'paired',
+        primaryRequestId: 'primary-images',
+        comparisonRequestId: 'comparison-images',
+        pairs: [{ label: '首屏', primaryMaterialId: 'ours-a', comparisonMaterialId: 'theirs-z' }],
+      },
+      idempotencyKey: 'explicit-material-pairing',
+    });
+
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.deepEqual(calls[0]?.materialComparison, {
+      mode: 'paired',
+      primaryRequestId: 'primary-images',
+      comparisonRequestId: 'comparison-images',
+      pairs: [{ label: '首屏', primaryMaterialId: 'ours-a', comparisonMaterialId: 'theirs-z' }],
+    });
+
+    const invalid = await post(baseUrl, `/api/control-tasks/${competitiveTask.id}/clarify`, ownerToken, {
+      expectedVersion: 1,
+      clarificationAnswers: {},
+      assumptionEdits: {},
+      materialBindings: [
+        { requestId: 'primary-images', materialIds: ['ours-a'] },
+        { requestId: 'comparison-images', materialIds: ['theirs-z'] },
+      ],
+      materialComparison: {
+        mode: 'paired',
+        primaryRequestId: 'primary-images',
+        comparisonRequestId: 'comparison-images',
+        pairs: [],
+      },
+      idempotencyKey: 'incomplete-material-pairing',
+    });
+    assert.equal(invalid.status, 422);
+    assert.equal((await invalid.json() as { code?: string }).code, 'task_material_comparison_invalid');
+    assert.equal(calls.length, 1);
+  } finally {
+    server.close();
+  }
+});
+
 test('clarify preserves a retryable Gateway 429 response instead of hiding it as 500', async () => {
   const repository = clarificationRepository(async () => task);
   const runtime = {

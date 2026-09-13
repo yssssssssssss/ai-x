@@ -12,6 +12,7 @@ import type {
   PlanContributionRequirement,
   PlanPortfolioSummary,
 } from './research-deliverable.ts';
+import type { TaskMaterialComparison } from './control-workflow.ts';
 import type {
   CandidateProfile,
   ResearchTaskData,
@@ -136,6 +137,7 @@ export interface PlanResponse {
     materialIds: string[];
     fileNames: string[];
   }>;
+  materialComparison?: TaskMaterialComparison;
 }
 
 export interface ExecuteResponse {

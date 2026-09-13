@@ -415,15 +415,14 @@ test('active capability loader preserves native declarations and normalizes KB a
   assert.deepEqual(nativeSkill?.outputs, ['competitive_analysis']);
   assert.deepEqual(nativeSkill?.required_tools, ['tavily-web-search']);
   assert.deepEqual(nativeSkill?.optional_tools, ['playwright-page-capture']);
-  assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitor_screenshots']);
-  assert.deepEqual(appScreenshotSkill?.multiple_visual_inputs, ['competitor_screenshots']);
+  assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitorDesignImage']);
+  assert.deepEqual(appScreenshotSkill?.visual_inputs, ['jdDesignImage', 'competitorDesignImage']);
+  assert.deepEqual(appScreenshotSkill?.multiple_visual_inputs, ['jdDesignImage', 'competitorDesignImage']);
   assert.deepEqual(appScreenshotSkill?.required_tools, [
     'tavily-web-search',
-    'ai-spider-search',
-    'aesthetic-quant-lab',
-    'attention-analysis-lab',
-    'vision-brand-lab',
+    'visual-analysis-suite',
   ]);
+  assert.deepEqual(appScreenshotSkill?.optional_tools, []);
   assert.deepEqual(knowledgeBaseSkill?.inputs, []);
   assert.deepEqual(knowledgeBaseSkill?.outputs, []);
   assert.deepEqual(knowledgeBaseSkill?.required_tools, []);

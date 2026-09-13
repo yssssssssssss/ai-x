@@ -2373,6 +2373,7 @@ test('visual-only Design Audit records Visual Suite as core derived Evidence', a
         });
         return [{
           gateKey: 'designImage', imageIndex: 1,
+          inputArtifactId: 'input-design-1', inputIndex: 1,
           original: {
             assetId: original.assetArtifact.id,
             manifestArtifactId: original.manifestArtifact.id,
@@ -2435,6 +2436,8 @@ test('defers design annotation until verified attention findings are available',
   let materializedOriginal: {
     gateKey: string;
     imageIndex: number;
+    inputArtifactId: string;
+    inputIndex: number;
     original: { assetId: string; manifestArtifactId: string };
   } | undefined;
   let annotationPurpose: 'input_provenance' | undefined;
@@ -2481,6 +2484,8 @@ test('defers design annotation until verified attention findings are available',
         materializedOriginal = {
           gateKey: 'designImage',
           imageIndex: 1,
+          inputArtifactId: 'input-design-1',
+          inputIndex: 1,
           original: {
             assetId: original.assetArtifact.id,
             manifestArtifactId: original.manifestArtifact.id,

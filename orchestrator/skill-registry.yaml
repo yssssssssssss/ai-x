@@ -83,11 +83,13 @@ skills:
       - competitive_research
     inputs:
       - research_goal
-      - competitor_screenshots
+      - competitorDesignImage
     visual_inputs:
-      - competitor_screenshots
+      - jdDesignImage
+      - competitorDesignImage
     multiple_visual_inputs:
-      - competitor_screenshots
+      - jdDesignImage
+      - competitorDesignImage
     outputs:
       - competitive_analysis
     intent_tags:
@@ -97,10 +99,7 @@ skills:
       - app-teardown
     required_tools:
       - tavily-web-search
-      - ai-spider-search
-      - aesthetic-quant-lab
-      - attention-analysis-lab
-      - vision-brand-lab
+      - visual-analysis-suite
     output_schema: schemas/skill-result-envelope.schema.json
     cost_level: medium
     risk_level: low
@@ -108,8 +107,8 @@ skills:
       modes: [standalone]
       supported_outcomes: [answer]
       compatible_deliverables: [competitive_analysis_report]
-      required_input_roles: [research_goal, competitor_screenshots]
-      optional_input_roles: []
+      required_input_roles: [research_goal, competitorDesignImage]
+      optional_input_roles: [jdDesignImage]
       standalone_reason: Visual analysis payload has no deterministic Research Contribution adapter.
   - id: design-experience-review
     name: 设计体验走查

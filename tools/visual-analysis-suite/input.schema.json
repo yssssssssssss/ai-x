@@ -11,6 +11,12 @@
     "designImages": {
       "$ref": "#/$defs/images"
     },
+    "jdDesignImage": {
+      "$ref": "#/$defs/images"
+    },
+    "competitorDesignImage": {
+      "$ref": "#/$defs/images"
+    },
     "jd_screenshots": {
       "$ref": "#/$defs/images"
     },

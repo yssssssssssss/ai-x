@@ -121,6 +121,138 @@ test('renders required visual Material requests and preserves already uploaded f
   assert.match(markup, /accept="image\/png,image\/jpeg,image\/webp"/u);
 });
 
+test('hydrates selected Materials from stored bindings instead of every uploaded Artifact', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        taskMaterials: [{
+          materialId: 'selected-1', requestId: 'screens', role: 'screens', fileName: 'selected.png',
+          mediaType: 'image/png', contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+        }, {
+          materialId: 'available-2', requestId: 'screens', role: 'screens', fileName: 'removed.png',
+          mediaType: 'image/png', contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+        }],
+        materialBindings: [{ requestId: 'screens', materialIds: ['selected-1'] }],
+        structuredTask: {
+          ...response.structuredTask,
+          material_requests: [{
+            id: 'screens', role: 'screens', kind: 'visual', label: '页面截图',
+            required: false, multiple: true, reason: '可选截图',
+          }],
+        },
+      },
+      onUploadMaterial: async () => undefined,
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /selected\.png/u);
+  assert.doesNotMatch(markup, /removed\.png/u);
+});
+
+test('renders dynamic grouped and explicit paired controls for two multi-image requests', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        taskMaterials: [
+          {
+            materialId: 'ours-1', requestId: 'ours', role: 'primaryScreens', fileName: 'ours-one.png',
+            mediaType: 'image/png', contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+          },
+          {
+            materialId: 'theirs-1', requestId: 'theirs', role: 'comparisonScreens', fileName: 'theirs-one.png',
+            mediaType: 'image/png', contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 68, state: 'SEALED',
+          },
+        ],
+        structuredTask: {
+          ...response.structuredTask,
+          task_type: 'competitive_research',
+          expected_deliverables: ['competitive_analysis_report'],
+          material_requests: [
+            { id: 'ours', role: 'primaryScreens', kind: 'visual', label: '我方截图', required: true, multiple: true, reason: '对比' },
+            { id: 'theirs', role: 'comparisonScreens', kind: 'visual', label: '竞品截图', required: true, multiple: true, reason: '对比' },
+          ],
+        },
+      },
+      onUploadMaterial: async () => undefined,
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /图片对比方式/u);
+  assert.match(markup, /checked="" value="grouped"/u);
+  assert.match(markup, /value="paired"/u);
+  assert.match(markup, /不推断一一对应关系/u);
+});
+
+test('renders stored explicit image pairs with both material selections', async () => {
+  const { CurrentStage1Clarify } = await loadClarificationComponent();
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const previousReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  const taskMaterials = [{
+    materialId: 'ours-1', requestId: 'ours', role: 'primaryScreens', fileName: 'ours-one.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'1'.repeat(64)}`, byteSize: 68, state: 'SEALED' as const,
+  }, {
+    materialId: 'theirs-1', requestId: 'theirs', role: 'comparisonScreens', fileName: 'theirs-one.png',
+    mediaType: 'image/png' as const, contentSha256: `sha256:${'2'.repeat(64)}`, byteSize: 68, state: 'SEALED' as const,
+  }];
+  try {
+    markup = renderToStaticMarkup(react.createElement(CurrentStage1Clarify, {
+      response: {
+        ...response,
+        planningGuidance: undefined,
+        taskMaterials,
+        materialComparison: {
+          mode: 'paired', primaryRequestId: 'ours', comparisonRequestId: 'theirs',
+          pairs: [{ label: '首屏', primaryMaterialId: 'ours-1', comparisonMaterialId: 'theirs-1' }],
+        },
+        structuredTask: {
+          ...response.structuredTask,
+          task_type: 'competitive_research',
+          expected_deliverables: ['competitive_analysis_report'],
+          material_requests: [
+            { id: 'ours', role: 'primaryScreens', kind: 'visual', label: '我方截图', required: true, multiple: true, reason: '对比' },
+            { id: 'theirs', role: 'comparisonScreens', kind: 'visual', label: '竞品截图', required: true, multiple: true, reason: '对比' },
+          ],
+        },
+      },
+      materials: taskMaterials,
+      onUploadMaterial: async () => undefined,
+      onSubmit() {},
+    }));
+  } finally {
+    if (previousReact === undefined) delete globals.React;
+    else globals.React = previousReact;
+  }
+
+  assert.match(markup, /checked="" value="paired"/u);
+  assert.match(markup, /aria-label="对比项 1 场景名称" value="首屏"/u);
+  assert.match(markup, /ours-one\.png/u);
+  assert.match(markup, /theirs-one\.png/u);
+});
+
 test('deliverable intent clarification renders business-language choices', async () => {
   const { CurrentStage1Clarify } = await loadClarificationComponent();
   const globals = globalThis as typeof globalThis & { React?: unknown };

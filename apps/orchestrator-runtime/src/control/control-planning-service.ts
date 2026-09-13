@@ -15,6 +15,7 @@ import {
   isCandidateProfile,
   type PlanCandidate,
   type PlanProgress,
+  type TaskMaterialRequest,
 } from '../../../../packages/api-contract/plan.ts';
 import {
   resolvePlanningDeliverableSelection,
@@ -38,6 +39,36 @@ interface PersistedPlanVersion {
   plan: ReadableCurrentExecutionPlan;
   planHash: string;
   pendingInputs: PendingInput[];
+}
+
+export function assertTaskMaterialsConsumed(input: {
+  materialRequests: readonly TaskMaterialRequest[];
+  pendingInputs: readonly PendingInput[];
+  providedMaterials?: readonly ProvidedTaskMaterial[];
+}): void {
+  const requestsByRole = new Map(input.materialRequests.map((request) => [request.role, request]));
+  for (const provided of input.providedMaterials ?? []) {
+    const request = requestsByRole.get(provided.role);
+    if (!request) {
+      throw new Error(`provided Task Material ${provided.role} has no declared request`);
+    }
+    const pending = input.pendingInputs.find(({ role }) => role === provided.role);
+    if (
+      !pending
+      || pending.kind !== 'visual'
+      || pending.multiple !== request.multiple
+      || pending.targets.length === 0
+    ) {
+      throw new Error(`candidate does not consume provided Task Material ${provided.role}`);
+    }
+    if (
+      provided.materialIds.length === 0
+      || provided.materialIds.length !== provided.fileNames.length
+      || (!request.multiple && provided.materialIds.length !== 1)
+    ) {
+      throw new Error(`provided Task Material ${provided.role} has invalid cardinality`);
+    }
+  }
 }
 
 export function assertDesignAuditPlanMaterialContract(input: {
@@ -219,6 +250,11 @@ export class ControlPlanningService {
       if (orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      assertTaskMaterialsConsumed({
+        materialRequests: planningResult.structuredTask.material_requests ?? [],
+        pendingInputs: compiled.pending_inputs,
+        providedMaterials: planningResult.providedMaterials,
+      });
       assertDesignAuditPlanMaterialContract({
         deliverableId: deliverableSelection.deliverableId,
         plan: compiled.plan,
