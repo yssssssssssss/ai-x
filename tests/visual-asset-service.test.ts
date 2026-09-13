@@ -119,6 +119,11 @@ class FakeArtifactStore {
     this.jsonValues.set(artifact.id, structuredClone(value));
   }
 
+  seedBinary(artifact: FakeArtifact, bytes: Buffer): void {
+    this.artifacts.set(artifact.id, artifact);
+    this.binaryValues.set(artifact.id, Buffer.from(bytes));
+  }
+
   async writeBinary(input: BinaryWrite): Promise<FakeArtifact> {
     this.binaryWrites.push({ ...input, bytes: Buffer.from(input.bytes) });
     const bytes = Buffer.from(input.bytes);
@@ -678,10 +683,37 @@ test('ingests an ai-spider oss_url only through its verified Tool Artifact JSON 
 
 test('ingests a user PNG without resolving or fetching a remote URL', async () => {
   const fixture = harness();
+  const inputHash = digest(PNG);
+  fixture.artifacts.seedBinary({
+    id: 'material-1',
+    taskId: binding.taskId,
+    planVersionId: null,
+    attemptId: null,
+    kind: 'visual_input_image',
+    state: 'SEALED',
+    storageUri: '/private/material-1',
+    contentSha256: inputHash,
+    byteSize: PNG.byteLength,
+    schemaVersion: 'visual-input-image-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    failureReason: null,
+    mediaType: 'image/png',
+    metadata: { width: 1, height: 1 },
+  }, PNG);
 
   const result = await fixture.service.ingest({
     ...binding,
-    source: { kind: 'user_upload', fileName: 'research-screen.png', bytes: PNG },
+    source: {
+      kind: 'user_upload',
+      fileName: 'research-screen.png',
+      bytes: PNG,
+      inputArtifactId: 'material-1',
+      inputArtifactContentSha256: inputHash,
+      inputRole: 'primaryScreens',
+      inputIndex: 1,
+      comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1 },
+    },
     exportPolicy: 'block',
   });
 
@@ -691,10 +723,47 @@ test('ingests a user PNG without resolving or fetching a remote URL', async () =
   assert.deepEqual(result.manifest.source, {
     kind: 'user_upload',
     fileName: 'research-screen.png',
+    inputArtifactId: 'material-1',
+    inputArtifactContentSha256: inputHash,
+    inputRole: 'primaryScreens',
+    inputIndex: 1,
+    comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1 },
   });
   assert.equal(result.manifest.mediaType, 'image/png');
   assert.equal(result.manifest.exportPolicy, 'block');
   assert.equal(result.manifest.manifestHash, expectedManifestHash(result.manifest));
+});
+
+test('rejects structured user-upload provenance when the source Artifact or hash is not exact', async () => {
+  const missingSource = harness();
+  await assert.rejects(() => missingSource.service.ingest({
+    ...binding,
+    source: {
+      kind: 'user_upload', fileName: 'screen.png', bytes: PNG,
+      inputArtifactId: 'missing-material', inputArtifactContentSha256: digest(PNG),
+      inputRole: 'primaryScreens', inputIndex: 1,
+    },
+    exportPolicy: 'allow',
+  }), /source Artifact|not sealed/u);
+
+  const mismatched = harness();
+  const sourceHash = digest(PNG);
+  mismatched.artifacts.seedBinary({
+    id: 'material-1', taskId: binding.taskId, planVersionId: null, attemptId: null,
+    kind: 'visual_input_image', state: 'SEALED', storageUri: '/private/material-1',
+    contentSha256: sourceHash, byteSize: PNG.byteLength, schemaVersion: 'visual-input-image-v1',
+    sensitivity: 'internal', redactionPolicyVersion: 'v1', failureReason: null,
+    mediaType: 'image/png', metadata: { width: 1, height: 1 },
+  }, PNG);
+  await assert.rejects(() => mismatched.service.ingest({
+    ...binding,
+    source: {
+      kind: 'user_upload', fileName: 'screen.png', bytes: PNG,
+      inputArtifactId: 'material-1', inputArtifactContentSha256: digest(JPEG),
+      inputRole: 'primaryScreens', inputIndex: 1,
+    },
+    exportPolicy: 'allow',
+  }), /source Artifact.*match/u);
 });
 
 test('publishes and re-reads a browser capture as a strictly bound V2 visual Asset', async () => {

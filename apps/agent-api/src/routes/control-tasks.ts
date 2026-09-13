@@ -11,6 +11,7 @@ import type { VisualAssetManifest } from '../../../../packages/api-contract/rese
 import type {
   ProvidedTaskMaterial,
   TaskMaterialBinding,
+  TaskMaterialComparison,
   TaskMaterialResponse,
   VerifiedTaskMaterial,
 } from '../../../../packages/api-contract/control-workflow.ts';
@@ -41,6 +42,11 @@ import {
 } from '../../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
 import { TaskMaterialValidationError } from '../control-runtime.ts';
+import {
+  normalizeTaskMaterialComparison,
+  storedTaskMaterialComparison,
+  TaskMaterialComparisonError,
+} from '../../../orchestrator-runtime/src/control/task-material-comparison.ts';
 import { requireAuth } from '../middleware.ts';
 
 const currentRequirementValidator = new SchemaValidator();
@@ -53,7 +59,8 @@ export interface ControlClarificationPort {
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
     selectedScenarioId?: string;
-    materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+    materialBindings?: Array<{ requestId: string; materialIds: string[] }>;
+    materialComparison?: TaskMaterialComparison;
     materials: VerifiedTaskMaterial[];
     expectedVersion: number;
     commandReservation: {
@@ -215,15 +222,32 @@ function providedMaterialsView(
 function withVerifiedMaterials(
   response: CurrentPlanningResponse,
   materials: readonly VerifiedTaskMaterial[],
-  bindings: readonly TaskMaterialBinding[],
+  bindings: readonly TaskMaterialBinding[] | undefined,
+  materialComparison?: TaskMaterialComparison,
 ): CurrentPlanningResponse {
-  if (materials.length === 0) return response;
+  const resolvedBindings = bindings ?? [];
   const taskMaterials: TaskMaterialResponse[] = materials.map((material) => ({ ...material, state: 'SEALED' }));
-  if (response.status === 'clarification_required') return { ...response, taskMaterials };
-  const providedMaterials = providedMaterialsView(materials, bindings);
+  if (response.status === 'clarification_required') {
+    return {
+      ...response,
+      ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
+      ...(bindings !== undefined ? {
+        materialBindings: resolvedBindings.map((binding) => ({
+          requestId: binding.requestId,
+          materialIds: [...binding.materialIds],
+        })),
+      } : {}),
+      ...(materialComparison ? { materialComparison } : {}),
+    };
+  }
+  const providedMaterials = providedMaterialsView(materials, resolvedBindings);
   return {
     ...response,
-    candidates: response.candidates.map((candidate) => ({ ...candidate, providedMaterials })),
+    candidates: response.candidates.map((candidate) => ({
+      ...candidate,
+      ...(providedMaterials.length > 0 ? { providedMaterials } : {}),
+      ...(materialComparison ? { materialComparison } : {}),
+    })),
   };
 }
 
@@ -301,6 +325,9 @@ function publicError(error: unknown): {
         code: error instanceof TaskMaterialValidationError ? error.code : 'task_material_binary_invalid',
       },
     };
+  }
+  if (error instanceof TaskMaterialComparisonError) {
+    return { status: 422, body: { error: error.message, code: error.code } };
   }
   if (error instanceof DatasetInputGateError) {
     return { status: 422, body: { error: error.message, code: error.code } };
@@ -397,7 +424,8 @@ interface PreparedClarification {
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
   selectedScenarioId?: string;
-  materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+  materialBindings?: Array<{ requestId: string; materialIds: string[] }>;
+  materialComparison?: TaskMaterialComparison;
   materials: VerifiedTaskMaterial[];
   idempotencyKey: string;
   requestHash: string;
@@ -425,7 +453,9 @@ async function prepareClarification(
   const assumptionEdits = record(body?.assumptionEdits);
   const hasSelectedScenarioId = body !== null && Object.hasOwn(body, 'selectedScenarioId');
   const selectedScenarioId = string(body?.selectedScenarioId);
+  const hasMaterialBindings = body !== null && Object.hasOwn(body, 'materialBindings');
   const materialBindings = parsedMaterialBindings(body?.materialBindings);
+  const materialComparisonValue = body?.materialComparison;
   const key = idempotencyKey(req);
   if (
     expectedVersion == null
@@ -465,12 +495,24 @@ async function prepareClarification(
       return null;
     }
   }
+  let materialComparison: TaskMaterialComparison | undefined;
+  try {
+    materialComparison = normalizeTaskMaterialComparison({
+      value: materialComparisonValue,
+      requests: requirement?.material_requests ?? [],
+      bindings: materialBindings,
+    });
+  } catch (error) {
+    responseError(res, error);
+    return null;
+  }
   const requestHash = clarificationRequestHash({
     expectedVersion,
     clarificationAnswers,
     assumptionEdits,
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
-    ...(materialBindings.length > 0 ? { materialBindings } : {}),
+    ...(hasMaterialBindings ? { materialBindings } : {}),
+    ...(materialComparison ? { materialComparison } : {}),
   });
   const existingCommand = await runtime.repository.getCommand(task.id, 'clarification', key);
   const resumesExistingCommand = existingCommand?.requestHash === requestHash;
@@ -527,7 +569,8 @@ async function prepareClarification(
       Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
     ),
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
-    materialBindings,
+    ...(hasMaterialBindings ? { materialBindings } : {}),
+    ...(materialComparison ? { materialComparison } : {}),
     materials,
     idempotencyKey: key,
     requestHash,
@@ -562,6 +605,7 @@ async function runClarification(
         reservation.response as CurrentPlanningResponse,
         prepared.materials,
         prepared.materialBindings,
+        prepared.materialComparison,
       );
     }
     if (reservation.status === 'pending') {
@@ -576,6 +620,7 @@ async function runClarification(
           waited.response as CurrentPlanningResponse,
           prepared.materials,
           prepared.materialBindings,
+          prepared.materialComparison,
         );
       }
       continue;
@@ -591,7 +636,10 @@ async function runClarification(
       answers: prepared.clarificationAnswers,
       assumptionEdits: prepared.assumptionEdits,
       ...(prepared.selectedScenarioId ? { selectedScenarioId: prepared.selectedScenarioId } : {}),
-      materialBindings: prepared.materialBindings,
+      ...(prepared.materialBindings !== undefined
+        ? { materialBindings: prepared.materialBindings }
+        : {}),
+      ...(prepared.materialComparison ? { materialComparison: prepared.materialComparison } : {}),
       materials: prepared.materials,
       expectedVersion: prepared.expectedVersion,
       commandReservation: {
@@ -608,7 +656,12 @@ async function runClarification(
         response,
       });
     }
-    return withVerifiedMaterials(response, prepared.materials, prepared.materialBindings);
+    return withVerifiedMaterials(
+      response,
+      prepared.materials,
+      prepared.materialBindings,
+      prepared.materialComparison,
+    );
   } catch (error) {
     await runtime.repository.recoverCommandAfterFailure({ ...command, reservationToken });
     throw error;
@@ -1106,15 +1159,25 @@ router.get('/:id', async (req, res) => {
       return;
     }
     const planningGuidance = planningGuidanceFromStored(activeRequirement?.clarification);
+    const hasStoredMaterialBindings = record(activeRequirement?.clarification) !== null
+      && Object.hasOwn(record(activeRequirement?.clarification)!, 'materialBindings');
+    const materialBindings = storedMaterialBindings(activeRequirement?.clarification);
+    const materialComparison = storedTaskMaterialComparison(activeRequirement?.clarification);
     const providedMaterials = providedMaterialsView(
       taskMaterials,
-      storedMaterialBindings(activeRequirement?.clarification),
+      materialBindings,
     );
-    const candidates = recovered.candidates.map((candidate) => (
-      providedMaterials.length > 0 ? { ...candidate, providedMaterials } : candidate
-    ));
-    const visibleActivePlan = activePlan && providedMaterials.length > 0
-      ? { ...activePlan, providedMaterials }
+    const candidates = recovered.candidates.map((candidate) => ({
+      ...candidate,
+      ...(providedMaterials.length > 0 ? { providedMaterials } : {}),
+      ...(materialComparison ? { materialComparison } : {}),
+    }));
+    const visibleActivePlan = activePlan
+      ? {
+          ...activePlan,
+          ...(providedMaterials.length > 0 ? { providedMaterials } : {}),
+          ...(materialComparison ? { materialComparison } : {}),
+        }
       : activePlan;
     res.json({
       kind: 'current',
@@ -1134,6 +1197,8 @@ router.get('/:id', async (req, res) => {
       })),
       approvalRequirements,
       ...(planningGuidance ? { planningGuidance } : {}),
+      ...(hasStoredMaterialBindings ? { materialBindings } : {}),
+      ...(materialComparison ? { materialComparison } : {}),
       ...(pendingInputQuarantined
         ? { planRecovery: { kind: 'plan_revision_required' as const, reason: 'legacy_pending_inputs' as const } }
         : {}),

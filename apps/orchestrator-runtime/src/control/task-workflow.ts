@@ -19,6 +19,7 @@ import {
   selectAuthoritativeFailedStep,
   type ControlExecutionResult,
   type DisabledExecutionResponse,
+  type TaskMaterialBinding,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
@@ -38,6 +39,13 @@ import {
   type VisualInputGateStore,
 } from './visual-input-gate-store.ts';
 import { parsePendingInputContracts } from './pending-input-contract.ts';
+import {
+  materialComparisonReferences,
+  normalizeTaskMaterialComparison,
+  storedTaskMaterialComparison,
+  TaskMaterialComparisonError,
+  type MaterialComparisonPairReference,
+} from './task-material-comparison.ts';
 export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -408,7 +416,17 @@ function remapPendingInputs(pendingInputs: unknown, remappedStepNo: ReadonlyMap<
 
 export function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDetail): Array<{ key: string; authority: WorkflowRole }> {
   const requirements = new Map<string, WorkflowRole>();
-  for (const issue of taskShape(task).blocking_issues ?? []) {
+  const shape = taskShape(task);
+  const materialRequests = shape.material_requests ?? [];
+  for (const issue of shape.blocking_issues ?? []) {
+    if (
+      materialRequests.length > 0
+      && (
+        issue.kind === 'missing_material'
+        || issue.kind === 'missing_required_material'
+        || issue.kind === 'material'
+      )
+    ) continue;
     const authority = issue.required_authority
       ?? (issue.kind === 'privacy_compliance' || issue.kind === 'privacy' || issue.key === 'pii_and_account_data'
         ? 'legal'
@@ -686,6 +704,32 @@ export class TaskWorkflowService {
       ? await this.repository.getActiveRequirementVersion(task.id)
       : null;
     const inheritedMaterialIds = materialIdsByRole(taskData, activeRequirement?.clarification);
+    let materialPairReferences = new Map<string, MaterialComparisonPairReference>();
+    const hasStoredComparison = isRecord(activeRequirement?.clarification)
+      && Object.hasOwn(activeRequirement.clarification, 'materialComparison');
+    const storedComparison = storedTaskMaterialComparison(activeRequirement?.clarification);
+    if (hasStoredComparison && !storedComparison) {
+      throw new TaskWorkflowGateError(['material_comparison']);
+    }
+    if (storedComparison) {
+      try {
+        const bindings: TaskMaterialBinding[] = (taskData.material_requests ?? []).flatMap((request) => {
+          const materialIds = inheritedMaterialIds.get(request.role);
+          return materialIds ? [{ requestId: request.id, materialIds }] : [];
+        });
+        const normalized = normalizeTaskMaterialComparison({
+          value: storedComparison,
+          requests: taskData.material_requests ?? [],
+          bindings,
+        });
+        materialPairReferences = materialComparisonReferences(normalized);
+      } catch (error) {
+        if (error instanceof TaskMaterialComparisonError) {
+          throw new TaskWorkflowGateError(['material_comparison']);
+        }
+        throw error;
+      }
+    }
     const clarificationQuestions = taskData.clarification_questions ?? [];
     if (taskData.version === 'research-task-v2' && clarificationQuestions.length > 0) {
       throw new ControlPlaneConflictError(
@@ -871,6 +915,10 @@ export class TaskWorkflowService {
           gateKey: role,
           multiple: pending.multiple,
           materialIds,
+          pairReferences: materialIds.flatMap((materialId) => {
+            const reference = materialPairReferences.get(materialId);
+            return reference ? [{ materialId, ...reference }] : [];
+          }),
         }, publicationId);
         publishedInputs.set(role, { ...published, kind: 'visual' });
       }

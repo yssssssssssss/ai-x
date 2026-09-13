@@ -23,7 +23,10 @@ import {
   type ControlPlanningPort,
   type CurrentPlanningResponse,
 } from './routes/control-planning.ts';
-import type { TaskMaterialResponse } from '../../../packages/api-contract/control-workflow.ts';
+import type {
+  TaskMaterialComparison,
+  TaskMaterialResponse,
+} from '../../../packages/api-contract/control-workflow.ts';
 import { requireJwtSecret } from './auth.ts';
 import { buildControlRuntime, type ControlRuntime } from './control-runtime.ts';
 import {
@@ -41,6 +44,7 @@ function refinementResponse(
     taskId: string;
     requirement: ClarificationRequiredResponse['structuredTask'];
     planningGuidance?: ClarificationRequiredResponse['planningGuidance'];
+    materialComparison?: TaskMaterialComparison;
     activatedNodes?: string[];
   },
   task: ControlTaskDetail | null,
@@ -63,6 +67,7 @@ function refinementResponse(
     activatedNodes: result.activatedNodes ?? [],
     candidates: [],
     ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
+    ...(result.materialComparison ? { materialComparison: result.materialComparison } : {}),
     ...(result.planningGuidance ? { planningGuidance: result.planningGuidance } : {}),
   };
 }
@@ -144,6 +149,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         ownerUserId: input.ownerUserId,
         answers: { ...input.answers, assumption_edits: input.assumptionEdits },
         materialBindings: input.materialBindings,
+        ...(input.materialComparison ? { materialComparison: input.materialComparison } : {}),
         materials: input.materials,
         ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
         expectedVersion: input.expectedVersion,

@@ -15,6 +15,7 @@ import type {
   VisualAssetManifestV2,
   VisualAssetReference,
   VisualAssetSource,
+  VisualAssetInputPair,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ToolMediaAttachment } from '../runtime/tool-adapter.ts';
 import {
@@ -84,7 +85,16 @@ export type VisualAssetIngestSource =
       artifactContentSha256: string;
       jsonPointer: string;
     }
-  | { kind: 'user_upload'; fileName: string; bytes: Uint8Array };
+  | {
+      kind: 'user_upload';
+      fileName: string;
+      bytes: Uint8Array;
+      inputArtifactId?: string;
+      inputArtifactContentSha256?: string;
+      inputRole?: string;
+      inputIndex?: number;
+      comparisonPair?: VisualAssetInputPair;
+    };
 
 export interface VisualAssetIngestInput extends AssetBinding {
   activeLease?: ControlExecutionLease;
@@ -714,7 +724,48 @@ export class VisualAssetService {
     if (input.source.kind === 'user_upload') {
       requireNonEmpty(input.source.fileName, 'user upload fileName');
       bytes = Buffer.from(input.source.bytes);
-      source = { kind: 'user_upload', fileName: input.source.fileName };
+      const structuredProvenance = input.source.inputArtifactId !== undefined
+        || input.source.inputArtifactContentSha256 !== undefined
+        || input.source.inputRole !== undefined
+        || input.source.inputIndex !== undefined
+        || input.source.comparisonPair !== undefined;
+      if (structuredProvenance) {
+        if (
+          !input.source.inputArtifactId
+          || !input.source.inputArtifactContentSha256
+          || !input.source.inputRole
+          || !input.source.inputIndex
+        ) {
+          throw new Error('structured user upload provenance is incomplete');
+        }
+        const verifiedInput = await this.artifacts.readVerifiedBinary(input.source.inputArtifactId);
+        const taskBound = verifiedInput.artifact.planVersionId === null
+          && verifiedInput.artifact.attemptId === null;
+        const planBound = verifiedInput.artifact.planVersionId === input.planVersionId
+          && verifiedInput.artifact.attemptId === null;
+        if (
+          verifiedInput.artifact.state !== 'SEALED'
+          || verifiedInput.artifact.taskId !== input.taskId
+          || (!taskBound && !planBound)
+          || verifiedInput.artifact.kind !== 'visual_input_image'
+          || verifiedInput.artifact.schemaVersion !== 'visual-input-image-v1'
+          || verifiedInput.artifact.contentSha256 !== input.source.inputArtifactContentSha256
+          || contentHash(bytes) !== input.source.inputArtifactContentSha256
+        ) {
+          throw new Error('structured user upload source Artifact does not match the sealed image bytes');
+        }
+      }
+      source = {
+        kind: 'user_upload',
+        fileName: input.source.fileName,
+        ...(input.source.inputArtifactId ? { inputArtifactId: input.source.inputArtifactId } : {}),
+        ...(input.source.inputArtifactContentSha256
+          ? { inputArtifactContentSha256: input.source.inputArtifactContentSha256 }
+          : {}),
+        ...(input.source.inputRole ? { inputRole: input.source.inputRole } : {}),
+        ...(input.source.inputIndex ? { inputIndex: input.source.inputIndex } : {}),
+        ...(input.source.comparisonPair ? { comparisonPair: input.source.comparisonPair } : {}),
+      };
     } else if (input.source.kind === 'tool_artifact') {
       validatePointer(input.source.jsonPointer);
       const resolved = await this.artifacts.readVerifiedJson<unknown>(input.source.artifactId);

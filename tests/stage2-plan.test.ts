@@ -47,6 +47,14 @@ test('Stage2 treats inherited Task Materials as already provided and does not as
   assert.match(source, /provided \? \(/u);
 });
 
+test('Stage2 exposes the frozen image pairing before confirmation', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /plan\.materialComparison\.mode === 'paired'/u);
+  assert.match(source, /图片对比方式/u);
+  assert.match(source, /primaryMaterialId/u);
+  assert.match(source, /comparisonMaterialId/u);
+});
+
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
   const payload = buildPlanConfirmationPayload({
     confirmationAnswers: { scope: '中国主流平台' },

@@ -1,6 +1,6 @@
 ---
 name: competitive-app-analysis
-description: 基于内部工具的竞品 app 截图分析——检索竞品截图库,对界面做美学/注意力/品牌视觉的量化分析
+description: 基于用户上传或受控来源的主方案与竞品截图，执行多实验室视觉对比分析
 when_to_use: 用户要对竞品 app 的【界面本身】做分析——截图级的视觉设计、注意力分布、品牌一致性、信息架构;或诉求提到"看竞品页面/界面/截图/设计怎么做的"。若用户只要查竞品做了什么/战略动态(网络资料),走 competitive-web-research。
 owner: 竞品分析组
 ---
@@ -15,19 +15,17 @@ owner: 竞品分析组
 
 ## 输入
 
-- `research_goal`(必填):要回答的界面级问题(如"竞品直播间的注意力引导与我方差在哪")。
-- `competitors` / `scenes`(可选):目标竞品与页面场景(如 直播间/商详/首页)。
+- `research_goal`（必填）：要回答的界面级问题。
+- `competitorDesignImage[]`（必填）：一张或多张竞品页面截图。
+- `jdDesignImage[]`（可选）：需要比较京东／主方案与竞品时提供；一旦用户提供，Plan 必须完整消费。
+- `competitors` / `scenes`（可选）：目标竞品与页面场景。
 
 ## 执行步骤
 
-1. **检索竞品截图**:用 `ai-spider-search` tool 从竞品截图库检索目标竞品/场景的界面截图(`step.input = { query: <竞品+场景关键词> }`)。返回命中截图(含 oss_url)+ 已有设计/运营标注。
-2. **界面量化分析**(对检索到的关键截图逐张跑):
-   - `aesthetic-quant-lab`:美学量化(色彩/和谐/可读性/注意力聚焦综合分)。
-   - `attention-analysis-lab`:注意力热区分布(引导路径是否清晰)。
-   - `vision-brand-lab`:品牌视觉一致性(色彩/风格与品牌规范的贴合)。
-   - 图像入参:把截图作为对应 lab 的 image 字段(`design` role)传入;截图来自步骤1 的 oss_url 或用户上传。
-3. **横向对比与归因**:竞品 × 界面维度(美学分/注意力/品牌)成矩阵,标注差异与可能原因。
-4. **差异化建议**:基于界面级差异,给我方界面/视觉可改进点。
+1. **收集公开证据**：使用 `tavily-web-search` 补充可追溯的竞品背景；当前视觉对比只消费用户已上传并封存的截图，缺少时继续走 Material Request。
+2. **双组视觉分析**：通过 `visual-analysis-suite` 将 `jdDesignImage` 作为 primary、`competitorDesignImage` 作为 comparison，逐图保留 Sample ID、截图来源和 Tool provenance。
+3. **横向对比与归因**：按视觉层级、美学、注意力和品牌表达形成差异矩阵；算法结果只作辅助观察。
+4. **差异化建议**：基于截图观察与明确标注的设计推断，给出我方界面可执行改进点。
 
 ## 产出
 

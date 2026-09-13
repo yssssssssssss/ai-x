@@ -308,6 +308,9 @@ export class ResearchPlanningService {
       requirement: canonicalRequirement,
       orchestrationMode,
       guidanceRequirement: requirement,
+      ...(options.materials && options.materials.length > 0
+        ? { materials: options.materials }
+        : {}),
       ...(options.selectedScenarioId ? { selectedScenarioId: options.selectedScenarioId } : {}),
       ...(options.requireExplicitScenarioSelection
         ? { requireExplicitScenarioSelection: true }

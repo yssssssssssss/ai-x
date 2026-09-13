@@ -381,6 +381,212 @@ test('a verified screenshot Material completes clarification and is passed to pl
   });
 });
 
+test('preserves non-design Material Request identities and multiplicity across clarification revisions', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const materialRequests = [{
+    id: 'primary-images', role: 'primaryScreens', kind: 'visual' as const,
+    label: '主方案截图', required: true, multiple: true, reason: '用于主方案分析',
+  }, {
+    id: 'comparison-images', role: 'comparisonScreens', kind: 'visual' as const,
+    label: '对照方案截图', required: true, multiple: true, reason: '用于对照分析',
+  }];
+  const initial = requirement({
+    material_requests: materialRequests,
+    ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
+    clarification_questions: [{
+      key: 'audience', ambiguity_id: 'audience', question: 'Who is the target audience?',
+      rationale: 'The comparison depends on audience needs',
+    }],
+  });
+  const regenerated = requirement({
+    target_audience: ['design team'],
+    material_requests: [{
+      ...materialRequests[0]!, role: 'designImage', multiple: false,
+    }, {
+      ...materialRequests[1]!, role: 'competitorDesignImage', multiple: false,
+    }],
+  });
+  const llm = new FixtureLLM([initial, regenerated]);
+  const repository = makeRepository();
+  let plannedMaterials: unknown;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input) {
+        plannedMaterials = input.materials;
+        return {
+          kind: 'planning_guidance_clarification' as const,
+          activatedNodes: ['D5_competitive'],
+          planningGuidance: {
+            reasonCode: 'scenario_selection_required' as const,
+            options: [
+              { id: 'competitor-benchmark-research' as const, label: '竞品与标杆研究' },
+              { id: 'opportunity-direction-evaluation' as const, label: '机会方向判断' },
+            ],
+          },
+        };
+      },
+    },
+  });
+
+  const first = await service.understand({
+    taskId, conversationId, ownerUserId, originalInput: 'compare two sets of interface screenshots',
+  });
+  assert.equal(first.status, 'clarification_required');
+
+  const materials = materialRequests.flatMap((request, requestIndex) => (
+    Array.from({ length: 5 }, (_, index) => ({
+      materialId: `material-${requestIndex + 1}-${index + 1}`,
+      requestId: request.id,
+      role: request.role,
+      fileName: `${request.id}-${index + 1}.png`,
+      mediaType: 'image/png' as const,
+      contentSha256: `sha256:${String(requestIndex + 1)}${String(index + 1).repeat(63)}`,
+      byteSize: 68,
+    }))
+  ));
+  const materialComparison = {
+    mode: 'paired' as const,
+    primaryRequestId: 'primary-images',
+    comparisonRequestId: 'comparison-images',
+    pairs: Array.from({ length: 5 }, (_, index) => ({
+      label: `场景 ${index + 1}`,
+      primaryMaterialId: `material-1-${index + 1}`,
+      comparisonMaterialId: `material-2-${index + 1}`,
+    })),
+  };
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { audience: 'design team' },
+    materialBindings: materialRequests.map((request) => ({
+      requestId: request.id,
+      materialIds: materials.filter((material) => material.requestId === request.id).map(({ materialId }) => materialId),
+    })),
+    materialComparison,
+    materials,
+    expectedVersion: 2,
+  });
+
+  assert.equal(result.status, 'clarification_required');
+  assert.deepEqual(result.requirement.material_requests, materialRequests);
+  assert.deepEqual(
+    repository.versions.map(({ structuredTask }) => structuredTask.material_requests),
+    [materialRequests, materialRequests, materialRequests],
+  );
+  assert.deepEqual(plannedMaterials, materials);
+  assert.deepEqual(result.materialComparison, materialComparison);
+  assert.deepEqual(repository.versions.at(-1)?.clarification, {
+    planningGuidance: {
+      reasonCode: 'scenario_selection_required',
+      options: [
+        { id: 'competitor-benchmark-research', label: '竞品与标杆研究' },
+        { id: 'opportunity-direction-evaluation', label: '机会方向判断' },
+      ],
+    },
+    materialBindings: materialRequests.map((request) => ({
+      requestId: request.id,
+      materialIds: materials.filter((material) => material.requestId === request.id).map(({ materialId }) => materialId),
+    })),
+    materialComparison,
+  });
+});
+
+test('explicitly empty Material bindings clear stale optional selections and pairing', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const materialRequests = [{
+    id: 'optional-images', role: 'optionalScreens', kind: 'visual' as const,
+    label: '可选截图', required: false, multiple: true, reason: '补充观察',
+  }, {
+    id: 'comparison-images', role: 'comparisonScreens', kind: 'visual' as const,
+    label: '可选竞品截图', required: false, multiple: true, reason: '补充对比',
+  }];
+  const initial = requirement({
+    material_requests: materialRequests,
+    ambiguities: [{ id: 'audience', statement: 'audience unclear', blocking: true }],
+    clarification_questions: [{
+      key: 'audience', ambiguity_id: 'audience', question: 'Audience?', rationale: 'Scope',
+    }],
+  });
+  const resolved = requirement({ material_requests: materialRequests });
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([initial, resolved]),
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  const understood = await service.understand({
+    taskId, conversationId, ownerUserId, originalInput: 'compare optional screenshots',
+  });
+  assert.equal(understood.status, 'clarification_required');
+  repository.versions[0]!.clarification = {
+    materialBindings: [
+      { requestId: 'optional-images', materialIds: ['stale-primary'] },
+      { requestId: 'comparison-images', materialIds: ['stale-comparison'] },
+    ],
+    materialComparison: {
+      mode: 'paired',
+      primaryRequestId: 'optional-images',
+      comparisonRequestId: 'comparison-images',
+      pairs: [{
+        label: '旧配对',
+        primaryMaterialId: 'stale-primary',
+        comparisonMaterialId: 'stale-comparison',
+      }],
+    },
+  };
+
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { audience: 'design team' },
+    materialBindings: [],
+    materials: [],
+    expectedVersion: 2,
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(repository.versions.at(-1)?.clarification, {
+    audience: 'design team',
+    materialBindings: [],
+  });
+});
+
+test('rejects duplicate Material Request roles before Requirement persistence', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const duplicateRoleRequirement = requirement({
+    material_requests: [{
+      id: 'primary-images', role: 'sharedScreens', kind: 'visual',
+      label: '主方案截图', required: true, multiple: true, reason: '主方案分析',
+    }, {
+      id: 'comparison-images', role: 'sharedScreens', kind: 'visual',
+      label: '竞品截图', required: true, multiple: true, reason: '竞品分析',
+    }],
+  });
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([duplicateRoleRequirement, duplicateRoleRequirement]),
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  await assert.rejects(
+    () => service.understand({ taskId, conversationId, ownerUserId, originalInput: 'compare screenshots' }),
+    /material request roles must be unique/u,
+  );
+  assert.equal(repository.versions.length, 0);
+});
+
 test('unwraps and projects a complete Requirement without accepting undeclared root fields', async () => {
   const { RequirementRefinementService } = await loadModule();
   const valid = requirement();

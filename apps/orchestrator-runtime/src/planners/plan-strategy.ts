@@ -13,7 +13,10 @@ import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
 import type { CandidateProfile, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import type { OrchestrationModeV1 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  OrchestrationModeV1,
+  VerifiedTaskMaterial,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import type { CapabilityApprovalAuthority } from './capability-resolver.ts';
 import type { ToolRouter } from '../runtime/tool-adapter.ts';
 import type { ScenarioId } from './planning-guidance.ts';
@@ -67,6 +70,8 @@ export interface PlanContext {
   requirement?: ResearchTaskV2;
   /** User-selected execution path, frozen for the lifetime of the Task. */
   orchestrationMode?: OrchestrationModeV1;
+  /** Verified Task-bound Material Inventory available before capability selection. */
+  materials?: readonly VerifiedTaskMaterial[];
   /** Finalized user requirement before deliverable labels are canonicalized for execution. */
   guidanceRequirement?: ResearchTaskV2;
   /** Explicit user choice returned by the Planning Guidance clarification gate. */

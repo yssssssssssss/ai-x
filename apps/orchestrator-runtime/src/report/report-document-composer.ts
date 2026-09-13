@@ -390,6 +390,15 @@ function assetReference(asset: VerifiedVisualAsset): ReportAssetReference {
   };
 }
 
+function sameAssetLineage(derived: VerifiedVisualAsset, original: VerifiedVisualAsset): boolean {
+  const lineage = derived.manifest.derivedFrom;
+  return lineage !== null
+    && lineage.assetId === original.artifact.id
+    && lineage.manifestArtifactId === original.manifestArtifact.id
+    && lineage.contentSha256 === original.manifest.contentSha256
+    && lineage.manifestHash === original.manifest.manifestHash;
+}
+
 function assetReferenceKey(reference: ReportAssetReference): string {
   return `${reference.assetId}\u0000${reference.manifestArtifactId}`;
 }
@@ -942,6 +951,187 @@ function professionalSectionBlocks(
           evidenceIds,
         };
       });
+      const visualInputPresentation = record(payloadRoot.visualInputPresentation);
+      const structuredInputOriginalIds = new Set(input.visualAssets.flatMap((asset) => {
+        const source = asset.manifest.source;
+        return roles.get(asset.artifact.id) === 'original'
+          && source.kind === 'user_upload'
+          && source.inputArtifactId
+          && source.inputArtifactContentSha256
+          && source.inputRole
+          && source.inputIndex
+          ? [asset.artifact.id]
+          : [];
+      }));
+      if (structuredInputOriginalIds.size > 0 && !visualInputPresentation) {
+        fail('Competitive visual input presentation must cover every structured uploaded image');
+      }
+      const visualInputItems = new Map<string, {
+        item: Record<string, unknown>;
+        role: string;
+        label: string;
+        original: VerifiedVisualAsset;
+        annotation: VerifiedVisualAsset | null;
+        evidenceIds: string[];
+      }>();
+      const visualInputBlocks: ReportBlock[] = [];
+      if (visualInputPresentation) {
+        const mode = payloadString(visualInputPresentation, 'mode');
+        const groups = payloadRecords(visualInputPresentation, 'groups');
+        for (const group of groups) {
+          const role = payloadString(group, 'role');
+          const label = payloadString(group, 'label');
+          for (const item of payloadRecords(group, 'items')) {
+            const itemId = payloadString(item, 'id');
+            const originalAssetId = payloadString(item, 'originalAssetId');
+            const sourceArtifactId = payloadString(item, 'sourceArtifactId');
+            const annotationAssetId = typeof item.annotationAssetId === 'string'
+              ? item.annotationAssetId
+              : null;
+            const evidenceIds = payloadStrings(item, 'evidenceIds');
+            const original = assetsById.get(originalAssetId)
+              ?? fail(`Visual input item references missing original Asset ${originalAssetId}`);
+            const source = original.manifest.source;
+            const annotation = annotationAssetId
+              ? assetsById.get(annotationAssetId)
+                ?? fail(`Visual input item references missing annotation Asset ${annotationAssetId}`)
+              : null;
+            const evidence = evidenceIds.length === 1 ? evidenceEntries.get(evidenceIds[0]!) : undefined;
+            if (
+              visualInputItems.has(itemId)
+              || roles.get(original.artifact.id) !== 'original'
+              || source.kind !== 'user_upload'
+              || source.inputArtifactId !== sourceArtifactId
+              || source.inputArtifactContentSha256 !== original.manifest.contentSha256
+              || source.inputRole !== role
+              || !evidence
+              || evidence.kind !== 'screenshot'
+              || evidence.artifactId !== original.manifestArtifact.id
+              || (annotation !== null && (
+                roles.get(annotation.artifact.id) !== 'annotation'
+                || !sameAssetLineage(annotation, original)
+              ))
+            ) {
+              fail('Competitive visual input presentation has an invalid Asset or Evidence binding');
+            }
+            visualInputItems.set(itemId, { item, role, label, original, annotation, evidenceIds });
+          }
+        }
+        const presentedOriginalIds = new Set(
+          [...visualInputItems.values()].map(({ original }) => original.artifact.id),
+        );
+        if (
+          presentedOriginalIds.size !== structuredInputOriginalIds.size
+          || [...structuredInputOriginalIds].some((assetId) => !presentedOriginalIds.has(assetId))
+        ) {
+          fail('Competitive visual input presentation must cover every structured uploaded image exactly once');
+        }
+        if (mode === 'grouped') {
+          for (const [groupIndex, group] of groups.entries()) {
+            const label = payloadString(group, 'label');
+            const items = payloadRecords(group, 'items');
+            visualInputBlocks.push({
+              id: `competitive-visual-group-${groupIndex + 1}`,
+              type: 'paragraph',
+              text: `${label}（${items.length} 张）`,
+            });
+            for (const [itemIndex, item] of items.entries()) {
+              const value = visualInputItems.get(payloadString(item, 'id'))!;
+              const inputIndex = Number(value.item.inputIndex);
+              if (value.annotation) {
+                visualInputBlocks.push({
+                  id: `competitive-visual-input-${groupIndex + 1}-${itemIndex + 1}`,
+                  type: 'image-comparison',
+                  beforeAssetRef: assetReference(value.original),
+                  afterAssetRef: assetReference(value.annotation),
+                  caption: `${value.label} · 第 ${inputIndex} 张 · 原图与输入边界标注。`,
+                  altText: `${value.label}第 ${inputIndex} 张原图及其来源边界标注。`,
+                  evidenceIds: [...value.evidenceIds],
+                });
+              } else {
+                visualInputBlocks.push({
+                  id: `competitive-visual-input-${groupIndex + 1}-${itemIndex + 1}`,
+                  type: 'image',
+                  assetRef: assetReference(value.original),
+                  caption: `${value.label} · 第 ${inputIndex} 张 · 标注不可用。`,
+                  altText: `${value.label}第 ${inputIndex} 张原图。`,
+                  evidenceIds: [...value.evidenceIds],
+                });
+              }
+            }
+          }
+        } else if (mode === 'paired') {
+          const pairedItemIds = new Set<string>();
+          for (const pair of payloadRecords(visualInputPresentation, 'pairs')) {
+            const pairId = payloadString(pair, 'pairId');
+            const label = payloadString(pair, 'label');
+            const sequence = Number(pair.sequence);
+            const primary = visualInputItems.get(payloadString(pair, 'primaryItemId'))
+              ?? fail(`Visual pair ${pairId} references a missing primary item`);
+            const comparison = visualInputItems.get(payloadString(pair, 'comparisonItemId'))
+              ?? fail(`Visual pair ${pairId} references a missing comparison item`);
+            const primarySource = primary.original.manifest.source;
+            const comparisonSource = comparison.original.manifest.source;
+            if (
+              pairedItemIds.has(payloadString(pair, 'primaryItemId'))
+              || pairedItemIds.has(payloadString(pair, 'comparisonItemId'))
+              || primarySource.kind !== 'user_upload'
+              || comparisonSource.kind !== 'user_upload'
+              || primarySource.comparisonPair?.pairId !== pairId
+              || primarySource.comparisonPair.label !== label
+              || primarySource.comparisonPair.sequence !== sequence
+              || primarySource.comparisonPair.side !== 'primary'
+              || comparisonSource.comparisonPair?.pairId !== pairId
+              || comparisonSource.comparisonPair.label !== label
+              || comparisonSource.comparisonPair.sequence !== sequence
+              || comparisonSource.comparisonPair.side !== 'comparison'
+            ) {
+              fail(`Visual pair ${pairId} does not match its confirmed input relation`);
+            }
+            pairedItemIds.add(payloadString(pair, 'primaryItemId'));
+            pairedItemIds.add(payloadString(pair, 'comparisonItemId'));
+            visualInputBlocks.push({
+              id: `competitive-visual-pair-${pairId}-heading`,
+              type: 'paragraph',
+              text: `${label} · 已确认一一配对`,
+            });
+            for (const [side, value] of [
+              ['primary', primary],
+              ['comparison', comparison],
+            ] as const) {
+              const sideLabel = side === 'primary' ? primary.label : comparison.label;
+              if (value.annotation) {
+                visualInputBlocks.push({
+                  id: `competitive-visual-pair-${pairId}-${side}`,
+                  type: 'image-comparison',
+                  beforeAssetRef: assetReference(value.original),
+                  afterAssetRef: assetReference(value.annotation),
+                  caption: `${label} · ${sideLabel} · 原图与输入边界标注。`,
+                  altText: `${label}中${sideLabel}原图及其来源边界标注。`,
+                  evidenceIds: [...value.evidenceIds],
+                });
+              } else {
+                visualInputBlocks.push({
+                  id: `competitive-visual-pair-${pairId}-${side}`,
+                  type: 'image',
+                  assetRef: assetReference(value.original),
+                  caption: `${label} · ${sideLabel} · 标注不可用。`,
+                  altText: `${label}中${sideLabel}原图。`,
+                  evidenceIds: [...value.evidenceIds],
+                });
+              }
+            }
+          }
+          if (
+            pairedItemIds.size !== visualInputItems.size
+            || [...visualInputItems.keys()].some((itemId) => !pairedItemIds.has(itemId))
+          ) {
+            fail('Paired visual input presentation must cover every uploaded image exactly once');
+          }
+        } else {
+          fail('Competitive visual input presentation mode is invalid');
+        }
+      }
       const comparisonBlocks = comparisons.map((comparison, comparisonIndex): ReportImageComparisonBlock => {
         const assetIds = payloadStrings(comparison, 'assetIds');
         if (assetIds.length !== 2 || assetIds[0] === assetIds[1]) {
@@ -982,7 +1172,7 @@ function professionalSectionBlocks(
         caption: spec.title,
         altText: chartAltText(spec),
       }));
-      return [...imageBlocks, ...comparisonBlocks, ...chartBlocks];
+      return [...imageBlocks, ...visualInputBlocks, ...comparisonBlocks, ...chartBlocks];
     }
     if (sectionId === 'comparison') {
       return [{
@@ -1272,9 +1462,10 @@ function competitiveSectionIntroduction(
     'visualEvidence',
   ).length > 0
     || payloadRecords(input.deliverable.value.payload, 'screenshotComparisons').length > 0
+    || record(record(input.deliverable.value.payload)?.visualInputPresentation) !== null
     || input.charts.length > 0;
   const visualEvidenceIntroduction = hasDisplayableVisualContent
-    ? '本章按单图证据、原图与标注图对比、图表及数据表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。'
+    ? '本章按单图证据、用户上传材料的分组或显式配对、原图与标注图以及图表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。'
     : '本章用于展示可验证的产品截图、标注图或图表。本任务没有满足来源与证据绑定要求的图片或图表，因此不展示占位图、未经验证的网络图片或 AI 生成图。';
   const introductions: Record<ReportTemplateSectionId, string> = {
     cover: '本页用于识别报告主题、研究对象与交付范围。',

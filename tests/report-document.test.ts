@@ -1617,6 +1617,197 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
   assert.match(screenshot.altText, /input-provenance boundary.*does not locate or substantiate a research finding/iu);
 });
 
+test('competitive ReportDocument renders every structured upload for dynamic grouped coverage', () => {
+  const definitions = [
+    ['primaryScreens', '我方截图', 'primary-material-1', 1],
+    ['primaryScreens', '我方截图', 'primary-material-2', 2],
+    ['comparisonScreens', '竞品截图', 'comparison-material-1', 1],
+  ] as const;
+  const originals = definitions.map(([role, _label, sourceArtifactId, inputIndex], index) => verifiedImage({
+    assetId: `group-original-${index + 1}`,
+    manifestArtifactId: `group-original-manifest-${index + 1}`,
+    source: {
+      kind: 'user_upload',
+      fileName: `${role}-${inputIndex}.png`,
+      inputArtifactId: sourceArtifactId,
+      inputArtifactContentSha256: digest(PNG),
+      inputRole: role,
+      inputIndex,
+    },
+  }));
+  const annotations = originals.map((original, index) => verifiedAnnotation(original, {
+    assetId: `group-annotation-${index + 1}`,
+    manifestArtifactId: `group-annotation-manifest-${index + 1}`,
+  }));
+  const items = definitions.map(([role, _label, sourceArtifactId, inputIndex], index) => ({
+    id: `visual-input:${role}:${inputIndex}`,
+    sourceArtifactId,
+    inputIndex,
+    originalAssetId: originals[index]!.artifact.id,
+    annotationAssetId: annotations[index]!.artifact.id,
+    evidenceIds: [`S1-${index + 1}`],
+  }));
+  const payload = competitivePayload([]);
+  payload.visualInputPresentation = {
+    mode: 'grouped',
+    groups: [
+      { role: 'primaryScreens', label: '我方截图', items: items.slice(0, 2) },
+      { role: 'comparisonScreens', label: '竞品截图', items: items.slice(2) },
+    ],
+    pairs: [],
+  };
+  const input = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload,
+  });
+  input.visualAssets = originals.flatMap((original, index) => [original, annotations[index]!]);
+  const screenshotEntries: EvidenceManifest['entries'] = originals.map((original, index) => ({
+    id: `S1-${index + 1}`,
+    kind: 'screenshot',
+    evidenceClass: 'screenshot',
+    artifactId: original.manifestArtifact.id,
+    artifactContentSha256: original.manifestArtifact.contentSha256!,
+    jsonPointer: '/assetId',
+    sensitivity: 'internal',
+    redaction: 'none',
+  }));
+  const manifestsById = new Map(originals.map((original) => [original.manifestArtifact.id, {
+    artifact: {
+      id: original.manifestArtifact.id,
+      contentSha256: original.manifestArtifact.contentSha256!,
+    },
+    value: original.manifest,
+  }]));
+  const resolver: EvidenceArtifactResolver = {
+    resolveArtifact: (artifactId) => manifestsById.get(artifactId)
+      ?? evidenceArtifactResolver.resolveArtifact(artifactId),
+  };
+  input.evidenceManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-09-13T00:00:00.000Z',
+    entries: [...evidenceManifest().entries, ...screenshotEntries],
+  }, resolver);
+  input.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId,
+    'evidence_manifest',
+    'evidence-v1',
+    input.evidenceManifest.value,
+  );
+  input.evidenceArtifactResolver = resolver;
+
+  const document = composeReportDocument(input);
+  const visualBlocks = document.sections.find(({ id }) => id === 'visual-evidence')?.blocks ?? [];
+  const uploadedBlocks = visualBlocks.filter(({ id }) => id.startsWith('competitive-visual-input-'));
+
+  assert.equal(uploadedBlocks.length, 3);
+  assert.deepEqual(uploadedBlocks.map((block) => block.type === 'image-comparison'
+    ? block.beforeAssetRef.assetId
+    : null), originals.map(({ artifact }) => artifact.id));
+  assert.match(JSON.stringify(uploadedBlocks), /我方截图/u);
+  assert.match(JSON.stringify(uploadedBlocks), /竞品截图/u);
+});
+
+test('competitive ReportDocument uses confirmed pair ids while preserving annotation lineage blocks', () => {
+  const primary = verifiedImage({
+    assetId: 'paired-primary-original',
+    manifestArtifactId: 'paired-primary-manifest',
+    source: {
+      kind: 'user_upload', fileName: 'primary.png', inputArtifactId: 'primary-material',
+      inputArtifactContentSha256: digest(PNG),
+      inputRole: 'primaryScreens', inputIndex: 1,
+      comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'primary', sequence: 1 },
+    },
+  });
+  const comparison = verifiedImage({
+    assetId: 'paired-comparison-original',
+    manifestArtifactId: 'paired-comparison-manifest',
+    source: {
+      kind: 'user_upload', fileName: 'comparison.png', inputArtifactId: 'comparison-material',
+      inputArtifactContentSha256: digest(PNG),
+      inputRole: 'comparisonScreens', inputIndex: 1,
+      comparisonPair: { pairId: 'PAIR-001', label: '首屏', side: 'comparison', sequence: 1 },
+    },
+  });
+  const primaryAnnotation = verifiedAnnotation(primary, {
+    assetId: 'paired-primary-annotation', manifestArtifactId: 'paired-primary-annotation-manifest',
+  });
+  const comparisonAnnotation = verifiedAnnotation(comparison, {
+    assetId: 'paired-comparison-annotation', manifestArtifactId: 'paired-comparison-annotation-manifest',
+  });
+  const payload = competitivePayload([]);
+  payload.visualInputPresentation = {
+    mode: 'paired',
+    groups: [{
+      role: 'primaryScreens', label: '我方截图', items: [{
+        id: 'primary-item', sourceArtifactId: 'primary-material', inputIndex: 1,
+        originalAssetId: primary.artifact.id, annotationAssetId: primaryAnnotation.artifact.id, evidenceIds: ['S1-1'],
+      }],
+    }, {
+      role: 'comparisonScreens', label: '竞品截图', items: [{
+        id: 'comparison-item', sourceArtifactId: 'comparison-material', inputIndex: 1,
+        originalAssetId: comparison.artifact.id, annotationAssetId: comparisonAnnotation.artifact.id, evidenceIds: ['S1-2'],
+      }],
+    }],
+    pairs: [{
+      pairId: 'PAIR-001', label: '首屏', sequence: 1,
+      primaryItemId: 'primary-item', comparisonItemId: 'comparison-item',
+    }],
+  };
+  const input = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload,
+  });
+  input.visualAssets = [primary, primaryAnnotation, comparison, comparisonAnnotation];
+  const originals = [primary, comparison];
+  const screenshotEntries: EvidenceManifest['entries'] = originals.map((original, index) => ({
+    id: `S1-${index + 1}`,
+    kind: 'screenshot',
+    evidenceClass: 'screenshot',
+    artifactId: original.manifestArtifact.id,
+    artifactContentSha256: original.manifestArtifact.contentSha256!,
+    jsonPointer: '/assetId',
+    sensitivity: 'internal',
+    redaction: 'none',
+  }));
+  const manifestsById = new Map(originals.map((original) => [original.manifestArtifact.id, {
+    artifact: { id: original.manifestArtifact.id, contentSha256: original.manifestArtifact.contentSha256! },
+    value: original.manifest,
+  }]));
+  const resolver: EvidenceArtifactResolver = {
+    resolveArtifact: (artifactId) => manifestsById.get(artifactId)
+      ?? evidenceArtifactResolver.resolveArtifact(artifactId),
+  };
+  input.evidenceManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-09-13T00:00:00.000Z',
+    entries: [...evidenceManifest().entries, ...screenshotEntries],
+  }, resolver);
+  input.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId, 'evidence_manifest', 'evidence-v1', input.evidenceManifest.value,
+  );
+  input.evidenceArtifactResolver = resolver;
+
+  const document = composeReportDocument(input);
+  const visualBlocks = document.sections.find(({ id }) => id === 'visual-evidence')?.blocks ?? [];
+  const heading = visualBlocks.find(({ id }) => id === 'competitive-visual-pair-PAIR-001-heading');
+  const primaryBlock = visualBlocks.find(({ id }) => id === 'competitive-visual-pair-PAIR-001-primary');
+  const comparisonBlock = visualBlocks.find(({ id }) => id === 'competitive-visual-pair-PAIR-001-comparison');
+
+  assert.ok(heading?.type === 'paragraph');
+  assert.match(heading.text, /首屏.*已确认一一配对/u);
+  assert.ok(primaryBlock?.type === 'image-comparison');
+  assert.deepEqual(primaryBlock.beforeAssetRef.assetId, primary.artifact.id);
+  assert.deepEqual(primaryBlock.afterAssetRef.assetId, primaryAnnotation.artifact.id);
+  assert.ok(comparisonBlock?.type === 'image-comparison');
+  assert.deepEqual(comparisonBlock.beforeAssetRef.assetId, comparison.artifact.id);
+  assert.deepEqual(comparisonBlock.afterAssetRef.assetId, comparisonAnnotation.artifact.id);
+  assert.equal(visualBlocks.filter(({ id }) => id.startsWith('competitive-visual-pair-')).length, 3);
+});
+
 test('competitive ReportDocument rejects duplicate dimensionMatrix dimensions', () => {
   const payload = competitivePayload([]);
   payload.dimensionMatrix = [
@@ -1795,7 +1986,7 @@ test('competitive chart-only report places the chart at the end of Visual Eviden
   assert.ok(visualIntroduction?.type === 'paragraph');
   assert.equal(
     visualIntroduction.text,
-    '本章按单图证据、原图与标注图对比、图表及数据表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。',
+    '本章按单图证据、用户上传材料的分组或显式配对、原图与标注图以及图表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。',
   );
   assert.equal(comparisonSection.title, '竞争影响分析 / Competitive Impact Analysis');
   assert.equal(

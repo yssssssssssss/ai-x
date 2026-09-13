@@ -2410,6 +2410,53 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     ...multimodal,
     visualAssetManifests: [browser, chart],
   }).presentationMode, 'multimodal');
+  const structuredImage = {
+    ...image,
+    source: {
+      kind: 'user_upload',
+      fileName: 'primary.png',
+      inputArtifactId: 'material-primary-1',
+      inputArtifactContentSha256: image.contentSha256,
+      inputRole: 'primaryScreens',
+      inputIndex: 1,
+      comparisonPair: {
+        pairId: 'PAIR-001',
+        label: '首屏',
+        side: 'primary',
+        sequence: 1,
+      },
+    },
+  };
+  assert.equal(parseControlDeliverableResponse({
+    ...multimodal,
+    visualAssetManifests: [structuredImage, chart],
+  }).presentationMode, 'multimodal');
+  const {
+    inputArtifactContentSha256: _legacyMissingSourceHash,
+    ...legacyStructuredSource
+  } = structuredImage.source;
+  assert.equal(parseControlDeliverableResponse({
+    ...multimodal,
+    visualAssetManifests: [{ ...structuredImage, source: legacyStructuredSource }, chart],
+  }).presentationMode, 'multimodal');
+  for (const invalidSource of [{
+    ...structuredImage.source,
+    inputArtifactContentSha256: undefined,
+  }, {
+    ...structuredImage.source,
+    inputArtifactContentSha256: `sha256:${'f'.repeat(64)}`,
+  }, {
+    ...structuredImage.source,
+    comparisonPair: { ...structuredImage.source.comparisonPair, side: 'unknown' },
+  }]) {
+    assert.throws(
+      () => parseControlDeliverableResponse({
+        ...multimodal,
+        visualAssetManifests: [{ ...structuredImage, source: invalidSource }, chart],
+      }),
+      /visual asset|manifest|source|hash|pair/i,
+    );
+  }
   assert.throws(
     () => parseControlDeliverableResponse({
       ...multimodal,

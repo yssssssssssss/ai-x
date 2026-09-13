@@ -22,9 +22,9 @@
     "planning_policy_hash": "sha256:f0e279d49e88bb50bbc68427f1d84842f73e9aeabbc34808f4b8ba6b85ffde4a",
     "candidate_generation_mode": "dynamic",
     "prompt_path": "orchestrator/prompts/deliverables/competitive-analysis-report.md",
-    "prompt_hash": "sha256:93d9c91869f6b2ef297fb9395bc16e3a3de13813b19b7477233a2a8d62737de9",
+    "prompt_hash": "sha256:03239025140e48c5e1a5e4ee0d4755f0c7a49c28f1f8c014402e8c3bba7d9481",
     "rubric_path": "orchestrator/report-rubrics/competitive-analysis-report.yaml",
-    "rubric_hash": "sha256:31f95486f3718803f36840c3b3ab7efc2c6c017ace25df694d7db49d1447cd44"
+    "rubric_hash": "sha256:d152e04bed8c564177a4a617f872bbff37f7ce22712292ed165a44567230a1fc"
   },
   "entries": [
     {

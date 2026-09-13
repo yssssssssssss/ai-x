@@ -13,6 +13,7 @@ import { createConversation, getOwnedConversation, listMessages, writeMessage } 
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import {
   assertDesignAuditPlanMaterialContract,
+  assertTaskMaterialsConsumed,
   ControlPlanningService,
 } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
@@ -1141,6 +1142,11 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (task.orchestrationMode === 'single_skill') {
         assertSingleSkillExecutionPlan(compiled.plan);
       }
+      assertTaskMaterialsConsumed({
+        materialRequests: structuredTask.material_requests ?? [],
+        pendingInputs: compiled.pending_inputs,
+        providedMaterials: planningResult.providedMaterials,
+      });
       assertDesignAuditPlanMaterialContract({
         deliverableId: deliverableSelection.deliverableId,
         plan: compiled.plan,

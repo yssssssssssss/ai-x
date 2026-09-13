@@ -2352,7 +2352,7 @@ test('Current direct competitive Web research stays plannable when no comparison
 test('direct screenshot Skill exposes missing screenshot roles as pending inputs', async () => {
   const llm = new CurrentPlanningLLM();
   const tools = new ToolRouter();
-  for (const adapterType of ['tavily', 'internal_api', 'rest_json'] as const) {
+  for (const adapterType of ['tavily', 'internal_api', 'visual_suite'] as const) {
     tools.register({
       adapterType,
       implementationId: `qualified-real-${adapterType}`,
@@ -2386,9 +2386,9 @@ test('direct screenshot Skill exposes missing screenshot roles as pending inputs
     });
     assert.ok(Object.hasOwn(
       candidate.steps.find((step) => step.actor_id === 'competitive-app-analysis')?.input ?? {},
-      'competitor_screenshots',
+      'competitorDesignImage',
     ));
-    assert.deepEqual(compiled.pending_inputs.map((input) => input.role), ['competitor_screenshots']);
+    assert.deepEqual(compiled.pending_inputs.map((input) => input.role), ['competitorDesignImage']);
     assert.deepEqual(compiled.pending_inputs.map((input) => input.kind), ['visual']);
     assert.deepEqual(compiled.pending_inputs.map((input) => input.multiple), [true]);
   }

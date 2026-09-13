@@ -23,6 +23,8 @@ interface VisualImageInput {
 interface VisualAnalysisSuiteInput {
   research_goal?: string;
   designImages?: VisualImageInput[];
+  jdDesignImage?: VisualImageInput[];
+  competitorDesignImage?: VisualImageInput[];
   jd_screenshots?: VisualImageInput[];
   competitor_screenshots?: VisualImageInput[];
 }
@@ -459,8 +461,24 @@ export class VisualAnalysisSuiteAdapter implements ToolAdapter {
     }
     const input = options.input as VisualAnalysisSuiteInput;
     const design = Array.isArray(input.designImages) ? input.designImages : [];
-    const jd = Array.isArray(input.jd_screenshots) ? input.jd_screenshots : [];
-    const competitor = Array.isArray(input.competitor_screenshots) ? input.competitor_screenshots : [];
+    const taskPrimary = Array.isArray(input.jdDesignImage) ? input.jdDesignImage : [];
+    const taskComparison = Array.isArray(input.competitorDesignImage) ? input.competitorDesignImage : [];
+    const industryPrimary = Array.isArray(input.jd_screenshots) ? input.jd_screenshots : [];
+    const industryComparison = Array.isArray(input.competitor_screenshots) ? input.competitor_screenshots : [];
+    if (taskPrimary.length > 0 && industryPrimary.length > 0) {
+      throw new ToolInvocationError(options.toolId, {
+        kind: 'capability', retryable: false,
+        sanitizedMessage: 'primary screenshot roles cannot be supplied together',
+      });
+    }
+    if (taskComparison.length > 0 && industryComparison.length > 0) {
+      throw new ToolInvocationError(options.toolId, {
+        kind: 'capability', retryable: false,
+        sanitizedMessage: 'comparison screenshot roles cannot be supplied together',
+      });
+    }
+    const jd = taskPrimary.length > 0 ? taskPrimary : industryPrimary;
+    const competitor = taskComparison.length > 0 ? taskComparison : industryComparison;
     const primary = jd.length > 0
       ? normalizeImages(jd, 'primary', 'JD')
       : normalizeImages(design, 'primary', 'DESIGN');

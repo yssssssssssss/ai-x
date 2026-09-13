@@ -6,6 +6,8 @@ import {
   type ControlTaskResponse,
   type PlanningGuidanceClarification,
   type PlanControlTaskRequest,
+  type TaskMaterialComparison,
+  type TaskMaterialBinding,
   type TaskMaterialResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
@@ -26,6 +28,8 @@ export interface ClarificationRequiredResponse {
   activatedNodes: string[];
   candidates: [];
   taskMaterials?: TaskMaterialResponse[];
+  materialBindings?: TaskMaterialBinding[];
+  materialComparison?: TaskMaterialComparison;
   planningGuidance?: PlanningGuidanceClarification;
 }
 
