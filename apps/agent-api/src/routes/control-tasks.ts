@@ -59,7 +59,7 @@ export interface ControlClarificationPort {
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
     selectedScenarioId?: string;
-    materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+    materialBindings?: Array<{ requestId: string; materialIds: string[] }>;
     materialComparison?: TaskMaterialComparison;
     materials: VerifiedTaskMaterial[];
     expectedVersion: number;
@@ -222,22 +222,25 @@ function providedMaterialsView(
 function withVerifiedMaterials(
   response: CurrentPlanningResponse,
   materials: readonly VerifiedTaskMaterial[],
-  bindings: readonly TaskMaterialBinding[],
+  bindings: readonly TaskMaterialBinding[] | undefined,
   materialComparison?: TaskMaterialComparison,
 ): CurrentPlanningResponse {
+  const resolvedBindings = bindings ?? [];
   const taskMaterials: TaskMaterialResponse[] = materials.map((material) => ({ ...material, state: 'SEALED' }));
   if (response.status === 'clarification_required') {
     return {
       ...response,
       ...(taskMaterials.length > 0 ? { taskMaterials } : {}),
-      materialBindings: bindings.map((binding) => ({
-        requestId: binding.requestId,
-        materialIds: [...binding.materialIds],
-      })),
+      ...(bindings !== undefined ? {
+        materialBindings: resolvedBindings.map((binding) => ({
+          requestId: binding.requestId,
+          materialIds: [...binding.materialIds],
+        })),
+      } : {}),
       ...(materialComparison ? { materialComparison } : {}),
     };
   }
-  const providedMaterials = providedMaterialsView(materials, bindings);
+  const providedMaterials = providedMaterialsView(materials, resolvedBindings);
   return {
     ...response,
     candidates: response.candidates.map((candidate) => ({
@@ -421,7 +424,7 @@ interface PreparedClarification {
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
   selectedScenarioId?: string;
-  materialBindings: Array<{ requestId: string; materialIds: string[] }>;
+  materialBindings?: Array<{ requestId: string; materialIds: string[] }>;
   materialComparison?: TaskMaterialComparison;
   materials: VerifiedTaskMaterial[];
   idempotencyKey: string;
@@ -450,6 +453,7 @@ async function prepareClarification(
   const assumptionEdits = record(body?.assumptionEdits);
   const hasSelectedScenarioId = body !== null && Object.hasOwn(body, 'selectedScenarioId');
   const selectedScenarioId = string(body?.selectedScenarioId);
+  const hasMaterialBindings = body !== null && Object.hasOwn(body, 'materialBindings');
   const materialBindings = parsedMaterialBindings(body?.materialBindings);
   const materialComparisonValue = body?.materialComparison;
   const key = idempotencyKey(req);
@@ -507,7 +511,7 @@ async function prepareClarification(
     clarificationAnswers,
     assumptionEdits,
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
-    ...(materialBindings.length > 0 ? { materialBindings } : {}),
+    ...(hasMaterialBindings ? { materialBindings } : {}),
     ...(materialComparison ? { materialComparison } : {}),
   });
   const existingCommand = await runtime.repository.getCommand(task.id, 'clarification', key);
@@ -565,7 +569,7 @@ async function prepareClarification(
       Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
     ),
     ...(selectedScenarioId ? { selectedScenarioId } : {}),
-    materialBindings,
+    ...(hasMaterialBindings ? { materialBindings } : {}),
     ...(materialComparison ? { materialComparison } : {}),
     materials,
     idempotencyKey: key,
@@ -632,7 +636,9 @@ async function runClarification(
       answers: prepared.clarificationAnswers,
       assumptionEdits: prepared.assumptionEdits,
       ...(prepared.selectedScenarioId ? { selectedScenarioId: prepared.selectedScenarioId } : {}),
-      materialBindings: prepared.materialBindings,
+      ...(prepared.materialBindings !== undefined
+        ? { materialBindings: prepared.materialBindings }
+        : {}),
       ...(prepared.materialComparison ? { materialComparison: prepared.materialComparison } : {}),
       materials: prepared.materials,
       expectedVersion: prepared.expectedVersion,
